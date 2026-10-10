@@ -4,6 +4,7 @@
 	"private": true,
 	"type": "module",
 	"dependencies": {
-		"@hotpot/ai": "workspace:*"
+		"@hotpot/ai": "workspace:*",
+		"zod": "^4"
 	}
 }
