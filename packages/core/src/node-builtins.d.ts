@@ -59,6 +59,8 @@ declare module "node:os" {
 
 declare module "node:path" {
 	export function join(...parts: string[]): string;
+	export function resolve(...parts: string[]): string;
+	export function dirname(path: string): string;
 }
 
 declare module "node:crypto" {
