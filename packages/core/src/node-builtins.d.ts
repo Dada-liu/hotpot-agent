@@ -7,6 +7,11 @@ interface HotpotFileHandle {
 	close(): Promise<void>;
 }
 
+// 子进程 stdout/stderr 的可读流（只用到 data 事件；chunk 运行时是 Buffer，结构上有 toString）
+interface HotpotChildStream {
+	on(event: "data", listener: (chunk: { toString(): string }) => void): void;
+}
+
 declare module "node:fs/promises" {
 	export function open(path: string, flags: "a"): Promise<HotpotFileHandle>;
 	export function mkdir(
@@ -14,6 +19,7 @@ declare module "node:fs/promises" {
 		options?: { recursive?: boolean },
 	): Promise<string | undefined>;
 	export function readFile(path: string, encoding: "utf8"): Promise<string>;
+	export function writeFile(path: string, data: string): Promise<void>;
 	export function readdir(path: string): Promise<string[]>;
 	export function appendFile(path: string, data: string): Promise<void>;
 	export function mkdtemp(prefix: string): Promise<string>;
@@ -21,6 +27,29 @@ declare module "node:fs/promises" {
 		path: string,
 		options?: { recursive?: boolean; force?: boolean },
 	): Promise<void>;
+}
+
+declare module "node:fs" {
+	export function existsSync(path: string): boolean;
+}
+
+declare module "node:child_process" {
+	export interface HotpotChildProcess {
+		stdout: HotpotChildStream | null;
+		stderr: HotpotChildStream | null;
+		kill(signal?: string): boolean;
+		on(event: "error", listener: (err: Error) => void): void;
+		// close 在进程退出且 stdio 流全部关闭后触发，用它结算可避免丢失末尾输出
+		on(
+			event: "close",
+			listener: (code: number | null, signal: string | null) => void,
+		): void;
+	}
+	export function spawn(
+		command: string,
+		args: string[],
+		options?: { cwd?: string },
+	): HotpotChildProcess;
 }
 
 declare module "node:os" {

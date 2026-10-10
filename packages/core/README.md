@@ -11,4 +11,4 @@ agent 内核，不依赖任何 UI。
 - turn/step 两级循环 `runTurn`；含 max_tokens 截断防御与 abort 落盘语义。
 - 配置加载 `loadSettings`（zod 校验，apiKey 支持 `$ENV` 引用）。
 
-当前状态：会话事件日志（`src/session/`）、section 注册表（`src/prompt/`）、工具框架与审批链（`src/tools/`、`src/approval/`）已完成，其余见后续任务。架构依据：`docs/archive/02-architecture.md`。
+当前状态：会话事件日志（`src/session/`）、section 注册表（`src/prompt/`）、工具框架与审批链（`src/tools/`、`src/approval/`，含 `bashTool`）已完成，其余见后续任务。架构依据：`docs/archive/02-architecture.md`。
