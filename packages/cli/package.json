@@ -3,6 +3,9 @@
 	"version": "0.0.0",
 	"private": true,
 	"type": "module",
+	"bin": {
+		"hotpot": "src/bin.ts"
+	},
 	"dependencies": {
 		"@hotpot/ai": "workspace:*",
 		"@hotpot/core": "workspace:*"

@@ -2,10 +2,9 @@
 
 行式交互入口 `hotpot chat`（M1 唯一的用户界面）。
 
-职责（M1 计划）：
+- `src/bin.ts` 可运行入口（package.json 的 `bin.hotpot` 指向它），开发时用根目录 `pnpm dev cli chat` 经 tsx 直跑。
+- 行式交互循环：输入消息 → 流式打印文本 → `[tool] name(参数摘要)` 展示 tool call → approval 询问 `y/n`（默认 n，fail-closed）→ 结果摘要；`/exit` 退出，Ctrl-C 中断当前回合而不退出进程。
+- `hotpot chat [--session <path>] [--tier high|medium|low]`；tier 缺省取 `settings.mainAgentTier`，再缺省 `high`。`--session` 恢复会话（`resumeSession` 追加到同一文件，`runTurn` 内部 `loadSession` + `deriveMessages` 重建历史）。
+- 配置经 `@hotpot/core` 的 `loadSettings` 读取 `<home>/settings.json`；真实适配器由 `resolveModelAdapter` 按 `ModelRef` 的 provider→api 映射选择，未知模型按 provider 名推断协议并告警（contextWindow 取 128000）。
 
-- `src/bin.ts` 可运行入口，开发时用根目录 `pnpm dev cli chat` 经 tsx 直跑。
-- 行式交互循环：输入消息 → 流式打印文本 → 展示 tool call 名称与参数摘要 → approval 询问 `y/n` → 结果摘要；`/exit` 退出。
-- `--session <path>` 恢复会话（`loadSession` + `deriveMessages` 续聊）。
-
-当前状态：脚手架（Task 1），入口在 Task 11 实现。
+当前状态：Task 11 已完成，见 `src/`、`test/` 目录文档。

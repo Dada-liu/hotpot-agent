@@ -22,7 +22,8 @@ export interface SessionSummary {
 }
 
 // home 优先级：参数 > HOTPOT_HOME 环境变量 > ~/hotpot-code
-function resolveHome(home?: string): string {
+// 导出供 config.ts 复用，保证 settings 与会话日志的 home 解析规则一致
+export function resolveHome(home?: string): string {
 	if (home) {
 		return home;
 	}
@@ -100,6 +101,20 @@ export async function loadSession(
 		throw new Error(`session file missing meta event: ${filePath}`);
 	}
 	return { meta, events };
+}
+
+// 恢复已有会话供续聊（CLI --session）：loadSession 校验 meta 后返回指向同一文件的 append 句柄，
+// 追加仍走 appendLine（带 fsync），与 createSession 的崩溃语义一致
+export async function resumeSession(filePath: string): Promise<Session> {
+	const { meta } = await loadSession(filePath);
+	if (meta.type !== "meta") {
+		throw new Error(`session file missing meta event: ${filePath}`);
+	}
+	return {
+		id: meta.sessionId,
+		filePath,
+		append: (e: SessionEvent) => appendLine(filePath, `${JSON.stringify(e)}\n`),
+	};
 }
 
 // 列出 home 下全部会话；读每个文件首行 meta 提取摘要，损坏文件跳过

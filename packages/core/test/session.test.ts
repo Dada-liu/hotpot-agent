@@ -8,6 +8,7 @@ import {
 	createSession,
 	listSessions,
 	loadSession,
+	resumeSession,
 } from "../src/session/store.ts";
 
 // 每个用例一个临时 home，隔离文件系统；home 参数优先于 HOTPOT_HOME 环境变量
@@ -159,6 +160,27 @@ describe("session store", () => {
 		expect(summary?.createdAt).toBeTruthy();
 		// home 目录不存在时返回空列表
 		expect(await listSessions(join(home, "not-exist"))).toEqual([]);
+	});
+
+	it("resumeSession 恢复已有会话并继续 append；文件不存在时抛错", async () => {
+		const session = await createSession("/Users/test/project", home);
+		await session.append(userMsg("第一条"));
+
+		const resumed = await resumeSession(session.filePath);
+		expect(resumed.id).toBe(session.id);
+		expect(resumed.filePath).toBe(session.filePath);
+		await resumed.append(assistantText("续聊回复"));
+
+		const { events } = await loadSession(session.filePath);
+		expect(events.map((e) => e.type)).toEqual([
+			"meta",
+			"user_msg",
+			"assistant_msg",
+		]);
+
+		await expect(
+			resumeSession(join(home, "not-exist.jsonl")),
+		).rejects.toThrow();
 	});
 });
 
