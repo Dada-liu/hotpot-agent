@@ -1,4 +1,9 @@
 {
 	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		// 契约类型引用 Headers / ReadableStream / AbortSignal（Node 22 运行时全局），
+		// 其类型声明来自 DOM lib；依赖白名单不允许新增 @types/node，故在本包局部引入
+		"lib": ["es2023", "dom"]
+	},
 	"include": ["src", "test"]
 }
