@@ -1,0 +1,9 @@
+{
+	"name": "@hotpot/core",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"dependencies": {
+		"@hotpot/ai": "workspace:*"
+	}
+}

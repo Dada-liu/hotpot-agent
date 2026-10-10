@@ -1,0 +1,17 @@
+{
+	"$schema": "https://json.schemastore.org/tsconfig",
+	"compilerOptions": {
+		"target": "es2023",
+		"lib": ["es2023"],
+		"module": "nodenext",
+		"moduleResolution": "nodenext",
+		"strict": true,
+		"erasableSyntaxOnly": true,
+		"allowImportingTsExtensions": true,
+		"rewriteRelativeImportExtensions": true,
+		"noEmit": true,
+		"isolatedModules": true,
+		"skipLibCheck": true,
+		"forceConsistentCasingInFileNames": true
+	}
+}
