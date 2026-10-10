@@ -1,7 +1,12 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type ModelInfo, type StreamEvent, scriptedAdapter } from "@hotpot/ai";
+import {
+	type ChatRequest,
+	type ModelInfo,
+	type StreamEvent,
+	scriptedAdapter,
+} from "@hotpot/ai";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { z } from "zod";
 import { runTurn } from "../src/agent/loop.ts";
@@ -414,5 +419,107 @@ describe("runTurn", () => {
 		const noSystem: LoopConfig = { ...cfg, system: undefined };
 		const events = await collectTurn(noSystem, new AbortController().signal);
 		expect(events.at(-1)).toEqual({ type: "done", stopReason: "stop" });
+	});
+
+	it("流式中途 abort：适配器 rejection（AbortError）产出 done(aborted)，不落 error 事件", async () => {
+		const cfg = await makeConfig([]); // 脚本不消费：本例用自定义适配器
+		// 模拟真实适配器：signal 传入 fetch，abort 使等待中的流 rejection（DOMException AbortError）
+		cfg.adapter = {
+			api: "abort-fake",
+			streamChat(
+				_req: ChatRequest,
+				signal: AbortSignal,
+			): AsyncIterable<StreamEvent> {
+				return (async function* (): AsyncGenerator<StreamEvent> {
+					yield { type: "text_delta", delta: "半截回复" };
+					await new Promise<never>((_resolve, reject) => {
+						// abort 可能先于监听注册：与 fetch 一致，已 aborted 时立即 reject
+						if (signal.aborted) {
+							reject(
+								new DOMException("The operation was aborted", "AbortError"),
+							);
+							return;
+						}
+						signal.addEventListener("abort", () =>
+							reject(
+								new DOMException("The operation was aborted", "AbortError"),
+							),
+						);
+					});
+				})();
+			},
+		};
+		const ac = new AbortController();
+
+		const events: AgentEvent[] = [];
+		for await (const event of runTurn(cfg, ac.signal)) {
+			events.push(event);
+			if (event.type === "text") {
+				ac.abort(); // 流式中途中断
+			}
+		}
+
+		expect(events).toEqual([
+			{ type: "text", delta: "半截回复" },
+			{ type: "done", stopReason: "aborted" },
+		]);
+		// 不落 error 会话事件，也不落半截 assistant_msg
+		const { events: fileEvents } = await loadSession(cfg.session.filePath);
+		expect(fileEvents.map((e) => e.type)).toEqual(["meta", "user_msg"]);
+	});
+
+	it("max_tokens 截断的 tool_call input 以 {} 落盘，下一轮请求携带对象而非字符串", async () => {
+		const spy: ToolSpy[] = [];
+		const requests: ChatRequest[] = [];
+		const cfg = await makeConfig([
+			toolCallRound("echo", "tc-1", '{"text":"hi', "max_tokens"),
+			STOP_ROUND,
+		]);
+		cfg.registry.register(makeEchoTool(spy));
+		// 包裹 scriptedAdapter，记录每轮实际发出的 ChatRequest
+		const inner = cfg.adapter;
+		cfg.adapter = {
+			api: inner.api,
+			streamChat(
+				req: ChatRequest,
+				signal: AbortSignal,
+			): AsyncIterable<StreamEvent> {
+				requests.push(req);
+				return inner.streamChat(req, signal);
+			},
+		};
+
+		const events = await collectTurn(cfg, new AbortController().signal);
+		expect(events.at(-1)).toEqual({ type: "done", stopReason: "stop" });
+
+		// 落盘的 assistant_msg 里 tool_call.input 是对象：半截 JSON 不以字符串形式存
+		const { events: fileEvents } = await loadSession(cfg.session.filePath);
+		const assistant = fileEvents.find((e) => e.type === "assistant_msg");
+		if (assistant?.type !== "assistant_msg") {
+			throw new Error("assistant_msg missing");
+		}
+		const toolCallBlock = assistant.content.find((b) => b.type === "tool_call");
+		if (toolCallBlock?.type !== "tool_call") {
+			throw new Error("tool_call block missing");
+		}
+		expect(toolCallBlock.input).toEqual({});
+
+		// 第二轮请求里 assistant 消息的 tool_call.input 同样是对象（Anthropic 要求 object）
+		expect(requests).toHaveLength(2);
+		const secondAssistant = requests[1]?.messages.find(
+			(m) => m.role === "assistant",
+		);
+		const sentBlock = secondAssistant?.content.find(
+			(b) => b.type === "tool_call",
+		);
+		if (sentBlock?.type !== "tool_call") {
+			throw new Error("tool_call block missing in round 2 request");
+		}
+		expect(sentBlock.input).toEqual({});
+
+		// 原始半截参数保留在 isError tool_result 文本里，供模型排查
+		const result = onlyToolResult(events);
+		expect(result.output.isError).toBe(true);
+		expect(result.output.content).toContain('{"text":"hi');
 	});
 });

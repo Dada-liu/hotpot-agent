@@ -6,4 +6,5 @@ turn/step 循环（M1 核心）：turn = 一次用户意图的完整处理，ste
 - `loop.ts` — `runTurn(cfg, signal)`。每个 step 前 `loadSession` + `deriveMessages` 从事件日志重建历史（日志即唯一事实源）；assistant 流事件实时转成 `AgentEvent`；消息完整接收后落盘 `assistant_msg`（含 usage/model/agentId），再执行 tool call 并逐个落盘 `tool_result`。
 - 并发规则：同批 tool call 全部 `isConcurrencySafe` 才 `Promise.all` 并行，否则按序执行（abort 时未开始的调用跳过）；并行结果按调用顺序落盘与产出。
 - 失败兜底：未知工具名、execute rejection（registry 擦除层的 ZodError、fs 错误等）都转成 isError tool_result，不向调用方抛。
-- 防御：`finish=max_tokens` 时该消息全部 tool call 记 isError（「arguments may be truncated」）不执行，错误结果落盘后继续下一 step；`AbortSignal` 贯穿流式请求与工具执行，中断时已落盘事件保留，产出 `done(aborted)`。
+- 防御：`finish=max_tokens` 时该消息全部 tool call 记 isError 不执行，错误结果落盘后继续下一 step。tool_call 的 `input` 恒以对象落盘：解析失败或非对象的 JSON（如截断的半截参数）落 `{}` 占位，原始片段（截到 200 字符）写进 isError tool_result 文本——下一步请求不会把字符串当 input 发给 API（Anthropic 要求 object）。
+- `AbortSignal` 贯穿流式请求与工具执行，中断时已落盘事件保留，产出 `done(aborted)`。流式中途 abort 表现为适配器 fetch 的 AbortError rejection：catch 里先判 `signal.aborted`，直接 `done(aborted)`，不记 error 会话事件。

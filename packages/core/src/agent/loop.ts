@@ -2,7 +2,8 @@
 // 不维护游离的内存消息数组：每个 step 前 loadSession + deriveMessages 从事件日志重建历史（不变量：模型可见 ⟺ 已记录）
 // 防御语义（docs/archive/02-architecture.md 第 3、4 节）：
 // - finish=max_tokens 的消息，其 tool call 参数可能被截断 → 全部记 isError 不执行
-// - AbortSignal 贯穿流式请求与工具执行；中断时已 append 的事件保留在日志里，产出 done(aborted)
+// - AbortSignal 贯穿流式请求与工具执行；中断时已 append 的事件保留在日志里，产出 done(aborted)。
+//   真实适配器把 signal 传给 fetch，流式中途 abort 表现为 AbortError rejection——catch 里先判 signal，不误记 error
 // - 工具 execute 的 rejection（ZodError、fs 错误等）兜底转成 isError tool_result，不向调用方抛
 
 import { randomUUID } from "node:crypto";
@@ -37,16 +38,27 @@ function defaultSystemPrompt(cfg: LoopConfig): string {
 	});
 }
 
-// 工具入参 JSON 解析；空串视为 {}，半截 JSON（如 max_tokens 截断）保留原文交给 schema 校验报 isError
+// 工具入参 JSON 解析；空串视为 {}
+// 解析失败（如 max_tokens 截断的半截 JSON）或结果不是对象时落 {} 占位：
+// 持久化的 assistant_msg 里 tool_call.input 恒为对象，下一步请求不会把字符串当 input 发给 API
+// （Anthropic tool_use.input 要求 object）；原始半截参数由 max_tokens 防御写进 isError tool_result 文本
 function parseToolInput(inputJson: string): unknown {
 	const trimmed = inputJson.trim();
 	if (trimmed === "") {
 		return {};
 	}
 	try {
-		return JSON.parse(trimmed) as unknown;
+		const parsed: unknown = JSON.parse(trimmed);
+		if (
+			typeof parsed === "object" &&
+			parsed !== null &&
+			!Array.isArray(parsed)
+		) {
+			return parsed;
+		}
+		return {};
 	} catch {
-		return inputJson;
+		return {};
 	}
 }
 
@@ -59,6 +71,8 @@ interface ResolvedCall {
 	id: string;
 	name: string;
 	input: unknown;
+	// 未解析的原始入参文本：max_tokens 防御写 isError 文本时带上，供模型排查
+	rawInput: string;
 }
 
 interface CallResult {
@@ -204,7 +218,12 @@ export async function* runTurn(
 							name: call.name,
 							input,
 						});
-						calls.push({ id: ev.id, name: call.name, input });
+						calls.push({
+							id: ev.id,
+							name: call.name,
+							input,
+							rawInput: call.inputJson,
+						});
 						yield { type: "tool_call", name: call.name, input };
 						break;
 					}
@@ -217,6 +236,12 @@ export async function* runTurn(
 				}
 			}
 		} catch (err) {
+			if (signal.aborted) {
+				// 流式中途 abort：真实适配器把 signal 传给 fetch，表现为 AbortError rejection。
+				// 这是中断不是错误——不落 error 会话事件，直接 done(aborted)
+				yield { type: "done", stopReason: "aborted" };
+				return;
+			}
 			const error =
 				err instanceof LlmError
 					? err
@@ -261,10 +286,15 @@ export async function* runTurn(
 		}
 
 		if (finish === "max_tokens") {
-			// 截断防御：参数可能不完整，全部判失败不执行；错误结果落盘后进入下一 step 让模型重试
+			// 截断防御：参数可能不完整，全部判失败不执行；错误结果落盘后进入下一 step 让模型重试。
+			// isError 文本带上原始半截参数（截到 200 字符），assistant_msg 里的 input 已由 parseToolInput 落 {} 占位
 			for (const call of calls) {
+				const fragment =
+					call.rawInput.length > 200
+						? `${call.rawInput.slice(0, 200)}…`
+						: call.rawInput;
 				const output: ToolOutput = {
-					content: `tool "${call.name}" not executed: finish reason is max_tokens, arguments may be truncated`,
+					content: `tool "${call.name}" not executed: finish reason is max_tokens, arguments may be truncated (raw arguments: ${fragment})`,
 					isError: true,
 				};
 				await cfg.session.append({
