@@ -1,0 +1,10 @@
+# Working in src/agent/
+
+- The turn/step agentic loop (M1 core). `runTurn(cfg: LoopConfig, signal)` (`loop.ts`) handles one user intent: each step rebuilds history from the session event log (`loadSession` + `deriveMessages` — the log is the single source of truth, no parallel in-memory history), calls `streamChat`, persists the completed `assistant_msg` (with usage/model/agentId), then executes that message's tool calls and persists one `tool_result` per call. A turn ends when a message contains no tool calls (`done` carries the finish reason).
+- Public contract in `types.ts`: `LoopConfig` bundles every `runTurn` input (session/agentId/adapter/model/apiKey/baseUrl/registry/approval/cwd/system); when `system` is omitted it is assembled via `buildSystemPrompt` + `registerDefaultSections` (guarded — registration is not idempotent). `AgentEvent` is the UI-facing stream element: `text` / `tool_call` / `tool_result` / `done` / `error`.
+- Concurrency rule: a tool-call batch runs via `Promise.all` only when every call's tool is `isConcurrencySafe`; otherwise calls run sequentially and stop early on abort. Parallel results are persisted and yielded in call order.
+- Failure containment: unknown tool names and `execute` rejections (ZodError from the registry's schema.parse wrapper, fs errors like EISDIR/EACCES) become `isError` tool_results — the loop never throws them at the caller.
+- Defenses: `finish = max_tokens` marks all of the message's tool calls `isError` ("arguments may be truncated") without executing, then continues to the next step. `AbortSignal` threads through `streamChat` and every tool execution; events appended before the abort stay on disk and the loop yields `done(aborted)`.
+- Session event ids use `crypto.randomUUID()`; `ToolContext` is assembled as `{ cwd: cfg.cwd, signal, approval: cfg.approval }`.
+- Erasable TypeScript only, `.ts` extension on relative imports, no `any`, no inline imports; comments in Simplified Chinese.
+- Verify with `pnpm test` and `pnpm exec biome check` from the repo root before committing.

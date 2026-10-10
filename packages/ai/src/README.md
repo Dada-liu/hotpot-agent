@@ -6,4 +6,5 @@
 - `models.ts`：模型目录 `MODELS` 与 `findModel`。数值取自各厂商官方定价 / 文档页，注释标注复核日期。
 - `sse.ts`：SSE 字节流解析器 `parseSseStream`（TextDecoder 流式解码 + 空行分帧 + `[DONE]` 终止），各协议适配器共用。
 - `api/`：协议适配器目录。`openai-completions.ts` 已实现；`anthropic-messages` 见后续任务。
+- `testing/`：随包发布的测试工具。`scriptedAdapter(script)` 按调用次序回放预录的 `StreamEvent` 序列，供 core/cli 的循环测试复用。
 - `index.ts`：包入口，仅 re-export，不写逻辑。
