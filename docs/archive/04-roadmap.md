@@ -11,7 +11,7 @@
 - packages/ai：统一接口 + anthropic-messages 协议 + openai-completions 协议；模型元数据常量（手写少量）
 - packages/core：turn/step 两级循环、append-only JSONL 事件日志 + deriveMessages、系统提示词 section 注册表、bash/read/write/edit 四工具（审批 waterfall + 高危确认）
 - packages/cli：行式对话入口，恢复会话
-- 配置：`~/hotpot-code/settings.json`（三档模型必填）
+- 配置：`~/.hotpot-code/settings.json`（三档模型必填）
 
 验收标准：
 1. CLI 中完成任务「找出 src 下所有 .ts 文件，统计行数写入 report.txt」，agent 自主多步调用工具完成

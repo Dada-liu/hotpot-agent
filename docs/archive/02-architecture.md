@@ -97,7 +97,7 @@ WorkerAgent: 可并行则 spawn TaskAgent × N（上限可配，默认 10）
 
 每会话一个文件，append-only，**日志即唯一事实源**。
 
-- 位置：`~/hotpot-code/sessions/<cwd 编码>/<timestamp>_<session-id>.jsonl`（借鉴 pi 按 cwd 分目录）
+- 位置：`~/.hotpot-code/sessions/<cwd 编码>/<timestamp>_<session-id>.jsonl`（借鉴 pi 按 cwd 分目录）
 - 格式直接定 v1 定稿，不做 dsh 那种 v0→v4 相邻迁移链；真出现 v2 需求时再加迁移
 - 恢复 = 顺序折叠日志，重建各 agent 的消息历史与队列状态
 
