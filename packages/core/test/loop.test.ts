@@ -12,6 +12,7 @@ import { z } from "zod";
 import { runTurn } from "../src/agent/loop.ts";
 import type { AgentEvent, LoopConfig } from "../src/agent/types.ts";
 import { ApprovalChain } from "../src/approval/chain.ts";
+import type { SessionEvent } from "../src/session/events.ts";
 import { createSession, loadSession } from "../src/session/store.ts";
 import { createToolRegistry } from "../src/tools/registry.ts";
 import type { ToolContext, ToolDefinition } from "../src/tools/tool.ts";
@@ -271,6 +272,82 @@ describe("runTurn", () => {
 			"assistant_msg",
 			"tool_result",
 		]);
+	});
+
+	it("串行批 abort：被跳过的 tool call 也补落 isError tool_result，会话日志不残缺", async () => {
+		// 三个非 concurrency-safe 工具 → 串行路径；第一个执行时触发 abort，
+		// s2/s3 不再执行，但必须各自落一条 isError tool_result——
+		// 否则下一轮请求里 assistant_msg 的 tool_use 没有对应 tool_result，API 直接 400
+		const executed: string[] = [];
+		const ac = new AbortController();
+		const makeTool = (name: string, abortOnRun = false) => ({
+			name,
+			description: name,
+			parameters: z.object({}),
+			isConcurrencySafe: false,
+			execute: async () => {
+				executed.push(name);
+				if (abortOnRun) {
+					ac.abort();
+				}
+				return { content: name };
+			},
+		});
+		const round: StreamEvent[] = [
+			{ type: "tool_call_start", id: "tc-1", name: "s1" },
+			{ type: "tool_call_delta", id: "tc-1", inputDelta: "{}" },
+			{ type: "tool_call_end", id: "tc-1" },
+			{ type: "tool_call_start", id: "tc-2", name: "s2" },
+			{ type: "tool_call_delta", id: "tc-2", inputDelta: "{}" },
+			{ type: "tool_call_end", id: "tc-2" },
+			{ type: "tool_call_start", id: "tc-3", name: "s3" },
+			{ type: "tool_call_delta", id: "tc-3", inputDelta: "{}" },
+			{ type: "tool_call_end", id: "tc-3" },
+			{ type: "usage", usage: { input: 5, output: 3 } },
+			{ type: "finish", reason: "tool_calls" },
+		];
+		const cfg = await makeConfig([round]);
+		cfg.registry.register(makeTool("s1", true));
+		cfg.registry.register(makeTool("s2"));
+		cfg.registry.register(makeTool("s3"));
+
+		const events = await collectTurn(cfg, ac.signal);
+		expect(executed).toEqual(["s1"]); // s2/s3 未执行
+
+		const results = events.filter(
+			(e): e is AgentEvent & { type: "tool_result" } =>
+				e.type === "tool_result",
+		);
+		expect(results).toHaveLength(3);
+		expect(results[1]?.output.isError).toBe(true);
+		expect(results[1]?.output.content).toMatch(/aborted/);
+		expect(results[2]?.output.isError).toBe(true);
+		expect(results[2]?.output.content).toMatch(/aborted/);
+		expect(events.at(-1)).toEqual({ type: "done", stopReason: "aborted" });
+
+		// 3 个 tool_result 全部落盘且按调用顺序关联 toolCallId
+		const { events: fileEvents } = await loadSession(cfg.session.filePath);
+		expect(fileEvents.map((e) => e.type)).toEqual([
+			"meta",
+			"user_msg",
+			"assistant_msg",
+			"tool_result",
+			"tool_result",
+			"tool_result",
+		]);
+		const persisted = fileEvents.filter(
+			(e): e is Extract<SessionEvent, { type: "tool_result" }> =>
+				e.type === "tool_result",
+		);
+		expect(persisted.map((e) => e.toolCallId)).toEqual([
+			"tc-1",
+			"tc-2",
+			"tc-3",
+		]);
+		expect(persisted[1]?.isError).toBe(true);
+		expect(persisted[1]?.content).toMatch(/aborted/);
+		expect(persisted[2]?.isError).toBe(true);
+		expect(persisted[2]?.content).toMatch(/aborted/);
 	});
 
 	it("execute rejection 兜底：schema 校验失败（ZodError）转成 isError tool_result，不向上抛", async () => {

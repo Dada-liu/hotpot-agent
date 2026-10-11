@@ -3,6 +3,7 @@
 // 防御语义（docs/archive/02-architecture.md 第 3、4 节）：
 // - finish=max_tokens 的消息，其 tool call 参数可能被截断 → 全部记 isError 不执行
 // - AbortSignal 贯穿流式请求与工具执行；中断时已 append 的事件保留在日志里，产出 done(aborted)。
+//   串行批里被跳过的 tool call 也补落 isError tool_result（assistant_msg 含全部 tool_call，缺一即坏会话）
 //   真实适配器把 signal 传给 fetch，流式中途 abort 表现为 AbortError rejection——catch 里先判 signal，不误记 error
 // - 工具 execute 的 rejection（ZodError、fs 错误等）兜底转成 isError tool_result，不向调用方抛
 
@@ -119,7 +120,17 @@ async function executeCalls(
 	const results: CallResult[] = [];
 	for (const call of calls) {
 		if (ctx.signal.aborted) {
-			break; // 中断后未开始的调用不再执行；已产出结果的调用照常落盘
+			// 中断后未开始的调用不再执行，但必须补 isError 结果：
+			// 含全部 N 个 tool_call 的 assistant_msg 已落盘，缺 tool_result 会让下一轮请求
+			// 违反「每个 tool_use 必须有 tool_result」的 API 约束（400），会话永久损坏
+			results.push({
+				call,
+				output: {
+					content: `tool "${call.name}" not executed: aborted`,
+					isError: true,
+				},
+			});
+			continue;
 		}
 		results.push({ call, output: await executeCall(cfg, call, ctx) });
 	}
