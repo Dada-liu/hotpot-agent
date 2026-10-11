@@ -11,8 +11,10 @@ export const BASH_DEFAULT_TIMEOUT_MS = 120000;
 export const MAX_OUTPUT_CHARS = 30000;
 
 // 高危命令正则表：集中导出，后续扩充只改这里
+// rm 行覆盖组合旗标任意顺序（-rf/-fr/-R/-frv）与长选项 --recursive——
+// 旧写法 /rm\s+-rf?/ 只认 r 在前的单一顺序，rm -fr 等变体会绕过审批
 export const DANGEROUS_COMMAND_PATTERNS: readonly RegExp[] = [
-	/rm\s+-rf?/,
+	/\brm\s+(-[a-zA-Z]*[rR][a-zA-Z]*|--recursive)\b/,
 	/mkfs/,
 	/dd\s+if=/,
 	/>\s*\/dev\//,

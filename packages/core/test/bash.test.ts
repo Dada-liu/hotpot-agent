@@ -170,6 +170,19 @@ describe("DANGEROUS_COMMAND_PATTERNS", () => {
 		}
 	});
 
+	it("rm 递归删除的旗标变体全部命中：组合旗标、r 在前、长选项", () => {
+		// 旧正则 /rm\s+-rf?/ 只认 r 在前的单一写法，这些变体曾绕过审批直接执行
+		const dangerous = [
+			"rm -fr /tmp/x",
+			"rm -R /tmp/x",
+			"rm --recursive --force /tmp/x",
+			"rm -frv ~",
+		];
+		for (const c of dangerous) {
+			expect(isDangerousCommand(c), c).toBe(true);
+		}
+	});
+
 	it("常规命令不误判", () => {
 		const safe = ["ls -la", "echo hi", "git push origin main", "cat /dev/null"];
 		for (const c of safe) {
