@@ -396,7 +396,7 @@ export async function runChatCli(argv: string[]): Promise<number> {
 	}
 	let settings: Settings;
 	try {
-		settings = loadSettings();
+		settings = loadSettings({ cwd: process.cwd() });
 	} catch (err) {
 		process.stderr.write(
 			`加载配置失败：${err instanceof Error ? err.message : String(err)}\n`,

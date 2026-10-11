@@ -21,7 +21,7 @@ export interface SessionSummary {
 	cwd: string;
 }
 
-// home 优先级：参数 > HOTPOT_HOME 环境变量 > ~/hotpot-code
+// home 优先级：参数 > HOTPOT_HOME 环境变量 > ~/.hotpot-code
 // 导出供 config.ts 复用，保证 settings 与会话日志的 home 解析规则一致
 export function resolveHome(home?: string): string {
 	if (home) {
@@ -31,7 +31,7 @@ export function resolveHome(home?: string): string {
 	if (env) {
 		return env;
 	}
-	return join(homedir(), "hotpot-code");
+	return join(homedir(), ".hotpot-code");
 }
 
 // cwd 编码：/ 与 : 替换为 -（如 /Users/a/proj → -Users-a-proj）

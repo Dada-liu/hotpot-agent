@@ -1,11 +1,14 @@
-// settings.json 加载：zod 校验 + apiKey 的 $ENV 插值
-// 文件位于 <home>/settings.json；home 解析规则与会话日志一致（参数 > HOTPOT_HOME > ~/hotpot-code），
-// 直接复用 session/store.ts 的 resolveHome，避免两处规则漂移。
-// $ENV 插值：apiKey 整串形如 "$NAME" 时取环境变量；未设置（或为空）直接抛错并带变量名——
+// settings.json 加载：双层配置（用户级 + 项目级）+ zod 校验 + apiKey 的 $ENV 插值
+// 用户级 <home>/settings.json 必填（含 models 与凭证）；home 解析复用 session/store.ts 的 resolveHome
+// （参数 > HOTPOT_HOME > ~/.hotpot-code），避免两处规则漂移。项目级自 cwd 向上逐级查找
+// .hotpot-code/settings.json，可选（找不到则跳过）；用收窄 schema 只解析白名单字段
+// （mainAgentTier/maxParallelTasks/planMaxRevisions/approval.policy），未知字段（含 models）静默剥离，
+// 凭证永远只来自用户级，规避恶意仓库借 baseUrl 重定向窃取凭证。
+// $ENV 插值：仅对用户级 apiKey 做；apiKey 整串形如 "$NAME" 时取环境变量；未设置（或为空）直接抛错并带变量名——
 // 静默传空 key 会把配置错误推迟成难以排查的远端 401（Review Focus 4）
 
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { z } from "zod";
 import { resolveHome } from "./session/store.ts";
 
@@ -32,8 +35,21 @@ const settingsSchema = z.object({
 		.optional(),
 });
 
+// 项目级收窄 schema：只含 4 个白名单字段；zod 默认 strip 静默丢弃 models 等未知字段
+const projectSettingsSchema = z.object({
+	mainAgentTier: z.enum(["high", "medium", "low"]).optional(),
+	maxParallelTasks: z.number().int().positive().optional(),
+	planMaxRevisions: z.number().int().positive().optional(),
+	approval: z
+		.object({
+			policy: z.enum(["ask-on-dangerous", "always", "never"]).optional(),
+		})
+		.optional(),
+});
+
 export type ModelRef = z.infer<typeof modelRefSchema>;
 export type Settings = z.infer<typeof settingsSchema>;
+type ProjectSettings = z.infer<typeof projectSettingsSchema>;
 
 // apiKey 的 $ENV 引用要求整串匹配，避免误伤字面值里恰好含 $ 的 key
 const ENV_REF_PATTERN = /^\$([A-Za-z_][A-Za-z0-9_]*)$/;
@@ -53,27 +69,37 @@ function resolveApiKey(tier: string, apiKey: string, path: string): string {
 	return value;
 }
 
-// 同步读取 + 校验 + 插值；任何失败都抛出含文件路径与具体原因的错误
-export function loadSettings(home?: string): Settings {
-	const path = join(resolveHome(home), "settings.json");
+// 读取并 JSON.parse；失败抛含路径的错误，区分「找不到/不可读」与「非法 JSON」
+function readJsonFile(path: string): unknown {
 	let text: string;
 	try {
 		text = readFileSync(path, "utf8");
 	} catch {
 		throw new Error(`settings file not found or unreadable: ${path}`);
 	}
-	let json: unknown;
 	try {
-		json = JSON.parse(text);
+		return JSON.parse(text) as unknown;
 	} catch {
 		throw new Error(`settings file is not valid JSON: ${path}`);
 	}
-	const parsed = settingsSchema.safeParse(json);
+}
+
+// 校验失败统一抛错：列出每个字段的问题与位置
+function invalidSettings(
+	path: string,
+	issues: ReadonlyArray<{ path: PropertyKey[]; message: string }>,
+): never {
+	const detail = issues
+		.map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
+		.join("; ");
+	throw new Error(`invalid settings in ${path}: ${detail}`);
+}
+
+// 用户级：必填，含 models 与凭证；校验通过后仅对 apiKey 做 $ENV 插值
+function loadUserSettingsFrom(path: string): Settings {
+	const parsed = settingsSchema.safeParse(readJsonFile(path));
 	if (!parsed.success) {
-		const detail = parsed.error.issues
-			.map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
-			.join("; ");
-		throw new Error(`invalid settings in ${path}: ${detail}`);
+		invalidSettings(path, parsed.error.issues);
 	}
 	const settings = parsed.data;
 	for (const tier of ["high", "medium", "low"] as const) {
@@ -84,4 +110,56 @@ export function loadSettings(home?: string): Settings {
 		);
 	}
 	return settings;
+}
+
+// 项目级：收窄 schema，只解析白名单字段；未知字段（含 models）被 strip，也不做 $ENV 插值
+function loadProjectSettings(path: string): ProjectSettings {
+	const parsed = projectSettingsSchema.safeParse(readJsonFile(path));
+	if (!parsed.success) {
+		invalidSettings(path, parsed.error.issues);
+	}
+	return parsed.data;
+}
+
+// 自 cwd 向上逐级查找 .hotpot-code/settings.json，找到即返回其绝对路径；到文件系统根仍未找到返回 null
+function findProjectSettingsPath(cwd: string): string | null {
+	let dir = resolve(cwd);
+	for (;;) {
+		const candidate = join(dir, ".hotpot-code", "settings.json");
+		if (existsSync(candidate)) {
+			return candidate;
+		}
+		const parent = dirname(dir);
+		if (parent === dir) {
+			return null;
+		}
+		dir = parent;
+	}
+}
+
+// 合并：用户级为底，项目级白名单字段覆盖；approval 单独合并，空 approval 不抹掉用户级 policy
+function mergeSettings(user: Settings, project: ProjectSettings): Settings {
+	return {
+		...user,
+		...project,
+		approval:
+			project.approval === undefined
+				? user.approval
+				: { ...user.approval, ...project.approval },
+	};
+}
+
+// 同步读取 + 双层合并 + 插值；任何失败都抛出含文件路径与具体原因的错误
+export function loadSettings(options?: {
+	home?: string;
+	cwd?: string;
+}): Settings {
+	const userPath = join(resolveHome(options?.home), "settings.json");
+	const user = loadUserSettingsFrom(userPath);
+	const projectPath = findProjectSettingsPath(options?.cwd ?? process.cwd());
+	// 无项目配置，或向上查找恰好落在用户级 home 自身（非项目配置）时，直接返回用户级
+	if (projectPath === null || projectPath === userPath) {
+		return user;
+	}
+	return mergeSettings(user, loadProjectSettings(projectPath));
 }

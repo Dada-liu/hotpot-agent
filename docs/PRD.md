@@ -26,7 +26,7 @@
 - pnpm monorepo，Node >= 22 + TypeScript erasable-syntax-only（`.ts` 后缀 import，Node strip-only 开发直跑），vitest 测试，biome 检查，tsdown 发布
 - 包结构：`packages/ai`（LLM 适配，api×provider 二维，首批 anthropic-messages + openai-completions）→ `packages/core`（turn/step 循环、工具、提示词、会话日志）→ `packages/orchestrator`（三层编排）→ `packages/server` + `packages/web`（M3）、`packages/cli`（M1）
 - **会话日志即唯一事实源**：append-only JSONL 事件日志，`deriveMessages()` 折叠出模型历史；存储于 `~/hotpot-code/sessions/`
-- 配置：`~/hotpot-code/settings.json`，含 **high/medium/low 三档模型**、`maxParallelTasks`（默认 10）、`planMaxRevisions`（默认 3）
+- 配置：双层——用户级 `~/.hotpot-code/settings.json`（三档模型 high/medium/low、`maxParallelTasks` 默认 10、`planMaxRevisions` 默认 3）+ 项目级 `./.hotpot-code/settings.json`（仅可覆盖非凭证字段；凭证只从用户级读取）
 - 技术方案参考 pi 与 deepseek-harness，借鉴与取舍清单见 `docs/archive/02-architecture.md` 第 7、8 节
 
 ## 4. 功能需求
