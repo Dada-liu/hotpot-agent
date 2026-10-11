@@ -29,4 +29,28 @@ pnpm exec biome check # lint + format 检查
 
 ## 当前状态
 
-M1 实现进行中（计划见 `docs/superpowers/plans/2026-10-10-m1-minimal-loop.md`）。
+M1 已完成：终端里跑通「对话 → 工具调用 → 完成任务」最小闭环（脚本化验收见 `packages/cli/test/acceptance.test.ts`，验收标准见 `docs/archive/04-roadmap.md` M1 节）。
+
+运行方式：
+
+1. 配置 `~/hotpot-code/settings.json`（三档模型必填；`apiKey` 可写字面值，或 `"$VAR"` 引用环境变量）：
+
+   ```json
+   {
+     "models": {
+       "high": { "provider": "anthropic", "model": "claude-sonnet-4-5", "apiKey": "$ANTHROPIC_API_KEY" },
+       "medium": { "provider": "openai", "model": "gpt-4.1", "apiKey": "$OPENAI_API_KEY" },
+       "low": {
+         "provider": "deepseek",
+         "model": "deepseek-chat",
+         "apiKey": "$DEEPSEEK_API_KEY",
+         "baseUrl": "https://api.deepseek.com/v1"
+       }
+     }
+   }
+   ```
+
+   内置目录模型的协议自动选择（anthropic→anthropic-messages，其余→openai-completions）；`baseUrl` 可省略，缺省走各家官方端点（openai 系缺省 `https://api.openai.com/v1`，deepseek/moonshot 等第三方端点需显式填写）。
+
+2. `pnpm dev cli chat` 启动行式对话：`/exit` 退出，Ctrl-C 中断当前回合；高危命令与覆盖写会询问 `y/n` 审批（默认 n）。
+3. 会话以 JSONL 落盘在 `~/hotpot-code/sessions/`；`pnpm dev cli chat --session <会话文件路径>` 恢复历史继续对话。

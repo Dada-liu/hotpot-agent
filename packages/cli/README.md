@@ -7,4 +7,4 @@
 - `hotpot chat [--session <path>] [--tier high|medium|low]`；tier 缺省取 `settings.mainAgentTier`，再缺省 `high`。`--session` 恢复会话（`resumeSession` 追加到同一文件，`runTurn` 内部 `loadSession` + `deriveMessages` 重建历史）。
 - 配置经 `@hotpot/core` 的 `loadSettings` 读取 `<home>/settings.json`；真实适配器由 `resolveModelAdapter` 按 `ModelRef` 的 provider→api 映射选择，未知模型按 provider 名推断协议并告警（contextWindow 取 128000）。
 
-当前状态：Task 11 已完成，见 `src/`、`test/` 目录文档。
+当前状态：M1 已完成（Task 11 交付本包全部能力，Task 12 补 M1 验收测试 `test/acceptance.test.ts`），见 `src/`、`test/` 目录文档。
