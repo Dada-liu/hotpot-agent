@@ -40,12 +40,12 @@
 **Interfaces:**
 - Produces: `pnpm test`（vitest 跑 `packages/*/test/**/*.test.ts`）；`pnpm dev <pkg>`（tsx 运行）；tsconfig 开 `erasableSyntaxOnly`、`allowImportingTsExtensions`、`rewriteRelativeImportExtensions`、`strict`
 
-- [ ] **Step 1: 写冒烟测试** `packages/core/test/smoke.test.ts`：断言 `1 + 1 === 2`（占位，验证管线）
-- [ ] **Step 2: 运行 `pnpm test` 确认失败**（vitest 未装/未配）
-- [ ] **Step 3: 创建脚手架文件**；三个包的 package.json 声明 `"type": "module"`，workspace 互相依赖用 `workspace:*`
-- [ ] **Step 4: `pnpm install && pnpm test` 通过；`pnpm exec biome check` 通过**
-- [ ] **Step 5: 补三个包的 README.md（中文）/AGENTS.md（英文）**，根 README.md 目录结构去掉「待 M1 启动后创建」标注
-- [ ] **Step 6: Commit** `chore: scaffold pnpm monorepo`
+- [x] **Step 1: 写冒烟测试** `packages/core/test/smoke.test.ts`：断言 `1 + 1 === 2`（占位，验证管线）
+- [x] **Step 2: 运行 `pnpm test` 确认失败**（vitest 未装/未配）
+- [x] **Step 3: 创建脚手架文件**；三个包的 package.json 声明 `"type": "module"`，workspace 互相依赖用 `workspace:*`
+- [x] **Step 4: `pnpm install && pnpm test` 通过；`pnpm exec biome check` 通过**
+- [x] **Step 5: 补三个包的 README.md（中文）/AGENTS.md（英文）**，根 README.md 目录结构去掉「待 M1 启动后创建」标注
+- [x] **Step 6: Commit** `chore: scaffold pnpm monorepo`
 
 ### Task 2: packages/ai 类型与模型目录
 

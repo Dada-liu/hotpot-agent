@@ -1,0 +1,9 @@
+{
+	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		// AbortController/AbortSignal/DOMException 等 Node 22 运行时全局的类型声明来自 DOM lib，
+		// 做法与 packages/core/tsconfig.json 一致
+		"lib": ["es2023", "dom"]
+	},
+	"include": ["src", "test"]
+}

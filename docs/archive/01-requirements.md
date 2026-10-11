@@ -86,7 +86,7 @@ bash / read / write / edit 四个（已确认）。理由：这是 code agent �
 #### F6 原始会话全量存储
 - 每会话一个 JSONL 文件：每条记录是一个事件（用户消息、LLM 请求/响应、tool call、tool result、agent 派生、usage、错误）
 - 事件流可完整重建任意时刻的上下文（append-only，不改写历史）
-- 存储位置：`~/hotpot-code/sessions/`（已确认，详见 `docs/02-architecture.md` 第 5 节）
+- 存储位置：`~/.hotpot-code/sessions/`（已确认，详见 `docs/02-architecture.md` 第 5 节）
 - 验收：kill 进程后重启，能从 JSONL 恢复会话继续对话
 
 #### F7 Web 端
@@ -129,7 +129,7 @@ bash / read / write / edit 四个（已确认）。理由：这是 code agent �
 | 问题 | 决议 |
 |------|------|
 | 四个基础工具 | bash / read / write / edit |
-| 会话存储位置 | `~/hotpot-code/sessions/` |
+| 会话存储位置 | `~/.hotpot-code/sessions/` |
 | 首批 LLM provider | Anthropic + OpenAI 兼容协议（api × provider 二维适配，见 `docs/02-architecture.md`） |
 | 项目名 | hotpot-code |
 | 自建 benchmark 题目来源 | 金融、软件开发、自媒体运营三个领域各先出 1 题（由设计者出题打底），后续从日常使用本 agent 的历史任务中沉淀 |

@@ -97,7 +97,7 @@ WorkerAgent: 可并行则 spawn TaskAgent × N（上限可配，默认 10）
 
 每会话一个文件，append-only，**日志即唯一事实源**。
 
-- 位置：`~/hotpot-code/sessions/<cwd 编码>/<timestamp>_<session-id>.jsonl`（借鉴 pi 按 cwd 分目录）
+- 位置：`~/.hotpot-code/sessions/<cwd 编码>/<timestamp>_<session-id>.jsonl`（借鉴 pi 按 cwd 分目录）
 - 格式直接定 v1 定稿，不做 dsh 那种 v0→v4 相邻迁移链；真出现 v2 需求时再加迁移
 - 恢复 = 顺序折叠日志，重建各 agent 的消息历史与队列状态
 
@@ -126,27 +126,36 @@ WorkerAgent: 可并行则 spawn TaskAgent × N（上限可配，默认 10）
 
 ## 6. 配置体系
 
-home 目录：`~/hotpot-code/`（用户级，环境变量可覆盖）。
+双层配置（参考 kimi-code / pi 惯例）：项目级 `.hotpot-code/` 覆盖用户级 `~/.hotpot-code/` 的指定字段。
+
+**用户级 `~/.hotpot-code/`**（`HOTPOT_HOME` 环境变量可覆盖）：
 
 ```
-~/hotpot-code/
-├── settings.json     # 主配置
+~/.hotpot-code/
+├── settings.json     # 主配置（含模型与凭证）
 ├── sessions/         # 会话日志
 └── memory/           # 用户记忆（M4）
 ```
 
-`settings.json` 可配项（随里程碑增加，加粗为已确认需求）：
+**项目级 `./.hotpot-code/`**（自 cwd 向上逐级查找，首个含 `settings.json` 的目录生效）：
 
-| 配置项 | 默认 | 说明 |
-|--------|------|------|
-| **models.high / models.medium / models.low** | 必填 | 三档模型：provider、model、baseUrl、apiKey（支持 `$ENV` 引用环境变量） |
-| models.mainAgent | high | 主 agent 默认档位 |
-| **maxParallelTasks** | **10** | 并行 TaskAgent 上限 |
-| **planMaxRevisions** | **3** | plan 审批修订轮次上限 |
-| approval.policy | ask-on-dangerous | 高危命令确认策略 |
-| telemetry.enabled | true | 本地遥测开关 |
+```
+<项目>/.hotpot-code/
+└── settings.json     # 项目覆盖：仅允许非凭证字段（见下）
+```
 
-项目级配置（`<项目>/.hotpot-code/settings.json` 覆盖用户级）留到 M4 再做，需要配套 project trust 机制防注入（借鉴 pi）。
+`settings.json` 可配项（加粗为已确认需求）：
+
+| 配置项 | 默认 | 层级 | 说明 |
+|--------|------|------|------|
+| **models.high / medium / low** | 必填 | 仅用户级 | provider、model、baseUrl、apiKey（支持 `$ENV` 引用环境变量）；项目级忽略 models，防恶意仓库借 baseUrl 重定向窃取凭证 |
+| mainAgentTier | high | 用户级+项目级 | 主 agent 默认档位 |
+| **maxParallelTasks** | **10** | 用户级+项目级 | 并行 TaskAgent 上限 |
+| **planMaxRevisions** | **3** | 用户级+项目级 | plan 审批修订轮次上限 |
+| approval.policy | ask-on-dangerous | 用户级+项目级 | 高危命令确认策略 |
+| telemetry.enabled | true | 用户级 | 本地遥测开关（M5） |
+
+项目级可覆盖白名单：`mainAgentTier`、`maxParallelTasks`、`planMaxRevisions`、`approval.policy`；其余字段（含 models）一律忽略。凭证只从用户级读取，规避恶意仓库注入风险（M4 再考虑 pi 式 project trust 提示）。
 
 ## 7. 从 pi / dsh 借鉴的设计（汇总）
 

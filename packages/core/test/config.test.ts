@@ -1,0 +1,221 @@
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { loadSettings } from "../src/config.ts";
+import { resolveHome } from "../src/session/store.ts";
+
+// 每个用例一个临时 home；用户级 settings.json 写在 <home>/settings.json
+let home: string;
+
+beforeEach(async () => {
+	home = await mkdtemp(join(tmpdir(), "hotpot-config-test-"));
+});
+
+afterEach(async () => {
+	await rm(home, { recursive: true, force: true });
+});
+
+// 全字段合法 settings；apiKey 用字面值（不触发 $ENV 插值）
+function validSettings(): unknown {
+	return {
+		models: {
+			high: {
+				provider: "anthropic",
+				model: "claude-sonnet-4-5",
+				apiKey: "sk-ant-literal",
+			},
+			medium: {
+				provider: "openai",
+				model: "gpt-4.1",
+				apiKey: "sk-oai-literal",
+				baseUrl: "https://api.openai.com",
+			},
+			low: {
+				provider: "deepseek",
+				model: "deepseek-chat",
+				apiKey: "sk-ds-literal",
+			},
+		},
+		mainAgentTier: "medium",
+		maxParallelTasks: 4,
+		planMaxRevisions: 2,
+		approval: { policy: "ask-on-dangerous" },
+	};
+}
+
+async function writeSettings(data: unknown): Promise<void> {
+	await writeFile(join(home, "settings.json"), JSON.stringify(data));
+}
+
+// 在指定目录写入项目级配置 <dir>/.hotpot-code/settings.json
+async function writeProjectSettings(dir: string, data: unknown): Promise<void> {
+	const projectDir = join(dir, ".hotpot-code");
+	await mkdir(projectDir, { recursive: true });
+	await writeFile(join(projectDir, "settings.json"), JSON.stringify(data));
+}
+
+describe("resolveHome", () => {
+	it("默认返回 ~/.hotpot-code（不再用 ~/hotpot-code）", () => {
+		const oldEnv = process.env.HOTPOT_HOME;
+		delete process.env.HOTPOT_HOME;
+		try {
+			expect(resolveHome()).toBe(join(homedir(), ".hotpot-code"));
+			expect(resolveHome(undefined)).toBe(join(homedir(), ".hotpot-code"));
+		} finally {
+			if (oldEnv === undefined) {
+				delete process.env.HOTPOT_HOME;
+			} else {
+				process.env.HOTPOT_HOME = oldEnv;
+			}
+		}
+	});
+});
+
+describe("loadSettings", () => {
+	it("解析全字段合法 settings，值原样保留", async () => {
+		await writeSettings(validSettings());
+		const settings = loadSettings({ home, cwd: home });
+		expect(settings).toEqual(validSettings());
+	});
+
+	it("只给 models 三档即可，可选字段为 undefined", async () => {
+		const minimal = {
+			models: {
+				high: { provider: "anthropic", model: "m1", apiKey: "k1" },
+				medium: { provider: "openai", model: "m2", apiKey: "k2" },
+				low: { provider: "deepseek", model: "m3", apiKey: "k3" },
+			},
+		};
+		await writeSettings(minimal);
+		const settings = loadSettings({ home, cwd: home });
+		expect(settings.models.high.provider).toBe("anthropic");
+		expect(settings.mainAgentTier).toBeUndefined();
+		expect(settings.maxParallelTasks).toBeUndefined();
+		expect(settings.planMaxRevisions).toBeUndefined();
+		expect(settings.approval).toBeUndefined();
+	});
+
+	it("缺档位报错：models 少 medium 时抛出含 medium 的错误", async () => {
+		const data = validSettings() as { models: Record<string, unknown> };
+		delete data.models.medium;
+		await writeSettings(data);
+		expect(() => loadSettings({ home, cwd: home })).toThrow(/medium/);
+	});
+
+	it("apiKey 的 $ENV 引用插值为环境变量的值", async () => {
+		const data = validSettings() as {
+			models: { high: { apiKey: string } };
+		};
+		data.models.high.apiKey = "$HOTPOT_TEST_API_KEY";
+		await writeSettings(data);
+		process.env.HOTPOT_TEST_API_KEY = "sk-from-env";
+		try {
+			const settings = loadSettings({ home, cwd: home });
+			expect(settings.models.high.apiKey).toBe("sk-from-env");
+			// 字面 apiKey 不插值
+			expect(settings.models.low.apiKey).toBe("sk-ds-literal");
+		} finally {
+			delete process.env.HOTPOT_TEST_API_KEY;
+		}
+	});
+
+	it("Review Focus 4：$ENV 变量未设置时报错，错误含变量名", async () => {
+		const data = validSettings() as {
+			models: { low: { apiKey: string } };
+		};
+		data.models.low.apiKey = "$HOTPOT_TEST_UNSET_KEY";
+		await writeSettings(data);
+		delete process.env.HOTPOT_TEST_UNSET_KEY;
+		expect(() => loadSettings({ home, cwd: home })).toThrow(
+			/HOTPOT_TEST_UNSET_KEY/,
+		);
+	});
+
+	it("用户级 settings.json 不存在时报错，错误含文件路径", () => {
+		expect(() => loadSettings({ home, cwd: home })).toThrow(/settings\.json/);
+	});
+
+	it("用户级 settings.json 非法 JSON 报错，错误含文件路径", async () => {
+		await writeFile(join(home, "settings.json"), "{not json");
+		expect(() => loadSettings({ home, cwd: home })).toThrow(/settings\.json/);
+	});
+
+	it("home 缺省时读 HOTPOT_HOME 环境变量", async () => {
+		await writeSettings(validSettings());
+		const oldEnv = process.env.HOTPOT_HOME;
+		process.env.HOTPOT_HOME = home;
+		try {
+			const settings = loadSettings({ cwd: home });
+			expect(settings.models.high.model).toBe("claude-sonnet-4-5");
+		} finally {
+			if (oldEnv === undefined) {
+				delete process.env.HOTPOT_HOME;
+			} else {
+				process.env.HOTPOT_HOME = oldEnv;
+			}
+		}
+	});
+
+	it("项目级覆盖白名单字段，其余字段保留用户级", async () => {
+		await writeSettings(validSettings());
+		await writeProjectSettings(home, {
+			mainAgentTier: "high",
+			maxParallelTasks: 8,
+			planMaxRevisions: 5,
+			approval: { policy: "always" },
+		});
+		const settings = loadSettings({ home, cwd: home });
+		expect(settings.mainAgentTier).toBe("high");
+		expect(settings.maxParallelTasks).toBe(8);
+		expect(settings.planMaxRevisions).toBe(5);
+		expect(settings.approval?.policy).toBe("always");
+		// 凭证与未覆盖字段仍来自用户级
+		expect(settings.models.high.model).toBe("claude-sonnet-4-5");
+	});
+
+	it("项目级 models 被忽略，凭证只来自用户级", async () => {
+		await writeSettings(validSettings());
+		await writeProjectSettings(home, {
+			mainAgentTier: "high",
+			models: {
+				high: { provider: "evil", model: "evil-model", apiKey: "evil-key" },
+			},
+		});
+		const settings = loadSettings({ home, cwd: home });
+		expect(settings.mainAgentTier).toBe("high");
+		expect(settings.models.high.provider).toBe("anthropic");
+		expect(settings.models.high.apiKey).toBe("sk-ant-literal");
+	});
+
+	it("项目级未知字段静默剥离，不报错", async () => {
+		await writeSettings(validSettings());
+		await writeProjectSettings(home, { foo: "bar", mainAgentTier: "high" });
+		const settings = loadSettings({ home, cwd: home });
+		expect(settings.mainAgentTier).toBe("high");
+		expect(
+			(settings as unknown as Record<string, unknown>).foo,
+		).toBeUndefined();
+	});
+
+	it("自 cwd 向上逐级查找，找到项目配置", async () => {
+		await writeSettings(validSettings());
+		const projectRoot = join(home, "proj");
+		const nestedCwd = join(projectRoot, "a", "b");
+		await writeProjectSettings(projectRoot, { maxParallelTasks: 16 });
+		const settings = loadSettings({ home, cwd: nestedCwd });
+		expect(settings.maxParallelTasks).toBe(16);
+		expect(settings.mainAgentTier).toBe("medium");
+	});
+
+	it("无项目配置时结果等同用户级", async () => {
+		await writeSettings(validSettings());
+		const bareCwd = await mkdtemp(join(tmpdir(), "hotpot-config-cwd-"));
+		try {
+			const settings = loadSettings({ home, cwd: bareCwd });
+			expect(settings).toEqual(validSettings());
+		} finally {
+			await rm(bareCwd, { recursive: true, force: true });
+		}
+	});
+});

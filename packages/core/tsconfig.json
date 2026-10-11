@@ -1,0 +1,9 @@
+{
+	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		// 依赖 @hotpot/ai，其契约类型引用 Headers / ReadableStream / AbortSignal 等
+		// Node 22 运行时全局；类型声明来自 DOM lib，做法与 packages/ai/tsconfig.json 一致
+		"lib": ["es2023", "dom"]
+	},
+	"include": ["src", "test"]
+}
