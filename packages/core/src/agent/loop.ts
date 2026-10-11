@@ -2,6 +2,7 @@
 // 不维护游离的内存消息数组：每个 step 前 loadSession + deriveMessages 从事件日志重建历史（不变量：模型可见 ⟺ 已记录）
 // 防御语义（docs/archive/02-architecture.md 第 3、4 节）：
 // - finish=max_tokens 的消息，其 tool call 参数可能被截断 → 全部记 isError 不执行
+// - finish=error（provider 返回未映射的 stop reason）时工具同样不执行：全部记 isError 后 done(error) 结束 turn
 // - AbortSignal 贯穿流式请求与工具执行；中断时已 append 的事件保留在日志里，产出 done(aborted)。
 //   串行批里被跳过的 tool call 也补落 isError tool_result（assistant_msg 含全部 tool_call，缺一即坏会话）
 //   真实适配器把 signal 传给 fetch，流式中途 abort 表现为 AbortError rejection——catch 里先判 signal，不误记 error
@@ -139,6 +140,23 @@ async function executeCalls(
 
 function nowIso(): string {
 	return new Date().toISOString();
+}
+
+// 落盘一条 tool_result 会话事件并返回对应的 AgentEvent；max_tokens / error 防御与正常执行共用
+async function persistToolResult(
+	cfg: LoopConfig,
+	call: ResolvedCall,
+	output: ToolOutput,
+): Promise<AgentEvent> {
+	await cfg.session.append({
+		type: "tool_result",
+		id: randomUUID(),
+		ts: nowIso(),
+		toolCallId: call.id,
+		content: output.content,
+		isError: output.isError ?? false,
+	});
+	return { type: "tool_result", name: call.name, output };
 }
 
 // 落盘 error 会话事件并产出 error AgentEvent，结束 turn
@@ -308,31 +326,30 @@ export async function* runTurn(
 					content: `tool "${call.name}" not executed: finish reason is max_tokens, arguments may be truncated (raw arguments: ${fragment})`,
 					isError: true,
 				};
-				await cfg.session.append({
-					type: "tool_result",
-					id: randomUUID(),
-					ts: nowIso(),
-					toolCallId: call.id,
-					content: output.content,
-					isError: true,
-				});
-				yield { type: "tool_result", name: call.name, output };
+				yield await persistToolResult(cfg, call, output);
 			}
 			continue;
+		}
+
+		if (finish === "error") {
+			// provider 返回错误状态（适配器把未映射的 stop reason 归一为 error）：
+			// 工具不执行，但每个 tool_call 仍要补落 isError tool_result（assistant_msg 已含全部
+			// tool_call，缺一会坏会话）；与 max_tokens 不同，不在错误状态上继续，done(error) 结束 turn
+			for (const call of calls) {
+				const output: ToolOutput = {
+					content: `tool "${call.name}" not executed: provider returned finish reason "error"`,
+					isError: true,
+				};
+				yield await persistToolResult(cfg, call, output);
+			}
+			yield { type: "done", stopReason: "error" };
+			return;
 		}
 
 		const ctx: ToolContext = { cwd: cfg.cwd, signal, approval: cfg.approval };
 		const results = await executeCalls(cfg, calls, ctx);
 		for (const { call, output } of results) {
-			await cfg.session.append({
-				type: "tool_result",
-				id: randomUUID(),
-				ts: nowIso(),
-				toolCallId: call.id,
-				content: output.content,
-				isError: output.isError ?? false,
-			});
-			yield { type: "tool_result", name: call.name, output };
+			yield await persistToolResult(cfg, call, output);
 		}
 		// 本 step 的工具结果已全部落盘，继续下一 step
 	}

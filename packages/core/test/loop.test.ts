@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
 	type ChatRequest,
+	type FinishReason,
 	type ModelInfo,
 	type StreamEvent,
 	scriptedAdapter,
@@ -78,7 +79,7 @@ function toolCallRound(
 	name: string,
 	id: string,
 	inputJson: string,
-	finish: "tool_calls" | "max_tokens" = "tool_calls",
+	finish: FinishReason = "tool_calls",
 ): StreamEvent[] {
 	return [
 		{ type: "tool_call_start", id, name },
@@ -348,6 +349,42 @@ describe("runTurn", () => {
 		expect(persisted[1]?.content).toMatch(/aborted/);
 		expect(persisted[2]?.isError).toBe(true);
 		expect(persisted[2]?.content).toMatch(/aborted/);
+	});
+
+	it("finish=error 且有 tool call：工具不执行，补落 isError tool_result 后 done(error)", async () => {
+		// provider 返回未映射的 stop reason 时适配器归一为 finish=error（见
+		// packages/ai/src/api/* 的 mapStopReason/mapFinishReason）；
+		// 错误状态下的 tool call 不能照常执行，但 tool_result 仍要补齐——
+		// 否则 assistant_msg 的 tool_use 没有对应 tool_result，会话损坏
+		const spy: ToolSpy[] = [];
+		const cfg = await makeConfig([
+			toolCallRound("echo", "tc-1", '{"text":"hi"}', "error"),
+		]);
+		cfg.registry.register(makeEchoTool(spy));
+
+		const events = await collectTurn(cfg, new AbortController().signal);
+		expect(spy).toHaveLength(0); // finish=error：工具未执行
+
+		const result = onlyToolResult(events);
+		expect(result.name).toBe("echo");
+		expect(result.output.isError).toBe(true);
+		expect(result.output.content).toMatch(/error/);
+		expect(events.at(-1)).toEqual({ type: "done", stopReason: "error" });
+
+		const { events: fileEvents } = await loadSession(cfg.session.filePath);
+		expect(fileEvents.map((e) => e.type)).toEqual([
+			"meta",
+			"user_msg",
+			"assistant_msg",
+			"tool_result",
+		]);
+		const tr = fileEvents.find((e) => e.type === "tool_result");
+		if (tr?.type !== "tool_result") {
+			throw new Error("tool_result missing in session file");
+		}
+		expect(tr.toolCallId).toBe("tc-1");
+		expect(tr.isError).toBe(true);
+		expect(tr.content).toMatch(/error/);
 	});
 
 	it("execute rejection 兜底：schema 校验失败（ZodError）转成 isError tool_result，不向上抛", async () => {
