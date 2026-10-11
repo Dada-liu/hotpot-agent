@@ -253,6 +253,44 @@ describe("editTool.execute", () => {
 		);
 	});
 
+	it("new_string 含 $ 特殊模式（$$、$&、$`、$'）时逐字节写回，不做模式展开", async () => {
+		// JS 的 string.replace 即使 pattern 是字符串，replacement 里的
+		// $$、$&、$`、$' 仍会被展开；函数式 replacer 才不做任何模式解释
+		await writeFile(join(dir, "dollar.txt"), "PREFIX SUFFIX\n");
+		const { ctx } = makeCtx();
+		const newString = "cost=$$, match=$&, before=$`, after=$'";
+
+		const out = await editTool.execute(
+			{ path: "dollar.txt", old_string: "PREFIX", new_string: newString },
+			ctx,
+		);
+
+		expect(out.isError).toBeFalsy();
+		expect(await readFile(join(dir, "dollar.txt"), "utf8")).toBe(
+			`${newString} SUFFIX\n`,
+		);
+	});
+
+	it("replace_all=true 时同样不解释 $ 模式", async () => {
+		await writeFile(join(dir, "dollar-all.txt"), "x a x b x\n");
+		const { ctx } = makeCtx();
+
+		const out = await editTool.execute(
+			{
+				path: "dollar-all.txt",
+				old_string: "x",
+				new_string: "$$&$&",
+				replace_all: true,
+			},
+			ctx,
+		);
+
+		expect(out.isError).toBeFalsy();
+		expect(await readFile(join(dir, "dollar-all.txt"), "utf8")).toBe(
+			"$$&$& a $$&$& b $$&$&\n",
+		);
+	});
+
 	it("isConcurrencySafe 为 false（有副作用，同批串行）", () => {
 		expect(editTool.isConcurrencySafe).toBe(false);
 	});

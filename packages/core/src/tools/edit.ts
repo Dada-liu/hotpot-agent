@@ -1,4 +1,5 @@
 // edit 工具：对文件做精确字符串替换（非正则），替换后整体写回。
+// 替换用函数式 replacer：new_string 里的 $$、$& 等 $ 模式逐字节保留，不做展开。
 // old_string 出现 0 次 → isError 并建议先 read 拿到当前内容；出现多次且未传
 // replace_all → isError 并给出出现次数；replace_all=true 时替换全部。
 // 读写都用原始字节（utf8 往返不改动未触及的部分），CRLF 文件因此可精确匹配且不丢 \r。
@@ -62,10 +63,12 @@ export const editTool: ToolDefinition<EditArgs> = {
 			};
 		}
 
-		// count === 1 时 replace 只命中唯一处；replace_all 时替换全部
+		// count === 1 时 replace 只命中唯一处；replace_all 时替换全部。
+		// replacement 必须用函数式 replacer：字符串 replacement 里的 $$、$&、$`、$'
+		// 会被当成特殊模式展开（即使 pattern 是字符串），把含 $$ 的脚本静默改坏
 		const replaced = args.replace_all
-			? text.replaceAll(args.old_string, args.new_string)
-			: text.replace(args.old_string, args.new_string);
+			? text.replaceAll(args.old_string, () => args.new_string)
+			: text.replace(args.old_string, () => args.new_string);
 		await writeFile(fullPath, replaced);
 		return {
 			content: `Replaced ${args.replace_all ? count : 1} occurrence(s) in ${args.path}`,
