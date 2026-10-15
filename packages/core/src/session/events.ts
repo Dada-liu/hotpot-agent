@@ -76,12 +76,14 @@ export type SessionEvent =
 			agentId: string;
 			payload: Record<string, unknown>;
 	  }
+	// note 为可选审批备注（如拒绝理由）；audited 包装层不填，编排层 plan 流程自行 append 时使用
 	| {
 			type: "approval/decided";
 			id: string;
 			ts: string;
 			requestId: string;
 			decision: "approved" | "denied";
+			note?: string;
 	  }
 	| {
 			type: "inbox/spliced";

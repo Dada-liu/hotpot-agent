@@ -1,0 +1,148 @@
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createAuditedApprovalChain } from "../src/approval/audit.ts";
+import { ApprovalChain } from "../src/approval/chain.ts";
+import type { SessionEvent } from "../src/session/events.ts";
+import { createSession, loadSession } from "../src/session/store.ts";
+
+// 每个用例一个临时 home，隔离落盘的会话日志
+let home: string;
+
+beforeEach(async () => {
+	home = await mkdtemp(join(tmpdir(), "hotpot-approval-audit-test-"));
+});
+
+afterEach(async () => {
+	await rm(home, { recursive: true, force: true });
+});
+
+function approvalEvents(events: SessionEvent[]): SessionEvent[] {
+	return events.filter((e) => e.type.startsWith("approval/"));
+}
+
+describe("createAuditedApprovalChain", () => {
+	it("ask 放行：落盘 asked 后 decided，payload 与请求一致且 requestId 关联", async () => {
+		const session = await createSession("/Users/test/project", home);
+		const inner = new ApprovalChain();
+		inner.use(async () => "allow");
+		const chain = createAuditedApprovalChain(inner, {
+			session,
+			agentId: "main",
+		});
+
+		const req = {
+			kind: "command",
+			summary: "删除构建目录",
+			detail: "rm -rf build/",
+		} as const;
+		const decision = await chain.ask(req);
+		expect(decision).toBe("allow");
+
+		const { events } = await loadSession(session.filePath);
+		const approval = approvalEvents(events);
+		expect(approval.map((e) => e.type)).toEqual([
+			"approval/asked",
+			"approval/decided",
+		]);
+
+		const asked = approval[0];
+		if (asked?.type !== "approval/asked") {
+			throw new Error("expected approval/asked event");
+		}
+		expect(asked.agentId).toBe("main");
+		expect(asked.id).toBeTruthy();
+		expect(asked.ts).toBeTruthy();
+		expect(asked.payload).toEqual({
+			kind: "command",
+			summary: "删除构建目录",
+			detail: "rm -rf build/",
+		});
+
+		const decided = approval[1];
+		if (decided?.type !== "approval/decided") {
+			throw new Error("expected approval/decided event");
+		}
+		expect(decided.requestId).toBe(asked.id);
+		expect(decided.decision).toBe("approved");
+	});
+
+	it("inner deny：decision 映射为 denied 落盘", async () => {
+		const session = await createSession("/Users/test/project", home);
+		const inner = new ApprovalChain();
+		inner.use(async () => "deny");
+		const chain = createAuditedApprovalChain(inner, {
+			session,
+			agentId: "main",
+		});
+
+		const decision = await chain.ask({
+			kind: "write",
+			summary: "覆盖配置文件",
+			detail: "write .hotpot/settings.json",
+		});
+		expect(decision).toBe("deny");
+
+		const { events } = await loadSession(session.filePath);
+		const approval = approvalEvents(events);
+		expect(approval.map((e) => e.type)).toEqual([
+			"approval/asked",
+			"approval/decided",
+		]);
+		const decided = approval[1];
+		if (decided?.type !== "approval/decided") {
+			throw new Error("expected approval/decided event");
+		}
+		expect(decided.decision).toBe("denied");
+	});
+
+	it("asked 事件带传入的 agentId，decided 经 requestId 关联回 asked", async () => {
+		const session = await createSession("/Users/test/project", home);
+		const inner = new ApprovalChain();
+		inner.use(async () => "allow");
+		const chain = createAuditedApprovalChain(inner, {
+			session,
+			agentId: "worker-1",
+		});
+
+		await chain.ask({
+			kind: "command",
+			summary: "运行测试",
+			detail: "pnpm test",
+		});
+
+		const { events } = await loadSession(session.filePath);
+		const approval = approvalEvents(events);
+		expect(approval).toHaveLength(2);
+		const asked = approval[0];
+		if (asked?.type !== "approval/asked") {
+			throw new Error("expected approval/asked event");
+		}
+		// v1 格式里 decided 无 agentId 字段：agent 归属经 requestId 回溯 asked 事件
+		expect(asked.agentId).toBe("worker-1");
+		const decided = approval[1];
+		if (decided?.type !== "approval/decided") {
+			throw new Error("expected approval/decided event");
+		}
+		expect(decided.requestId).toBe(asked.id);
+	});
+
+	it("use 委托给 inner：包装层注册的 handler 参与裁决", async () => {
+		const session = await createSession("/Users/test/project", home);
+		const inner = new ApprovalChain();
+		const chain = createAuditedApprovalChain(inner, {
+			session,
+			agentId: "main",
+		});
+		// 通过包装层注册 handler；若未委托给 inner，fail-closed 会返回 deny
+		chain.use(async () => "allow");
+
+		const decision = await chain.ask({
+			kind: "command",
+			summary: "列出目录",
+			detail: "ls",
+		});
+		expect(decision).toBe("allow");
+	});
+});

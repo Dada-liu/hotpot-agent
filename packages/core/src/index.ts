@@ -1,8 +1,11 @@
 // 包入口：仅 re-export，不写逻辑
 export * from "./agent/loop.ts";
 export * from "./agent/types.ts";
+export * from "./approval/audit.ts";
 export * from "./approval/chain.ts";
 export * from "./config.ts";
+export * from "./prompt/default-sections.ts";
+export * from "./prompt/sections.ts";
 export * from "./session/derive.ts";
 export * from "./session/events.ts";
 export * from "./session/store.ts";
