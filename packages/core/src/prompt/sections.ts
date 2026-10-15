@@ -19,20 +19,26 @@ export interface PromptSection {
 }
 
 // 模块级单例注册表；同 order 保持注册先后（排序稳定）
-const sections: PromptSection[] = [];
+const registeredSections: PromptSection[] = [];
 
 export function registerSection(s: PromptSection): void {
-	sections.push(s);
+	registeredSections.push(s);
 }
 
 // 仅供测试隔离使用：清空注册表（含默认段），业务代码不得调用
 export function resetSections(): void {
-	sections.length = 0;
+	registeredSections.length = 0;
 }
 
 // 按 order 升序拼接各段文本，段间以空行分隔
-export function buildSystemPrompt(ctx: PromptContext): string {
-	const sorted = [...sections].sort((a, b) => a.order - b.order);
+// sections 缺省时读模块级注册表；传入局部段列表则绕过全局单例
+// （orchestrator 按角色组装 prompt 时用后者，避免多角色在同进程构建时互相污染注册表）
+export function buildSystemPrompt(
+	ctx: PromptContext,
+	sections?: readonly PromptSection[],
+): string {
+	const source = sections ?? registeredSections;
+	const sorted = [...source].sort((a, b) => a.order - b.order);
 	return sorted
 		.map((s) => (typeof s.text === "function" ? s.text(ctx) : s.text))
 		.join("\n\n");

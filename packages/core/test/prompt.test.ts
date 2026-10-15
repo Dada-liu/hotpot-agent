@@ -56,6 +56,17 @@ describe("section registry", () => {
 			"cwd is /Users/test/project, os is darwin, date is 2026-10-10",
 		);
 	});
+
+	it("传入局部 sections 时绕过全局注册表，全局段不参与拼接", () => {
+		registerSection({ name: "global", order: 1, text: "global section" });
+
+		const prompt = buildSystemPrompt(CTX, [
+			{ name: "local-a", order: 5, text: "a" },
+			{ name: "local-b", order: 2, text: "b" },
+		]);
+
+		expect(prompt).toBe("b\n\na");
+	});
 });
 
 describe("default sections", () => {

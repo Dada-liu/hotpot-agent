@@ -1,7 +1,11 @@
 // 默认系统提示词段：identity / tools / rules / env，order 常量集中分配，段间留出插件插入空间
 // 注意：以下 prompt 文案为 LLM 面向文本，按约定必须全英文（AGENTS.md）
 
-import { type PromptContext, registerSection } from "./sections.ts";
+import {
+	type PromptContext,
+	type PromptSection,
+	registerSection,
+} from "./sections.ts";
 
 // 默认段 order 常量：以 1000 为间隔，便于未来在两段之间插入新段
 export const SECTION_ORDER = {
@@ -35,22 +39,36 @@ function envText(ctx: PromptContext): string {
 - Date: ${ctx.date}`;
 }
 
+// 四个默认段导出为对象：注册进全局单例之外的调用方（如 orchestrator 按角色组段）
+// 可直接复用同一份段定义，配合 buildSystemPrompt 的局部 sections 入参绕过全局注册表
+export const identitySection: PromptSection = {
+	name: "identity",
+	order: SECTION_ORDER.IDENTITY,
+	text: IDENTITY_TEXT,
+};
+
+export const toolsSection: PromptSection = {
+	name: "tools",
+	order: SECTION_ORDER.TOOLS,
+	text: toolsText,
+};
+
+export const rulesSection: PromptSection = {
+	name: "rules",
+	order: SECTION_ORDER.RULES,
+	text: RULES_TEXT,
+};
+
+export const envSection: PromptSection = {
+	name: "env",
+	order: SECTION_ORDER.ENV,
+	text: envText,
+};
+
 // 注册四个默认段；调用前通常先 resetSections()（测试）或在进程启动时调用一次
 export function registerDefaultSections(): void {
-	registerSection({
-		name: "identity",
-		order: SECTION_ORDER.IDENTITY,
-		text: IDENTITY_TEXT,
-	});
-	registerSection({
-		name: "tools",
-		order: SECTION_ORDER.TOOLS,
-		text: toolsText,
-	});
-	registerSection({
-		name: "rules",
-		order: SECTION_ORDER.RULES,
-		text: RULES_TEXT,
-	});
-	registerSection({ name: "env", order: SECTION_ORDER.ENV, text: envText });
+	registerSection(identitySection);
+	registerSection(toolsSection);
+	registerSection(rulesSection);
+	registerSection(envSection);
 }
