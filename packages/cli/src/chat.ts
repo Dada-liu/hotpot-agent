@@ -196,11 +196,15 @@ export async function runChat(opts: RunChatOptions): Promise<void> {
 		agentId: "main",
 	});
 
-	// policy=always：worker/task 的 bash/write/edit 包一层预审批（read 无副作用不包）。
+	// policy=always：worker/task 的 bash/write/edit 包一层预审批。
+	// read 无副作用（isConcurrencySafe），与 M1 一致任何 policy 下都不包、不询问。
 	// 下层注册表由编排层内部装配，包装只能经 runtime.decorateWorkerTool 闭包带进去
 	const decorateWorkerTool: WorkerToolDecorator | undefined =
 		policy === "always"
-			? (tool) => withApproval(tool, tool.name === "bash" ? "command" : "write")
+			? (tool) =>
+					tool.name === "read"
+						? tool
+						: withApproval(tool, tool.name === "bash" ? "command" : "write")
 			: undefined;
 
 	const baseRuntime = createRuntime({

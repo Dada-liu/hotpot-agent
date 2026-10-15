@@ -4,7 +4,7 @@
 // 审批询问仍走终端 handler（在 worker 工具执行内触发），交互断言不变。
 // 脚本化适配器按全局 streamChat 调用序回放：1=main delegate 步，2..N=worker 各步，末位=main 收尾。
 
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -310,6 +310,46 @@ describe("runChat", () => {
 				e.content.includes("policy-always-ok"),
 		);
 		expect(echoed).toBeDefined();
+	});
+
+	it("approval policy=always：read 无副作用不询问，结果正常返回", async () => {
+		const settings: Settings = {
+			...SETTINGS,
+			approval: { policy: "always" },
+		};
+		await writeFile(join(home, "note.txt"), "hello hotpot\n");
+		const script: StreamEvent[][] = [
+			delegateRound("读一下 note.txt"),
+			toolCallRound("tc-1", "read", '{"path":"note.txt"}'),
+			textRound("读取完成"),
+			textRound("好的"),
+		];
+		// 输入队列不含审批回答：read 若被错误包装会发起询问、消费掉 /exit 导致用例失败
+		const input = new ScriptedInput(["读一下 note.txt", "/exit"]);
+		const output = new CollectedOutput();
+		await runChat({
+			cwd: home,
+			home,
+			settings,
+			llm: { adapter: scriptedAdapter(script), model: TEST_MODEL },
+			input,
+			output,
+		});
+
+		expect(output.text).not.toContain("[approval]");
+		expect(output.text).toContain("读取完成");
+		const sessions = await listSessions(home);
+		const { events } = await loadSession(sessions[0]?.filePath ?? "");
+		// read 正常执行：内容原样进 worker 的 tool_result，全程无 approval/asked
+		const read = events.find(
+			(e): e is Extract<SessionEvent, { type: "tool_result" }> =>
+				e.type === "tool_result" &&
+				e.agentId === "worker-1" &&
+				e.isError !== true &&
+				e.content.includes("hello hotpot"),
+		);
+		expect(read).toBeDefined();
+		expect(events.filter((e) => e.type === "approval/asked")).toHaveLength(0);
 	});
 
 	it("--session 恢复：续聊写入同一文件，首轮请求携带历史消息", async () => {
