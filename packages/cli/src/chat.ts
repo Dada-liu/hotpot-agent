@@ -1,30 +1,35 @@
-// 行式交互主逻辑（M1 唯一用户界面）：runChat 驱动「输入一行 → runTurn → 渲染事件」循环。
+// 行式交互主逻辑（M2 编排入口）：runChat 驱动「输入一行 → runMainTurn → 渲染事件」循环。
+// 主循环不再碰 runTurn/工具注册表：main agent 只有 delegate/spawn_workers 元工具，
+// 用户消息经 orchestrator 的 runMainTurn 走 delegate → worker 内联执行 → 摘要回传；
+// 本文件只负责终端 I/O、审批装配（含审计落盘）、事件渲染与 next-turn 补发。
 // IO 全部经 ChatInput/ChatOutput 两个最小接口注入：bin 入口给真实终端实现，测试给脚本化实现。
 // 另含进程入口的组装函数 runChatCli 与 argv 解析 parseChatArgs。
 
-import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline";
 import type { LlmAdapter, ModelInfo } from "@hotpot/ai";
 import {
 	type AgentEvent,
 	ApprovalChain,
-	bashTool,
+	createAuditedApprovalChain,
 	createSession,
-	createToolRegistry,
-	editTool,
 	loadSettings,
 	type ModelTier,
-	readTool,
 	resumeSession,
-	runTurn,
 	type Session,
 	type Settings,
 	type ToolDefinition,
-	type ToolRegistry,
-	writeTool,
 } from "@hotpot/core";
-import { resolveModel } from "@hotpot/orchestrator";
+import {
+	createInbox,
+	createRuntime,
+	type OrchestrationEvent,
+	type OrchestrationRuntime,
+	resolveModel,
+	runMainTurn,
+	type WorkerToolDecorator,
+} from "@hotpot/orchestrator";
 import { createTerminalApproval } from "./approval-ui.ts";
+import { createTerminalPlanApproval } from "./plan-approval.ts";
 
 // 输入抽象：readLine 返回 null 表示 EOF；interrupt 对应 Ctrl-C（中断当前回合）
 export interface ChatInput {
@@ -52,7 +57,10 @@ export interface RunChatOptions {
 	warn?: (text: string) => void;
 }
 
-// policy=always 时给有副作用的工具包一层审批：execute 前先过 ApprovalChain，deny 直接返回 isError
+type ApprovalPolicy = "ask-on-dangerous" | "always" | "never";
+
+// policy=always 时给有副作用的工具包一层审批：execute 前先过 ApprovalChain，deny 直接返回 isError。
+// M2 下这套包装经 runtime.decorateWorkerTool 注入，套在 worker/task 注册表的四件赛上
 // （policy=ask-on-dangerous 时只有工具内建的危险判定会发起审批，见 bashTool/writeTool）
 // ApprovalRequest.kind 只有 command/write 两种，按工具副作用类型映射
 function withApproval<T>(
@@ -78,24 +86,6 @@ function withApproval<T>(
 	};
 }
 
-type ApprovalPolicy = "ask-on-dangerous" | "always" | "never";
-
-function buildRegistry(policy: ApprovalPolicy): ToolRegistry {
-	const registry = createToolRegistry();
-	if (policy === "always") {
-		registry.register(withApproval(bashTool, "command"));
-		registry.register(withApproval(writeTool, "write"));
-		registry.register(withApproval(editTool, "write"));
-	} else {
-		registry.register(bashTool);
-		registry.register(writeTool);
-		registry.register(editTool);
-	}
-	// read 无副作用（isConcurrencySafe），任何 policy 下都不需要审批
-	registry.register(readTool);
-	return registry;
-}
-
 function truncate(text: string, max: number): string {
 	return text.length > max ? `${text.slice(0, max)}…` : text;
 }
@@ -111,9 +101,9 @@ function summarizeInput(input: unknown): string {
 	return truncate(text, 120);
 }
 
-// 渲染单个 AgentEvent。tool_call 不调 present：present 对原始 LLM 输入可能同步抛错，
+// 渲染 core 的 AgentEvent。tool_call 不调 present：present 对原始 LLM 输入可能同步抛错，
 // 这里只展示名称与参数摘要（已知 minor 遗留，见 Task 10 报告）
-function renderEvent(event: AgentEvent, output: ChatOutput): void {
+function renderAgentEvent(event: AgentEvent, output: ChatOutput): void {
 	switch (event.type) {
 		case "text":
 			output.write(event.delta);
@@ -138,6 +128,27 @@ function renderEvent(event: AgentEvent, output: ChatOutput): void {
 			output.write(`\n[error: ${event.error.code}] ${event.error.message}\n`);
 			break;
 	}
+}
+
+// 渲染单个 OrchestrationEvent：core AgentEvent 之外补充编排语义事件 ——
+// agent_spawn 标记子 agent 诞生（task 截断 80 字符），plan 记录计划审批流的状态迁移
+// （drafted 附带 plan 全文，便于用户就地审阅；批准/拒绝/修订耗尽只打状态行）
+function renderEvent(event: OrchestrationEvent, output: ChatOutput): void {
+	if (event.type === "agent_spawn") {
+		output.write(
+			`\n[spawn] ${event.agentId} (tier=${event.tier}): ${truncate(event.task, 80)}\n`,
+		);
+		return;
+	}
+	if (event.type === "plan") {
+		if (event.phase === "drafted" && event.plan !== undefined) {
+			output.write(`\n[plan] drafted:\n${event.plan}\n`);
+		} else {
+			output.write(`\n[plan] ${event.phase}\n`);
+		}
+		return;
+	}
+	renderAgentEvent(event, output);
 }
 
 export async function runChat(opts: RunChatOptions): Promise<void> {
@@ -170,24 +181,104 @@ export async function runChat(opts: RunChatOptions): Promise<void> {
 	);
 	output.write("输入消息开始对话；/exit 退出，Ctrl-C 中断当前回合\n");
 
+	// 审批装配：终端 handler 挂内层链，整体经 createAuditedApprovalChain 落盘 asked/decided。
+	// 审计包装的 agentId 在装配期固定为 "main"：ApprovalChain.ask 不带 agentId，
+	// worker 发起的 command/write 询问也记在同一 id 下（core 包装层的既有契约）。
+	// never：不注册任何 handler，ApprovalChain fail-closed 全部 deny（不打扰用户，也不放行）
 	const policy: ApprovalPolicy =
 		settings.approval?.policy ?? "ask-on-dangerous";
-	const approval = new ApprovalChain();
-	// never：不注册任何 handler，ApprovalChain fail-closed 全部 deny（不打扰用户，也不放行）
+	const baseApproval = new ApprovalChain();
 	if (policy !== "never") {
-		approval.use(createTerminalApproval(input, output));
+		baseApproval.use(createTerminalApproval(input, output));
 	}
-	const registry = buildRegistry(policy);
+	const approval = createAuditedApprovalChain(baseApproval, {
+		session,
+		agentId: "main",
+	});
 
-	// Ctrl-C：回合中 abort 当前 runTurn；空闲时不退出进程，只重印提示符
+	// policy=always：worker/task 的 bash/write/edit 包一层预审批（read 无副作用不包）。
+	// 下层注册表由编排层内部装配，包装只能经 runtime.decorateWorkerTool 闭包带进去
+	const decorateWorkerTool: WorkerToolDecorator | undefined =
+		policy === "always"
+			? (tool) => withApproval(tool, tool.name === "bash" ? "command" : "write")
+			: undefined;
+
+	const baseRuntime = createRuntime({
+		session,
+		cwd: opts.cwd,
+		approval,
+		models: settings.models,
+		maxParallelTasks: settings.maxParallelTasks,
+		planMaxRevisions: settings.planMaxRevisions,
+		decorateWorkerTool,
+	});
+	// 测试注入点：opts.llm 覆盖 runtime 的档位解析（main/worker 共用同一录制适配器），
+	// 与 orchestrator 测试 makeRuntime 的展开覆盖同法。
+	// spawn 包装：orchestrator 目前只把 agent_spawn 落盘、不作为 OrchestrationEvent 产出
+	// （与 pollInbox 同属编排层待补口，见 Task 11 报告），CLI 在 spawn 调用点同步渲染
+	// [spawn] 行；renderEvent 仍保留 agent_spawn 分支以兼容将来事件流的直接产出。
+	const runtime: OrchestrationRuntime = {
+		...baseRuntime,
+		spawn: async (spawnOpts) => {
+			const { agentId } = await baseRuntime.spawn(spawnOpts);
+			output.write(
+				`\n[spawn] ${agentId} (tier=${spawnOpts.tier}): ${truncate(spawnOpts.task, 80)}\n`,
+			);
+			return { agentId };
+		},
+		...(opts.llm
+			? {
+					resolveModel: (_t: ModelTier) => ({
+						adapter,
+						model,
+						apiKey: ref.apiKey,
+						baseUrl: ref.baseUrl,
+					}),
+				}
+			: {}),
+	};
+
+	// steer/queue 双队列：M2 只消费 next-turn（turn 结束后补发为新用户消息）；
+	// next-step 的 turn 内注入依赖 runMainTurn 接 pollInbox（orchestrator 侧缺口，见 Task 11 报告）
+	const inbox = createInbox(session, "main", {
+		onCancel: () => currentTurn?.abort(),
+	});
+	const onPlanApproval = createTerminalPlanApproval(input, output);
+
+	// Ctrl-C：回合中 abort 当前 runMainTurn（并触发 inbox.cancel 同一路径）；空闲时不退出进程，只重印提示符
 	let currentTurn: AbortController | null = null;
 	input.setInterruptHandler(() => {
 		if (currentTurn) {
 			currentTurn.abort();
+			inbox.cancel();
 		} else {
 			output.write("\n（输入 /exit 退出）\n> ");
 		}
 	});
+
+	// 单回合：user_msg 落盘由 runMainTurn 以 main 身份负责，这里只迭代事件流并渲染
+	const runOneTurn = async (content: string): Promise<void> => {
+		const ac = new AbortController();
+		currentTurn = ac;
+		try {
+			for await (const event of runMainTurn({
+				runtime,
+				userMessage: content,
+				signal: ac.signal,
+				mainTier: tier,
+				onPlanApproval,
+			})) {
+				renderEvent(event, output);
+			}
+		} catch (err) {
+			// runTurn 自身兜底 LLM/工具错误；这里防的是会话文件读失败等意外，回合出错不退出 REPL
+			output.write(
+				`\n[error] ${err instanceof Error ? err.message : String(err)}\n`,
+			);
+		} finally {
+			currentTurn = null;
+		}
+	};
 
 	try {
 		for (;;) {
@@ -200,39 +291,14 @@ export async function runChat(opts: RunChatOptions): Promise<void> {
 			if (content === "") {
 				continue;
 			}
-			await session.append({
-				type: "user_msg",
-				id: randomUUID(),
-				ts: new Date().toISOString(),
-				agentId: "main",
-				content,
-			});
-			const ac = new AbortController();
-			currentTurn = ac;
-			try {
-				for await (const event of runTurn(
-					{
-						session,
-						agentId: "main",
-						adapter,
-						model,
-						apiKey: ref.apiKey,
-						baseUrl: ref.baseUrl,
-						registry,
-						approval,
-						cwd: opts.cwd,
-					},
-					ac.signal,
-				)) {
-					renderEvent(event, output);
+			await runOneTurn(content);
+			// turn 结束后 drain next-turn 队列（followup），按序补发为新的用户消息
+			let followups = await inbox.drainNextTurn();
+			while (followups.length > 0) {
+				for (const followup of followups) {
+					await runOneTurn(followup.content);
 				}
-			} catch (err) {
-				// runTurn 自身兜底 LLM/工具错误；这里防的是会话文件读失败等意外，回合出错不退出 REPL
-				output.write(
-					`\n[error] ${err instanceof Error ? err.message : String(err)}\n`,
-				);
-			} finally {
-				currentTurn = null;
+				followups = await inbox.drainNextTurn();
 			}
 		}
 	} finally {

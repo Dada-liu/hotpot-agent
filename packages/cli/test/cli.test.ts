@@ -1,3 +1,9 @@
+// runChat 测试（M2 编排流）：每个场景脚本前补 main 的 delegate 轮（simple，task 复用原用户消息），
+// worker 轮做实际工具工作，main 文本轮收尾。worker 事件不外传（M2 计划决定 #3）：
+// 工具调用/结果不落终端渲染，可经会话文件（tool_result 带 agentId）与 delegate 摘要 tool_result 断言；
+// 审批询问仍走终端 handler（在 worker 工具执行内触发），交互断言不变。
+// 脚本化适配器按全局 streamChat 调用序回放：1=main delegate 步，2..N=worker 各步，末位=main 收尾。
+
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +18,7 @@ import {
 	createSession,
 	listSessions,
 	loadSession,
+	type SessionEvent,
 	type Settings,
 } from "@hotpot/core";
 import { resolveModel } from "@hotpot/orchestrator";
@@ -96,12 +103,36 @@ class CollectedOutput implements ChatOutput {
 	}
 }
 
+// 一轮「调用单个工具」的脚本：tool_call_start/delta/end + usage + finish
+function toolCallRound(
+	id: string,
+	name: string,
+	inputJson: string,
+): StreamEvent[] {
+	return [
+		{ type: "tool_call_start", id, name },
+		{ type: "tool_call_delta", id, inputDelta: inputJson },
+		{ type: "tool_call_end", id },
+		{ type: "usage", usage: { input: 5, output: 3 } },
+		{ type: "finish", reason: "tool_calls" },
+	];
+}
+
 function textRound(text: string): StreamEvent[] {
 	return [
 		{ type: "text_delta", delta: text },
 		{ type: "usage", usage: { input: 2, output: 1 } },
 		{ type: "finish", reason: "stop" },
 	];
+}
+
+// main 的 delegate 轮：难度 simple、worker 走 low 档，task 复用原用户消息
+function delegateRound(task: string): StreamEvent[] {
+	return toolCallRound(
+		"m-tc-1",
+		"delegate",
+		JSON.stringify({ difficulty: "simple", modelTier: "low", task }),
+	);
 }
 
 describe("runChat", () => {
@@ -113,7 +144,11 @@ describe("runChat", () => {
 			home,
 			settings: SETTINGS,
 			llm: {
-				adapter: scriptedAdapter([textRound("你好，世界")]),
+				adapter: scriptedAdapter([
+					delegateRound("你好"),
+					textRound("worker 已处理：你好"),
+					textRound("你好，世界"),
+				]),
 				model: TEST_MODEL,
 			},
 			input,
@@ -121,30 +156,42 @@ describe("runChat", () => {
 		});
 
 		expect(output.text).toContain("你好，世界");
+		// 渲染扩展：agent_spawn 以 [spawn] 行展示（task 截断到 80 字符，这里短任务原样展示）
+		expect(output.text).toContain("[spawn] worker-1 (tier=low): 你好");
 		const sessions = await listSessions(home);
 		expect(sessions).toHaveLength(1);
 		const { events } = await loadSession(sessions[0]?.filePath ?? "");
+		// 编排流完整事件链：main(user→delegate→结果) + spawn + worker(user→摘要) + main 收尾
 		expect(events.map((e) => e.type)).toEqual([
 			"meta",
 			"user_msg",
 			"assistant_msg",
+			"agent_spawn",
+			"user_msg",
+			"assistant_msg",
+			"tool_result",
+			"assistant_msg",
 		]);
+		const spawn = events.find((e) => e.type === "agent_spawn");
+		expect(spawn).toMatchObject({
+			agentId: "worker-1",
+			parentAgentId: "main",
+			role: "worker",
+			tier: "low",
+			task: "你好",
+		});
 	});
 
-	it("危险命令触发审批：回答 n 拒绝执行，渲染 isError 摘要", async () => {
+	it("危险命令触发审批：回答 n 拒绝执行，deny 落盘到 worker 的 tool_result", async () => {
 		const script: StreamEvent[][] = [
-			[
-				{ type: "tool_call_start", id: "tc-1", name: "bash" },
-				{
-					type: "tool_call_delta",
-					id: "tc-1",
-					inputDelta: '{"command":"rm -rf /tmp/hotpot-cli-test-target"}',
-				},
-				{ type: "tool_call_end", id: "tc-1" },
-				{ type: "usage", usage: { input: 5, output: 3 } },
-				{ type: "finish", reason: "tool_calls" },
-			],
+			delegateRound("清理临时目录"),
+			toolCallRound(
+				"tc-1",
+				"bash",
+				'{"command":"rm -rf /tmp/hotpot-cli-test-target"}',
+			),
 			textRound("已取消操作"),
+			textRound("好的，已跳过该操作"),
 		];
 		const input = new ScriptedInput(["清理临时目录", "n", "/exit"]);
 		const output = new CollectedOutput();
@@ -157,13 +204,29 @@ describe("runChat", () => {
 			output,
 		});
 
-		expect(output.text).toContain("[tool] bash(");
-		expect(output.text).toContain("rm -rf");
+		// 审批交互仍走终端 handler（worker 的 bash 执行内触发），命令原文进 detail
 		expect(output.text).toContain("[approval]");
+		expect(output.text).toContain("rm -rf");
 		expect(output.text).toContain("已拒绝");
-		// bash 工具 deny 路径的 tool_result 文本
-		expect(output.text).toContain("denied");
+		// worker 摘要经 delegate 的 tool_result 渲染回终端
 		expect(output.text).toContain("已取消操作");
+		expect(output.text).toContain("好的，已跳过该操作");
+
+		// worker 的 bash deny 路径落盘：isError tool_result（worker 事件不外传，改查会话文件）
+		const sessions = await listSessions(home);
+		const { events } = await loadSession(sessions[0]?.filePath ?? "");
+		const denied = events.find(
+			(e): e is Extract<SessionEvent, { type: "tool_result" }> =>
+				e.type === "tool_result" &&
+				e.agentId === "worker-1" &&
+				e.isError === true &&
+				e.content.includes("denied"),
+		);
+		expect(denied).toBeDefined();
+		// command 审批经 createAuditedApprovalChain 落盘 asked/decided 对
+		expect(events.filter((e) => e.type === "approval/asked")).toHaveLength(1);
+		const decided = events.find((e) => e.type === "approval/decided");
+		expect(decided).toMatchObject({ decision: "denied" });
 	});
 
 	it("approval policy=never：不询问，危险操作 fail-closed 直接 deny", async () => {
@@ -172,20 +235,16 @@ describe("runChat", () => {
 			approval: { policy: "never" },
 		};
 		const script: StreamEvent[][] = [
-			[
-				{ type: "tool_call_start", id: "tc-1", name: "bash" },
-				{
-					type: "tool_call_delta",
-					id: "tc-1",
-					inputDelta: '{"command":"rm -rf /tmp/hotpot-cli-test-target"}',
-				},
-				{ type: "tool_call_end", id: "tc-1" },
-				{ type: "usage", usage: { input: 5, output: 3 } },
-				{ type: "finish", reason: "tool_calls" },
-			],
+			delegateRound("清理临时目录"),
+			toolCallRound(
+				"tc-1",
+				"bash",
+				'{"command":"rm -rf /tmp/hotpot-cli-test-target"}',
+			),
 			textRound("已跳过危险操作"),
+			textRound("收到"),
 		];
-		// 输入队列不含审批回答：若仍发起询问会消费掉 /exit 导致用例失败
+		// 输入队列不含审批回答：若仍发起终端询问会消费掉 /exit 导致用例失败
 		const input = new ScriptedInput(["清理临时目录", "/exit"]);
 		const output = new CollectedOutput();
 		await runChat({
@@ -198,8 +257,20 @@ describe("runChat", () => {
 		});
 
 		expect(output.text).not.toContain("[approval]");
-		expect(output.text).toContain("denied");
 		expect(output.text).toContain("已跳过危险操作");
+		const sessions = await listSessions(home);
+		const { events } = await loadSession(sessions[0]?.filePath ?? "");
+		// fail-closed deny 照样落盘（无终端 handler，asked/decided 仍经审计包装写日志）
+		const denied = events.find(
+			(e): e is Extract<SessionEvent, { type: "tool_result" }> =>
+				e.type === "tool_result" &&
+				e.agentId === "worker-1" &&
+				e.isError === true &&
+				e.content.includes("denied"),
+		);
+		expect(denied).toBeDefined();
+		const decided = events.find((e) => e.type === "approval/decided");
+		expect(decided).toMatchObject({ decision: "denied" });
 	});
 
 	it("approval policy=always：安全命令也先询问，回答 y 放行执行", async () => {
@@ -208,18 +279,10 @@ describe("runChat", () => {
 			approval: { policy: "always" },
 		};
 		const script: StreamEvent[][] = [
-			[
-				{ type: "tool_call_start", id: "tc-1", name: "bash" },
-				{
-					type: "tool_call_delta",
-					id: "tc-1",
-					inputDelta: '{"command":"echo policy-always-ok"}',
-				},
-				{ type: "tool_call_end", id: "tc-1" },
-				{ type: "usage", usage: { input: 5, output: 3 } },
-				{ type: "finish", reason: "tool_calls" },
-			],
+			delegateRound("打个招呼"),
+			toolCallRound("tc-1", "bash", '{"command":"echo policy-always-ok"}'),
 			textRound("执行完毕"),
+			textRound("已完成"),
 		];
 		const input = new ScriptedInput(["打个招呼", "y", "/exit"]);
 		const output = new CollectedOutput();
@@ -235,8 +298,18 @@ describe("runChat", () => {
 		// echo 不是危险命令，ask-on-dangerous 下不会询问；always 下询问并放行
 		expect(output.text).toContain("[approval]");
 		expect(output.text).toContain("已允许");
-		expect(output.text).toContain("policy-always-ok");
 		expect(output.text).toContain("执行完毕");
+		const sessions = await listSessions(home);
+		const { events } = await loadSession(sessions[0]?.filePath ?? "");
+		// 放行执行：worker 的 echo tool_result 真实落盘（worker 事件不外传，改查会话文件）
+		const echoed = events.find(
+			(e): e is Extract<SessionEvent, { type: "tool_result" }> =>
+				e.type === "tool_result" &&
+				e.agentId === "worker-1" &&
+				e.isError !== true &&
+				e.content.includes("policy-always-ok"),
+		);
+		expect(echoed).toBeDefined();
 	});
 
 	it("--session 恢复：续聊写入同一文件，首轮请求携带历史消息", async () => {
@@ -250,7 +323,11 @@ describe("runChat", () => {
 		});
 
 		const requests: ChatRequest[] = [];
-		const inner = scriptedAdapter([textRound("续聊回答")]);
+		const inner = scriptedAdapter([
+			delegateRound("继续"),
+			textRound("worker 摘要"),
+			textRound("续聊回答"),
+		]);
 		const recording: LlmAdapter = {
 			api: inner.api,
 			streamChat(req, signal) {
@@ -278,8 +355,15 @@ describe("runChat", () => {
 			"user_msg",
 			"user_msg",
 			"assistant_msg",
+			"agent_spawn",
+			"user_msg",
+			"assistant_msg",
+			"tool_result",
+			"assistant_msg",
 		]);
-		// 首轮请求即携带恢复出的历史（runTurn 内部 loadSession + deriveMessages）
+		// 首轮请求即携带恢复出的历史（runTurn 内部 loadSession + deriveMessages）：
+		// 旧问题在前，本次用户消息在后（delegate 调用是本轮的响应，进第二个请求的历史）
+		expect(requests[0]?.messages).toHaveLength(2);
 		expect(requests[0]?.messages[0]).toEqual({
 			role: "user",
 			content: [{ type: "text", text: "之前的问题" }],
@@ -287,6 +371,16 @@ describe("runChat", () => {
 		expect(requests[0]?.messages[1]?.content).toEqual([
 			{ type: "text", text: "继续" },
 		]);
+		// 全局调用序：requests[0]=main 第一步（delegate），requests[1]=worker 步，
+		// requests[2]=main 收尾步 —— delegate 调用与结果进 main 第二步的历史
+		expect(requests[2]?.messages[2]?.content[0]).toMatchObject({
+			type: "tool_call",
+			name: "delegate",
+		});
+		expect(requests[2]?.messages[3]?.content[0]).toMatchObject({
+			type: "tool_result",
+			toolCallId: "m-tc-1",
+		});
 	});
 
 	it("Ctrl-C 中断当前回合而不退出进程：abort 后循环继续，/exit 正常收尾", async () => {
@@ -346,11 +440,20 @@ describe("runChat", () => {
 			cwd: home,
 			home,
 			settings,
-			llm: { adapter: scriptedAdapter([textRound("ok")]), model: TEST_MODEL },
+			llm: {
+				adapter: scriptedAdapter([
+					delegateRound("hi"),
+					textRound("worker 摘要"),
+					textRound("ok"),
+				]),
+				model: TEST_MODEL,
+			},
 			input,
 			output,
 		});
 		expect(output.text).toContain("tier=medium");
+		// --tier 语义不变（主 agent 档）：delegate 后 worker 照常 spawn
+		expect(output.text).toContain("[spawn] worker-1");
 	});
 });
 

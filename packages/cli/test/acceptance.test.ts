@@ -1,8 +1,10 @@
-// M1 验收测试：docs/archive/04-roadmap.md 验收标准 1/2 的脚本化版本（scriptedAdapter 回放，不触网）
-// 场景 A：「找出 src 下所有 .ts 文件，统计行数写入 report.txt」多步工具调用——
-//   断言 report.txt 真实生成，且会话文件含完整事件链（user_msg/assistant_msg/tool_result 序列 + usage 记录）
+// M1 验收场景的多层编排迁移版（docs/archive/04-roadmap.md 验收标准 1/2，M2 三层流重跑）：
+// 场景 A：「找出 src 下所有 .ts 文件，统计行数写入 report.txt」——main delegate(simple) 派 worker，
+//   worker 完成 bash 统计 → write 报告 → 摘要回传，main 收尾；断言 report.txt 真实生成、
+//   会话文件含完整事件链（spawn + worker 工具步 + usage 记录）
 // 场景 B：模拟进程重启——同一会话文件经 resumeSession + deriveMessages 恢复后续聊一轮，
-//   断言新一轮请求的 messages 携带完整历史
+//   断言新一轮请求的 messages 携带 main 的完整历史（worker 事件按 agentId 过滤不进 main 历史）
+// worker 事件不外传（M2 计划决定 #3），工具步断言经会话文件（tool_result 带 agentId）完成。
 
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -111,22 +113,36 @@ function textRound(text: string): StreamEvent[] {
 	];
 }
 
+// main 的 delegate 轮：难度 simple、worker 走 low 档，task 复用原用户消息
+function delegateRound(task: string): StreamEvent[] {
+	return toolCallRound(
+		"m-tc-1",
+		"delegate",
+		JSON.stringify({ difficulty: "simple", modelTier: "low", task }),
+	);
+}
+
 const TASK = "找出 src 下所有 .ts 文件，统计行数写入 report.txt";
 const REPORT_CONTENT = "alpha.ts: 3 行\nbeta.ts: 5 行\n合计: 8 行\n";
+const WORKER_SUMMARY =
+	"统计完成：alpha.ts 3 行，beta.ts 5 行，合计 8 行，已写入 report.txt";
 const FINAL_ANSWER = "已找到 2 个 .ts 文件，共 8 行，结果已写入 report.txt。";
 
-// 场景 A 的三轮脚本：bash 统计行数 → write 写报告 → 文本收尾
+// 场景 A 脚本（全局调用序）：main delegate → worker bash 统计 → worker write 报告
+// → worker 摘要收尾 → main 文本收尾
 const SCENARIO_A_SCRIPT: StreamEvent[][] = [
+	delegateRound(TASK),
 	toolCallRound("tc-1", "bash", '{"command":"wc -l src/alpha.ts src/beta.ts"}'),
 	toolCallRound(
 		"tc-2",
 		"write",
 		JSON.stringify({ path: "report.txt", content: REPORT_CONTENT }),
 	),
+	textRound(WORKER_SUMMARY),
 	textRound(FINAL_ANSWER),
 ];
 
-describe("M1 验收", () => {
+describe("M1 验收（M2 编排流迁移）", () => {
 	it("场景 A：多步工具调用生成 report.txt，会话文件含完整事件链与 usage", async () => {
 		const input = new ScriptedInput([TASK, "/exit"]);
 		const output = new CollectedOutput();
@@ -144,13 +160,19 @@ describe("M1 验收", () => {
 		expect(report).toBe(REPORT_CONTENT);
 		expect(output.text).toContain(FINAL_ANSWER);
 
-		// 会话文件事件链：meta → user_msg → (assistant bash → result) → (assistant write → result) → assistant 文本
+		// 会话文件事件链：meta → main(user→delegate) → spawn → worker(user→bash→result→write→result→摘要)
+		//   → main(delegate 结果) → main 收尾
 		const sessions = await listSessions(home);
 		expect(sessions).toHaveLength(1);
 		const { events } = await loadSession(sessions[0]?.filePath ?? "");
 		expect(events.map((e) => e.type)).toEqual([
 			"meta",
 			"user_msg",
+			"assistant_msg",
+			"agent_spawn",
+			"user_msg",
+			"assistant_msg",
+			"tool_result",
 			"assistant_msg",
 			"tool_result",
 			"assistant_msg",
@@ -162,14 +184,15 @@ describe("M1 验收", () => {
 			(e): e is Extract<SessionEvent, { type: "assistant_msg" }> =>
 				e.type === "assistant_msg",
 		);
-		// 每个 assistant_msg 都带 usage 记录
+		// 每个 assistant_msg 都带 usage 记录与模型 id
 		for (const msg of assistantMsgs) {
 			expect(msg.usage.input).toBeGreaterThan(0);
 			expect(msg.usage.output).toBeGreaterThan(0);
 			expect(msg.model).toBe("test-model");
 		}
-		// 前两轮 assistant 消息各携带一个 tool_call 块（bash → write）
-		expect(assistantMsgs[0]?.content).toEqual([
+		// worker 的前两条 assistant 消息各携带一个 tool_call 块（bash → write）
+		const workerMsgs = assistantMsgs.filter((m) => m.agentId === "worker-1");
+		expect(workerMsgs[0]?.content).toEqual([
 			{
 				type: "tool_call",
 				id: "tc-1",
@@ -177,7 +200,7 @@ describe("M1 验收", () => {
 				input: { command: "wc -l src/alpha.ts src/beta.ts" },
 			},
 		]);
-		expect(assistantMsgs[1]?.content).toEqual([
+		expect(workerMsgs[1]?.content).toEqual([
 			{
 				type: "tool_call",
 				id: "tc-2",
@@ -190,8 +213,17 @@ describe("M1 验收", () => {
 			(e): e is Extract<SessionEvent, { type: "tool_result" }> =>
 				e.type === "tool_result",
 		);
-		expect(toolResults[0]?.content).toContain("8 total");
-		expect(toolResults[1]?.content).toContain("Wrote report.txt");
+		expect(
+			toolResults.some(
+				(r) => r.agentId === "worker-1" && r.content.includes("8 total"),
+			),
+		).toBe(true);
+		expect(
+			toolResults.some(
+				(r) =>
+					r.agentId === "worker-1" && r.content.includes("Wrote report.txt"),
+			),
+		).toBe(true);
 	});
 
 	it("场景 B：同一会话文件恢复后续聊，新一轮请求携带完整历史", async () => {
@@ -210,7 +242,11 @@ describe("M1 验收", () => {
 		// 模拟进程重启：新一次 runChat 经 --session 走 resumeSession，
 		// runTurn 内部 loadSession + deriveMessages 重建历史；记录适配器捕获真实请求
 		const requests: ChatRequest[] = [];
-		const inner = scriptedAdapter([textRound("两个文件合计 8 行。")]);
+		const inner = scriptedAdapter([
+			delegateRound("这些文件一共多少行？"),
+			textRound("两个文件合计 8 行。"),
+			textRound("两个文件合计 8 行。"),
+		]);
 		const recording: LlmAdapter = {
 			api: inner.api,
 			streamChat(req, signal) {
@@ -233,9 +269,10 @@ describe("M1 验收", () => {
 		// 续聊写回同一文件，不新建会话
 		expect(await listSessions(home)).toHaveLength(1);
 
-		// 新一轮请求的第一条消息起就是完整历史：任务 → bash 调用 → wc 结果 → write 调用 → 写入结果 → 收尾回答 → 新问题
+		// 新一轮请求携带 main 的完整历史（worker 事件按 agentId 过滤，不进 main 上下文）：
+		// 任务 → delegate 调用 → delegate 结果（含 worker 摘要）→ 收尾回答 → 新问题
 		const messages = requests[0]?.messages ?? [];
-		expect(messages).toHaveLength(7);
+		expect(messages).toHaveLength(5);
 		expect(messages[0]).toEqual({
 			role: "user",
 			content: [{ type: "text", text: TASK }],
@@ -243,41 +280,43 @@ describe("M1 验收", () => {
 		expect(messages[1]?.role).toBe("assistant");
 		expect(messages[1]?.content[0]).toMatchObject({
 			type: "tool_call",
-			name: "bash",
+			name: "delegate",
 		});
 		expect(messages[2]?.role).toBe("user");
 		expect(messages[2]?.content[0]).toMatchObject({
 			type: "tool_result",
-			toolCallId: "tc-1",
+			toolCallId: "m-tc-1",
 		});
-		expect(messages[3]?.content[0]).toMatchObject({
-			type: "tool_call",
-			name: "write",
-		});
-		expect(messages[4]?.content[0]).toMatchObject({
-			type: "tool_result",
-			toolCallId: "tc-2",
-		});
-		expect(messages[5]).toEqual({
+		expect(messages[3]).toEqual({
 			role: "assistant",
 			content: [{ type: "text", text: FINAL_ANSWER }],
 		});
-		expect(messages[6]).toEqual({
+		expect(messages[4]).toEqual({
 			role: "user",
 			content: [{ type: "text", text: "这些文件一共多少行？" }],
 		});
 
-		// 会话文件追加完整：原 7 事件 + 新 user_msg + 新 assistant_msg
+		// 会话文件追加完整：场景 A 的 12 事件 + 新一轮 7 事件（main user→delegate→结果 + spawn + worker 摘要 + main 收尾）
 		const { events } = await loadSession(sessionPath);
 		expect(events.map((e) => e.type)).toEqual([
 			"meta",
 			"user_msg",
 			"assistant_msg",
+			"agent_spawn",
+			"user_msg",
+			"assistant_msg",
+			"tool_result",
+			"assistant_msg",
 			"tool_result",
 			"assistant_msg",
 			"tool_result",
 			"assistant_msg",
 			"user_msg",
+			"assistant_msg",
+			"agent_spawn",
+			"user_msg",
+			"assistant_msg",
+			"tool_result",
 			"assistant_msg",
 		]);
 	});

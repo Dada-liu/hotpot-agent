@@ -18,21 +18,23 @@ import {
 	type ToolRegistry,
 	writeTool,
 } from "@hotpot/core";
-import type { OrchestrationRuntime } from "./runtime.ts";
+import type { OrchestrationRuntime, WorkerToolDecorator } from "./runtime.ts";
 import { createSpawnTasksTool } from "./tools/spawn-tasks.ts";
 import type { AgentRole } from "./types.ts";
 
+// worker/task 的注册表把 decorate 应用到四件套（worker 另有 decorateWorkerTool 工厂，
+// 元工具不装饰：delegate/spawn_workers/spawn_tasks 的审批语义由编排层自己负责）
 export function createRoleRegistry(
 	role: AgentRole,
 	metaTools: readonly ToolDefinition<unknown>[],
+	decorate?: WorkerToolDecorator,
 ): ToolRegistry {
 	const registry = createToolRegistry();
 	if (role !== "main") {
 		// worker / task 都有文件四件套；逐个 register 让泛型 T 各自推断，避免数组型变问题
-		registry.register(bashTool);
-		registry.register(readTool);
-		registry.register(writeTool);
-		registry.register(editTool);
+		for (const tool of [bashTool, readTool, writeTool, editTool]) {
+			registry.register(decorate ? decorate(tool) : tool);
+		}
 	}
 	if (role !== "task") {
 		// main / worker 挂元工具；task 是底层，忽略任何派生能力
@@ -48,5 +50,9 @@ export function createWorkerRegistry(
 	runtime: OrchestrationRuntime,
 	worker: { agentId: string; tier: ModelTier },
 ): ToolRegistry {
-	return createRoleRegistry("worker", [createSpawnTasksTool(runtime, worker)]);
+	return createRoleRegistry(
+		"worker",
+		[createSpawnTasksTool(runtime, worker)],
+		runtime.decorateWorkerTool,
+	);
 }
