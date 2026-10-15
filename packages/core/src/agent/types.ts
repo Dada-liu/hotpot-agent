@@ -2,6 +2,7 @@
 
 import type { FinishReason, LlmAdapter, LlmError, ModelInfo } from "@hotpot/ai";
 import type { ApprovalChain } from "../approval/chain.ts";
+import type { ModelTier } from "../session/events.ts";
 import type { Session } from "../session/store.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import type { ToolOutput } from "../tools/tool.ts";
@@ -18,6 +19,11 @@ export interface LoopConfig {
 	approval: ApprovalChain;
 	cwd: string;
 	system?: string;
+	// assistant_msg 落盘的档位；缺省 "high"（M1 主 agent 语义，M2 worker/task 按难度路由）
+	tier?: ModelTier;
+	// step 边界注入钩子（M2 steer/queue）：每个 step 顶部调用一次，
+	// 返回的字符串逐条落盘为 user_msg（agentId = cfg.agentId）后进入模型历史；缺省不轮询
+	pollInbox?: () => Promise<string[]>;
 }
 
 export type AgentEvent =

@@ -188,6 +188,21 @@ export async function* runTurn(
 			return;
 		}
 
+		// step 顶部注入 next-step 消息（steer/queue）：先落盘为 user_msg 事件，
+		// 随后的 loadSession + deriveMessages 会把它折进模型历史（不变量：模型可见 ⟺ 已记录）
+		if (cfg.pollInbox) {
+			const inbox = await cfg.pollInbox();
+			for (const content of inbox) {
+				await cfg.session.append({
+					type: "user_msg",
+					id: randomUUID(),
+					ts: nowIso(),
+					agentId: cfg.agentId,
+					content,
+				});
+			}
+		}
+
 		// 每个 step 从事件日志重建完整消息历史
 		const { events } = await loadSession(cfg.session.filePath);
 		const req: ChatRequest = {
@@ -296,7 +311,7 @@ export async function* runTurn(
 			return;
 		}
 
-		// assistant 消息完整接收后落盘（含 usage / model / agentId；M1 主 agent 固定 tier=high）
+		// assistant 消息完整接收后落盘（含 usage / model / agentId / tier；tier 缺省 high）
 		const assistantMsg: SessionEvent = {
 			type: "assistant_msg",
 			id: randomUUID(),
@@ -305,7 +320,7 @@ export async function* runTurn(
 			content,
 			usage,
 			model: cfg.model.id,
-			tier: "high",
+			tier: cfg.tier ?? "high",
 		};
 		await cfg.session.append(assistantMsg);
 

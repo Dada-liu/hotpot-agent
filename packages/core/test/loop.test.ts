@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
 	type ChatRequest,
+	type ContentBlock,
 	type FinishReason,
 	type ModelInfo,
 	type StreamEvent,
@@ -636,5 +637,92 @@ describe("runTurn", () => {
 		const result = onlyToolResult(events);
 		expect(result.output.isError).toBe(true);
 		expect(result.output.content).toContain('{"text":"hi');
+	});
+
+	it("tier 透传：cfg.tier 落盘到 assistant_msg，缺省为 high", async () => {
+		// M2 按 agent 路由档位（worker/task 走 medium/low），验收以日志记录为准
+		const lowCfg = await makeConfig([STOP_ROUND]);
+		lowCfg.tier = "low";
+		await collectTurn(lowCfg, new AbortController().signal);
+		const { events: lowEvents } = await loadSession(lowCfg.session.filePath);
+		const lowAssistant = lowEvents.find((e) => e.type === "assistant_msg");
+		if (lowAssistant?.type !== "assistant_msg") {
+			throw new Error("assistant_msg missing");
+		}
+		expect(lowAssistant.tier).toBe("low");
+
+		// 不传 tier：缺省 high，既有行为不变
+		const defaultCfg = await makeConfig([STOP_ROUND]);
+		await collectTurn(defaultCfg, new AbortController().signal);
+		const { events: defaultEvents } = await loadSession(
+			defaultCfg.session.filePath,
+		);
+		const defaultAssistant = defaultEvents.find(
+			(e) => e.type === "assistant_msg",
+		);
+		if (defaultAssistant?.type !== "assistant_msg") {
+			throw new Error("assistant_msg missing");
+		}
+		expect(defaultAssistant.tier).toBe("high");
+	});
+
+	it("pollInbox 注入：step 边界拉取 next-step 消息，落盘 user_msg 并进入下一轮请求", async () => {
+		const spy: ToolSpy[] = [];
+		const requests: ChatRequest[] = [];
+		const cfg = await makeConfig([
+			toolCallRound("echo", "tc-1", '{"text":"hi"}'),
+			STOP_ROUND,
+		]);
+		cfg.registry.register(makeEchoTool(spy));
+		// recording 包装：捕获每轮实际发出的 ChatRequest
+		const inner = cfg.adapter;
+		cfg.adapter = {
+			api: inner.api,
+			streamChat(
+				req: ChatRequest,
+				signal: AbortSignal,
+			): AsyncIterable<StreamEvent> {
+				requests.push(req);
+				return inner.streamChat(req, signal);
+			},
+		};
+		// 每个 step 顶部轮询一次：第一次返回一条 next-step 消息，之后为空
+		let polls = 0;
+		cfg.pollInbox = async () => {
+			polls += 1;
+			return polls === 1 ? ["请停止"] : [];
+		};
+
+		const events = await collectTurn(cfg, new AbortController().signal);
+		expect(events.at(-1)).toEqual({ type: "done", stopReason: "stop" });
+		expect(spy).toHaveLength(1);
+		expect(requests).toHaveLength(2);
+
+		// 第二次请求的模型历史里出现注入的 user 文本
+		const secondTexts = requests[1]?.messages
+			.flatMap((m) => m.content)
+			.filter(
+				(b): b is Extract<ContentBlock, { type: "text" }> => b.type === "text",
+			)
+			.map((b) => b.text);
+		expect(secondTexts).toContain("请停止");
+
+		// 注入消息已作为 user_msg 事件落盘，形状与外部 user 消息一致
+		const { events: fileEvents } = await loadSession(cfg.session.filePath);
+		const injected = fileEvents.find(
+			(e): e is Extract<SessionEvent, { type: "user_msg" }> =>
+				e.type === "user_msg" && e.content === "请停止",
+		);
+		expect(injected).toBeDefined();
+		expect(injected?.agentId).toBe("main");
+		// 注入发生在 step 1 顶部、derive 之前，因此落盘位置在首个 assistant_msg 之前
+		expect(fileEvents.map((e) => e.type)).toEqual([
+			"meta",
+			"user_msg",
+			"user_msg",
+			"assistant_msg",
+			"tool_result",
+			"assistant_msg",
+		]);
 	});
 });
