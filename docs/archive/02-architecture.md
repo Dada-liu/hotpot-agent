@@ -97,7 +97,7 @@ WorkerAgent: 可并行则 spawn TaskAgent × N（上限可配，默认 10）
 
 每会话一个文件，append-only，**日志即唯一事实源**。
 
-- 位置：`~/.hotpot-code/sessions/<cwd 编码>/<timestamp>_<session-id>.jsonl`（借鉴 pi 按 cwd 分目录）
+- 位置：`~/.hotpot/sessions/<cwd 编码>/<timestamp>_<session-id>.jsonl`（借鉴 pi 按 cwd 分目录）
 - 格式直接定 v1 定稿，不做 dsh 那种 v0→v4 相邻迁移链；真出现 v2 需求时再加迁移
 - 恢复 = 顺序折叠日志，重建各 agent 的消息历史与队列状态
 
@@ -126,21 +126,21 @@ WorkerAgent: 可并行则 spawn TaskAgent × N（上限可配，默认 10）
 
 ## 6. 配置体系
 
-双层配置（参考 kimi-code / pi 惯例）：项目级 `.hotpot-code/` 覆盖用户级 `~/.hotpot-code/` 的指定字段。
+双层配置（参考 kimi-code / pi 惯例）：项目级 `.hotpot/` 覆盖用户级 `~/.hotpot/` 的指定字段。
 
-**用户级 `~/.hotpot-code/`**（`HOTPOT_HOME` 环境变量可覆盖）：
+**用户级 `~/.hotpot/`**（`HOTPOT_HOME` 环境变量可覆盖）：
 
 ```
-~/.hotpot-code/
+~/.hotpot/
 ├── settings.json     # 主配置（含模型与凭证）
 ├── sessions/         # 会话日志
 └── memory/           # 用户记忆（M4）
 ```
 
-**项目级 `./.hotpot-code/`**（自 cwd 向上逐级查找，首个含 `settings.json` 的目录生效）：
+**项目级 `./.hotpot/`**（自 cwd 向上逐级查找，首个含 `settings.json` 的目录生效）：
 
 ```
-<项目>/.hotpot-code/
+<项目>/.hotpot/
 └── settings.json     # 项目覆盖：仅允许非凭证字段（见下）
 ```
 

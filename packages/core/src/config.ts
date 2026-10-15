@@ -1,7 +1,7 @@
 // settings.json 加载：双层配置（用户级 + 项目级）+ zod 校验 + apiKey 的 $ENV 插值
 // 用户级 <home>/settings.json 必填（含 models 与凭证）；home 解析复用 session/store.ts 的 resolveHome
-// （参数 > HOTPOT_HOME > ~/.hotpot-code），避免两处规则漂移。项目级自 cwd 向上逐级查找
-// .hotpot-code/settings.json，可选（找不到则跳过）；用收窄 schema 只解析白名单字段
+// （参数 > HOTPOT_HOME > ~/.hotpot），避免两处规则漂移。项目级自 cwd 向上逐级查找
+// .hotpot/settings.json，可选（找不到则跳过）；用收窄 schema 只解析白名单字段
 // （mainAgentTier/maxParallelTasks/planMaxRevisions/approval.policy），未知字段（含 models）静默剥离，
 // 凭证永远只来自用户级，规避恶意仓库借 baseUrl 重定向窃取凭证。
 // $ENV 插值：仅对用户级 apiKey 做；apiKey 整串形如 "$NAME" 时取环境变量；未设置（或为空）直接抛错并带变量名——
@@ -121,11 +121,11 @@ function loadProjectSettings(path: string): ProjectSettings {
 	return parsed.data;
 }
 
-// 自 cwd 向上逐级查找 .hotpot-code/settings.json，找到即返回其绝对路径；到文件系统根仍未找到返回 null
+// 自 cwd 向上逐级查找 .hotpot/settings.json，找到即返回其绝对路径；到文件系统根仍未找到返回 null
 function findProjectSettingsPath(cwd: string): string | null {
 	let dir = resolve(cwd);
 	for (;;) {
-		const candidate = join(dir, ".hotpot-code", "settings.json");
+		const candidate = join(dir, ".hotpot", "settings.json");
 		if (existsSync(candidate)) {
 			return candidate;
 		}

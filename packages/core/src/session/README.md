@@ -6,4 +6,4 @@
 - `store.ts` — 读写：`createSession`（建目录、写 meta 首行）、`Session.append`（追加一行并 fsync，崩溃最多丢最后一行）、`loadSession`（按行解析，坏行跳过，meta 缺失抛错）、`listSessions`（读各文件 meta 出摘要）、`resumeSession`（校验 meta 后恢复 append 句柄，供 `--session` 续聊）、`resolveHome`（home 解析，导出供 `config.ts` 复用）。
 - `derive.ts` — `deriveMessages(events, agentId)`：折叠出 ai 包的 `Message[]`。tool_result 折叠为 role:"user" 消息，连续 tool_result 合并为一条；其余事件类型不进历史。
 
-路径规则：`$HOTPOT_HOME/sessions/<cwd 编码（/ 与 : 替换为 -）>/<yyyymmdd-hhmmss>_<session-id>.jsonl`；home 优先级为参数 > `HOTPOT_HOME` 环境变量 > `~/.hotpot-code`。
+路径规则：`$HOTPOT_HOME/sessions/<cwd 编码（/ 与 : 替换为 -）>/<yyyymmdd-hhmmss>_<session-id>.jsonl`；home 优先级为参数 > `HOTPOT_HOME` 环境变量 > `~/.hotpot`。

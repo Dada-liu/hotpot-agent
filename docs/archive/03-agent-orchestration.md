@@ -27,7 +27,7 @@
 | complex | 多模块、多步骤、有不确定性 | plan → 用户审查 → 批准后执行 |
 
 **modelTier**（worker 档位，已确认的决议）：
-- `~/.hotpot-code/settings.json` 预先配置 **high / medium / low 三档模型**（各档 = provider + model + 凭证）
+- `~/.hotpot/settings.json` 预先配置 **high / medium / low 三档模型**（各档 = provider + model + 凭证）
 - 主 agent 默认使用 **high** 档（可配置 `models.mainAgent`）
 - 主 agent 评估难度时**同时决定 WorkerAgent 的档位**：如 simple 任务可路由到 medium/low 省钱，complex 给 high
 - TaskAgent 继承其 WorkerAgent 的档位，不单独路由
@@ -124,6 +124,6 @@ WorkerAgent 只在满足全部条件时才拆 TaskAgent：
 
 | 问题 | 决议 |
 |------|------|
-| 并行 TaskAgent 上限 | 默认 10，`~/.hotpot-code/settings.json` 的 `maxParallelTasks` 可配 |
+| 并行 TaskAgent 上限 | 默认 10，`~/.hotpot/settings.json` 的 `maxParallelTasks` 可配 |
 | plan 审批修订轮次上限 | 默认 3，`planMaxRevisions` 可配 |
 | 分层模型配置 | M2 实现；settings.json 配 high/medium/low 三档；主 agent 默认 high；worker 档位由主 agent 评估难度时决定；task 继承 worker 档位 |

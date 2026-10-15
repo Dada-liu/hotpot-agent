@@ -18,7 +18,7 @@
 - 每个新建文件夹必须带 `README.md`（做了什么，中文）和 `AGENTS.md`（怎么改，英文）
 - 依赖白名单：`zod`；devDependencies：`typescript`、`tsx`、`vitest`、`@biomejs/biome`、`tsdown`。新增依赖需用户批准
 - 提交信息：conventional commits，无 emoji
-- 配置 home：`~/hotpot-code/`（env `HOTPOT_HOME` 可覆盖，供测试隔离）
+- 配置 home：`~/.hotpot/`（env `HOTPOT_HOME` 可覆盖，供测试隔离）
 
 ## Review Focus
 
@@ -245,7 +245,7 @@
 
 - [ ] **Step 1: 写验收测试**（FakeAdapter 脚本化）：模拟「统计行数写入 report.txt」多步工具调用场景，断言 report.txt 生成且会话文件含完整事件链；模拟 kill 后用 loadSession 恢复并继续一轮对话
 - [ ] **Step 2: 跑测试确认失败→通过全过程**
-- [ ] **Step 3: 真实冒烟（人工步骤，执行者需配好 ~/hotpot-code/settings.json 三档模型）：`pnpm dev cli chat` 完成 M1 验收场景 1、2**
+- [ ] **Step 3: 真实冒烟（人工步骤，执行者需配好 ~/.hotpot/settings.json 三档模型）：`pnpm dev cli chat` 完成 M1 验收场景 1、2**
 - [ ] **Step 4: 更新 README.md 当前状态为「M1 完成」；检查 packages 三个包的 README/AGENTS 与实现一致**
 - [ ] **Step 5: `pnpm test` 全绿 + `pnpm exec biome check` 干净，Commit** `docs: m1 acceptance`
 

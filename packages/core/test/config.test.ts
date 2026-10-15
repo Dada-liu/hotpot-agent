@@ -48,20 +48,20 @@ async function writeSettings(data: unknown): Promise<void> {
 	await writeFile(join(home, "settings.json"), JSON.stringify(data));
 }
 
-// 在指定目录写入项目级配置 <dir>/.hotpot-code/settings.json
+// 在指定目录写入项目级配置 <dir>/.hotpot/settings.json
 async function writeProjectSettings(dir: string, data: unknown): Promise<void> {
-	const projectDir = join(dir, ".hotpot-code");
+	const projectDir = join(dir, ".hotpot");
 	await mkdir(projectDir, { recursive: true });
 	await writeFile(join(projectDir, "settings.json"), JSON.stringify(data));
 }
 
 describe("resolveHome", () => {
-	it("默认返回 ~/.hotpot-code（不再用 ~/hotpot-code）", () => {
+	it("默认返回 ~/.hotpot", () => {
 		const oldEnv = process.env.HOTPOT_HOME;
 		delete process.env.HOTPOT_HOME;
 		try {
-			expect(resolveHome()).toBe(join(homedir(), ".hotpot-code"));
-			expect(resolveHome(undefined)).toBe(join(homedir(), ".hotpot-code"));
+			expect(resolveHome()).toBe(join(homedir(), ".hotpot"));
+			expect(resolveHome(undefined)).toBe(join(homedir(), ".hotpot"));
 		} finally {
 			if (oldEnv === undefined) {
 				delete process.env.HOTPOT_HOME;
