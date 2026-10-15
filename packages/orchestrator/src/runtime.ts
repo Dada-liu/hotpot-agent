@@ -1,5 +1,6 @@
 // 编排运行时：delegate/spawn_workers/spawn_tasks、plan 流程、inbox 等后续能力都闭包在这个对象上。
-// spawn 只负责两件事：按 role 计数分配 agentId（worker-1、task-1…，runtime 生命周期内单调递增不复用），
+// spawn 只负责三件事：首次调用时按既有日志播种计数器（resume 场景防 agentId 复用，见下）、
+// 按 role 计数分配 agentId（worker-1、task-1…，runtime 生命周期内单调递增不复用），
 // 并把 agent_spawn 事件落盘（id/ts 由这里组装，append 本身带 fsync，见 core session/store.ts）。
 // spawn 不运行任何 turn —— 回合执行是后续任务的责任。
 // resolveModel(tier) 把 settings 里的档位 ModelRef 解析为适配器 + 模型 + 凭证。
@@ -9,9 +10,11 @@ import type {
 	ApprovalChain,
 	ModelTier,
 	Session,
+	SessionEvent,
 	Settings,
 	ToolDefinition,
 } from "@hotpot/core";
+import { loadSession } from "@hotpot/core";
 import { type ModelResolution, resolveModel } from "./models.ts";
 import type { AgentRole } from "./types.ts";
 
@@ -49,6 +52,44 @@ export function createRuntime(opts: {
 }): OrchestrationRuntime {
 	// 每个 role 一条计数链：同一 runtime 内单调递增，编号不复用
 	const counters = new Map<AgentRole, number>();
+	// 计数器播种标记：播种只做一次。CLI --session 恢复旧会话后若计数器从 0 重启，
+	// 首个委派又会 spawn 出 worker-1，deriveMessages 按 agentId 过滤会把旧 worker-1
+	// 的完整 transcript 折进新 worker 上下文（agentId 复用污染）。故首次 spawn 前
+	// 按既有日志播种：取各 role 已有 agent_spawn 的编号最大值作为计数起点。
+	// createRuntime 是同步接口而 loadSession 是 async，spawn 本身已是 async，
+	// 故在 spawn 内惰性播种（标记位同步置位，并发 spawn 也只播一次）。
+	// spawn 编号按调用序 FIFO 分配（spawn_tasks 的脚本分发依赖「编号 FIFO × 描述锚定」
+	// 锚定确定性）：播种的 await 会把首个 spawn 的编号发放推迟到文件读完之后，
+	// 并发 spawn 时编号与调用序错位。故 spawn 经一条 Promise 链串行化，
+	// 保证「播种 → 编号 → 落盘」严格按调用顺序执行（spawn 只做计数与一行落盘，
+	// 串行化不影响其后 task turn 的并行执行）。
+	let countersSeeded = false;
+	let spawnTail: Promise<void> = Promise.resolve();
+
+	async function seedCounters(): Promise<void> {
+		if (countersSeeded) {
+			return;
+		}
+		countersSeeded = true;
+		let events: SessionEvent[];
+		try {
+			events = (await loadSession(opts.session.filePath)).events;
+		} catch {
+			return; // 文件不存在或损坏：按 0 处理，等价于全新会话
+		}
+		for (const e of events) {
+			if (e.type !== "agent_spawn") {
+				continue;
+			}
+			const m = /-(\d+)$/.exec(e.agentId);
+			if (!m) {
+				continue; // 非编号形态（如 main）不参与计数
+			}
+			const role = e.role as AgentRole;
+			const n = Number(m[1]);
+			counters.set(role, Math.max(counters.get(role) ?? 0, n));
+		}
+	}
 
 	return {
 		session: opts.session,
@@ -68,20 +109,36 @@ export function createRuntime(opts: {
 			task: string;
 			tier: ModelTier;
 		}): Promise<{ agentId: string }> {
-			const next = (counters.get(spawnOpts.role) ?? 0) + 1;
-			counters.set(spawnOpts.role, next);
-			const agentId = `${spawnOpts.role}-${next}`;
-			await opts.session.append({
-				type: "agent_spawn",
-				id: randomUUID(),
-				ts: new Date().toISOString(),
-				parentAgentId: spawnOpts.parentAgentId,
-				agentId,
-				role: spawnOpts.role,
-				task: spawnOpts.task,
-				tier: spawnOpts.tier,
-			});
-			return { agentId };
+			const job = spawnTail.then(() => doSpawn(spawnOpts));
+			// 尾指针吞掉 rejection 只作串行化用； rejection 经 job 原样抛给调用方
+			spawnTail = job.then(
+				() => {},
+				() => {},
+			);
+			return job;
 		},
 	};
+
+	async function doSpawn(spawnOpts: {
+		role: AgentRole;
+		parentAgentId: string;
+		task: string;
+		tier: ModelTier;
+	}): Promise<{ agentId: string }> {
+		await seedCounters();
+		const next = (counters.get(spawnOpts.role) ?? 0) + 1;
+		counters.set(spawnOpts.role, next);
+		const agentId = `${spawnOpts.role}-${next}`;
+		await opts.session.append({
+			type: "agent_spawn",
+			id: randomUUID(),
+			ts: new Date().toISOString(),
+			parentAgentId: spawnOpts.parentAgentId,
+			agentId,
+			role: spawnOpts.role,
+			task: spawnOpts.task,
+			tier: spawnOpts.tier,
+		});
+		return { agentId };
+	}
 }

@@ -10,7 +10,8 @@
 	"scripts": {
 		"dev": "tsx scripts/dev.ts",
 		"test": "vitest run",
-		"check": "biome check ."
+		"check": "biome check .",
+		"typecheck": "pnpm -r exec tsc -p ."
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.5.15",

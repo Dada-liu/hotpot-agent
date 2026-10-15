@@ -1,6 +1,6 @@
 // 会话事件类型（v1 定稿）：字段对齐 docs/archive/02-architecture.md 第 5 节
 // M1 只写入 meta/user_msg/assistant_msg/tool_call/tool_result/error；
-// agent_spawn、approval/*、inbox/spliced 先定义类型，由后续里程碑产出。
+// M2 起 agent_spawn、approval/*、inbox/spliced 已由编排层（packages/orchestrator）产出。
 // 文档第 5 节还列了 turn/start|turn/end 与 request_header，M1 暂不需要，未纳入本联合。
 
 import type { ContentBlock, Usage } from "@hotpot/ai";

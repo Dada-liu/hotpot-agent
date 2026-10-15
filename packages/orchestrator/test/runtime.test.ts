@@ -5,6 +5,9 @@ import { join } from "node:path";
 import {
 	ApprovalChain,
 	createSession,
+	deriveMessages,
+	loadSession,
+	resumeSession,
 	type SessionEvent,
 	type Settings,
 } from "@hotpot/core";
@@ -96,6 +99,76 @@ describe("createRuntime / spawn", () => {
 			parentAgentId: "worker-1",
 			role: "task",
 		});
+	});
+
+	// resume 场景（CLI --session）：旧会话已有 worker-1 历史时，新 runtime 的首个
+	// 委派必须 spawn 出 worker-2 —— 若计数器从 0 重启复用 worker-1，
+	// deriveMessages 按 agentId 过滤会把旧 worker-1 的 transcript 折进新 worker 上下文
+	it("resume 后按既有日志播种计数器：新 worker 不复用旧 agentId，derive 历史不被污染", async () => {
+		const session = await createSession("/tmp/proj", home);
+		const oldRuntime = createRuntime({
+			session,
+			cwd: "/tmp/proj",
+			approval: new ApprovalChain(),
+			models: MODELS,
+		});
+		// 旧会话里 worker-1 已存在并留有 assistant 产出
+		const old = await oldRuntime.spawn({
+			role: "worker",
+			parentAgentId: "main",
+			task: "旧任务：实现登录接口",
+			tier: "medium",
+		});
+		expect(old).toEqual({ agentId: "worker-1" });
+		const oldSecret = "旧 worker-1 的机密产出：login-secret";
+		await session.append({
+			type: "assistant_msg",
+			id: "old-a-1",
+			ts: new Date().toISOString(),
+			agentId: "worker-1",
+			content: [{ type: "text", text: oldSecret }],
+			usage: { input: 10, output: 5 },
+			model: "claude-sonnet-4-5",
+			tier: "medium",
+		});
+
+		// 模拟 CLI --session 恢复：指向同一文件的新句柄 + 新 runtime
+		const resumed = await resumeSession(session.filePath);
+		const rt = createRuntime({
+			session: resumed,
+			cwd: "/tmp/proj",
+			approval: new ApprovalChain(),
+			models: MODELS,
+		});
+		const spawned = await rt.spawn({
+			role: "worker",
+			parentAgentId: "main",
+			task: "新任务：实现登出接口",
+			tier: "low",
+		});
+		expect(spawned).toEqual({ agentId: "worker-2" });
+		// 播种按 role 独立：task 无历史仍从 task-1 起
+		const task = await rt.spawn({
+			role: "task",
+			parentAgentId: "worker-2",
+			task: "补登出接口测试",
+			tier: "low",
+		});
+		expect(task).toEqual({ agentId: "task-1" });
+
+		// 新 worker-2 的 derive 历史不含旧 worker-1 的 assistant 内容
+		const { events } = await loadSession(session.filePath);
+		const worker2Spawn = events.find(
+			(e): e is Extract<SessionEvent, { type: "agent_spawn" }> =>
+				e.type === "agent_spawn" && e.agentId === "worker-2",
+		);
+		expect(worker2Spawn).toMatchObject({ task: "新任务：实现登出接口" });
+		const newHistory = deriveMessages(events, "worker-2");
+		expect(JSON.stringify(newHistory)).not.toContain(oldSecret);
+		// 对照：旧 worker-1 自己的 derive 历史仍含其产出（derive 按 agentId 过滤的语义未变）
+		expect(JSON.stringify(deriveMessages(events, "worker-1"))).toContain(
+			oldSecret,
+		);
 	});
 
 	it("maxParallelTasks / planMaxRevisions 缺省 10 / 3，可显式覆盖", async () => {

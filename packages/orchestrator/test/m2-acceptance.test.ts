@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
 	type ChatRequest,
+	type ContentBlock,
 	type LlmAdapter,
 	type StreamEvent,
 	scriptedAdapter,
@@ -292,7 +293,8 @@ function spawnTasksOutputFromLog(
 			e.content.some((b) => b.type === "tool_call" && b.name === "spawn_tasks"),
 	);
 	const block = workerMsg?.content.find(
-		(b) => b.type === "tool_call" && b.name === "spawn_tasks",
+		(b): b is Extract<ContentBlock, { type: "tool_call" }> =>
+			b.type === "tool_call" && b.name === "spawn_tasks",
 	);
 	const result = fileEvents.find(
 		(e) => e.type === "tool_result" && e.toolCallId === block?.id,
@@ -438,7 +440,8 @@ describe("M2 验收 1-5（runMainTurn 端到端串联）", () => {
 				e.type === "assistant_msg" && e.agentId === "worker-1",
 		);
 		const writeBlock = workerMsg?.content.find(
-			(b) => b.type === "tool_call" && b.name === "write",
+			(b): b is Extract<ContentBlock, { type: "tool_call" }> =>
+				b.type === "tool_call" && b.name === "write",
 		);
 		const firstWriteResultIdx = fileEvents.findIndex(
 			(e) => e.type === "tool_result" && e.toolCallId === writeBlock?.id,
@@ -514,7 +517,8 @@ describe("M2 验收 1-5（runMainTurn 端到端串联）", () => {
 		// agent_spawn，按 role=task 过滤）
 		const { events: fileEvents } = await loadSession(runtime.session.filePath);
 		const spawns = fileEvents.filter(
-			(e) => e.type === "agent_spawn" && e.role === "task",
+			(e): e is Extract<SessionEvent, { type: "agent_spawn" }> =>
+				e.type === "agent_spawn" && e.role === "task",
 		);
 		expect(spawns).toHaveLength(8);
 		expect(spawns.map((e) => e.agentId).sort()).toEqual(
