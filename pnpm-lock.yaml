@@ -31,6 +31,9 @@ importers:
       '@hotpot/core':
         specifier: workspace:*
         version: link:../core
+      '@hotpot/orchestrator':
+        specifier: workspace:*
+        version: link:../orchestrator
 
   packages/core:
     dependencies:
