@@ -1,6 +1,6 @@
 # Working in packages/orchestrator/
 
-- Source in `src/`, tests in `test/*.test.ts`. `src/index.ts` is the package entry, re-exporting `types.ts` / `models.ts` / `runtime.ts` / `prompts.ts` / `registries.ts` / `main-turn.ts` / `tools/delegate.ts`.
+- Source in `src/`, tests in `test/*.test.ts`. `src/index.ts` is the package entry, re-exporting `types.ts` / `models.ts` / `runtime.ts` / `prompts.ts` / `registries.ts` / `main-turn.ts` / `plan.ts` / `tools/delegate.ts` / `tools/spawn-workers.ts`.
 - May depend on `@hotpot/core` (`workspace:*`) and `@hotpot/ai` (`workspace:*`); never import from `@hotpot/cli`.
 - This package holds the three-layer agent orchestration: the main agent (conversation entry, difficulty/tier routing), worker agents (execution and parallel split), and task agents (atomic subtasks); plus the plan approval flow and the steer/queue dual-queue mechanism.
 - Dependency direction is fixed: `orchestrator → core → ai`. Never add a reverse edge.

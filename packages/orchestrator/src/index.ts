@@ -2,8 +2,10 @@
 
 export * from "./main-turn.ts";
 export * from "./models.ts";
+export * from "./plan.ts";
 export * from "./prompts.ts";
 export * from "./registries.ts";
 export * from "./runtime.ts";
 export * from "./tools/delegate.ts";
+export * from "./tools/spawn-workers.ts";
 export * from "./types.ts";

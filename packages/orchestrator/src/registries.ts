@@ -1,5 +1,5 @@
 // 按角色装配工具注册表，规则钉死（docs/archive/03-agent-orchestration.md §1）：
-// - main：只有编排元工具（Task 7 的 delegate/spawn_workers），不直接操作文件
+// - main：只有编排元工具（delegate/spawn_workers），不直接操作文件
 // - worker：四个基础工具 + 元工具（元工具携带 spawn_tasks，可并行拆分）
 // - task：只有四个基础工具，无派生能力（metaTools 直接忽略）
 // 四件套与 createToolRegistry 复用 core 实现；metaTools 由上层注入，便于测试用桩替换。

@@ -1,24 +1,17 @@
 // delegate 元工具：主 agent 的难度判定与派发入口，execute 内联完成编排。
-// 三个难度分支：trivial 只返回「直接回答」提示；simple 派一个 worker 并在 execute 里
-// 跑完它的整个 turn（worker 事件不外传，M2 计划决定 #3），回收最后一条 assistant_msg
-// 文本作为摘要回传；complex 只记录状态（phase 转 planning），plan 流程由 Task 8 接管。
-// 重复调用由 TurnState.phase 守卫：首次判定后 phase 离开 initial，再调用返回 isError。
-// worker 不复用 main 的适配器：走 runtime.resolveModel(modelTier) 解析 worker 自己的
-// 档位模型与凭证；spawn 的 parentAgentId 固定 "main"（主流 agentId 是包级约定）。
+// 三个难度分支：trivial 只返回「直接回答」提示；simple 派一个 worker 并复用
+// run-worker 的内联执行跑完它的整个 turn（worker 事件不外传，M2 计划决定 #3），
+// 回收最后一条 assistant_msg 文本作为摘要回传；complex 只记录状态（phase 转 planning），
+// plan 流程由 plan.ts 的 runPlanPhase 接管。
+// 重复调用由 TurnState.lastDelegate 守卫：首次判定后即视为已消费（含 trivial），
+// 再调用返回 isError。worker 不复用 main 的适配器：走 runtime.resolveModel(modelTier)
+// 解析 worker 自己的档位模型与凭证；spawn 的 parentAgentId 固定 "main"（包级约定）。
 
 import { randomUUID } from "node:crypto";
-import {
-	type LoopConfig,
-	loadSession,
-	type ModelTier,
-	runTurn,
-	type ToolContext,
-	type ToolDefinition,
-} from "@hotpot/core";
+import type { ModelTier, ToolContext, ToolDefinition } from "@hotpot/core";
 import { z } from "zod";
-import { buildRoleSystemPrompt } from "../prompts.ts";
-import { createRoleRegistry } from "../registries.ts";
 import type { OrchestrationRuntime } from "../runtime.ts";
+import { runWorkerInline } from "./run-worker.ts";
 
 export interface DelegateArgs {
 	difficulty: "trivial" | "simple" | "complex";
@@ -32,66 +25,6 @@ export interface TurnState {
 	planApproved: boolean;
 	revisions: number;
 	lastDelegate?: DelegateArgs;
-}
-
-// 读取 worker 最后一条 assistant_msg，拼接其文本块作为回传给 main 的摘要；
-// 没有任何 assistant_msg 或文本块为空时返回 undefined，由调用方标注失败
-async function readWorkerSummary(
-	filePath: string,
-	agentId: string,
-): Promise<string | undefined> {
-	const { events } = await loadSession(filePath);
-	const messages = events.filter(
-		(e) => e.type === "assistant_msg" && e.agentId === agentId,
-	);
-	const last = messages[messages.length - 1];
-	if (last?.type !== "assistant_msg") return undefined;
-	const text = last.content
-		.filter((b) => b.type === "text")
-		.map((b) => b.text)
-		.join("");
-	return text === "" ? undefined : text;
-}
-
-// 内联跑完 worker 的整个 turn：任务已作为 user_msg 落盘，这里只组装 LoopConfig 并
-// 耗尽 runTurn 的异步迭代。事件不外传，只收集 error 事件用于摘要标注（失败分类法 Task 9 细化）
-async function runWorkerInline(
-	runtime: OrchestrationRuntime,
-	workerId: string,
-	tier: ModelTier,
-	signal: AbortSignal,
-): Promise<string> {
-	const registry = createRoleRegistry("worker", []);
-	const resolved = runtime.resolveModel(tier);
-	const cfg: LoopConfig = {
-		session: runtime.session,
-		agentId: workerId,
-		adapter: resolved.adapter,
-		model: resolved.model,
-		apiKey: resolved.apiKey,
-		baseUrl: resolved.baseUrl,
-		registry,
-		approval: runtime.approval,
-		cwd: runtime.cwd,
-		system: buildRoleSystemPrompt("worker", {
-			cwd: runtime.cwd,
-			os: process.platform,
-			date: new Date().toISOString().slice(0, 10),
-			tools: registry.declarations(),
-		}),
-		tier,
-	};
-	const failures: string[] = [];
-	for await (const event of runTurn(cfg, signal)) {
-		if (event.type === "error") {
-			failures.push(`${event.error.code}: ${event.error.message}`);
-		}
-	}
-	const summary = await readWorkerSummary(runtime.session.filePath, workerId);
-	if (failures.length > 0) {
-		return `[${workerId} failed] ${failures.join("; ")}`;
-	}
-	return summary ?? `[${workerId} failed] no assistant text produced`;
 }
 
 export function createDelegateTool(
@@ -131,9 +64,9 @@ export function createDelegateTool(
 		// 有派生副作用且内联跑完整 worker turn，绝不能与同批工具并行
 		isConcurrencySafe: false,
 		async execute(args, ctx: ToolContext) {
-			if (state.phase !== "initial") {
+			if (state.lastDelegate !== undefined) {
 				return {
-					content: `已判定（difficulty=${state.lastDelegate?.difficulty ?? "unknown"}），勿重复调用 delegate`,
+					content: `已判定（difficulty=${state.lastDelegate.difficulty}），勿重复调用 delegate`,
 					isError: true,
 				};
 			}

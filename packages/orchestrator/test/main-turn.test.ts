@@ -328,4 +328,45 @@ describe("runMainTurn", () => {
 		const { events: fileEvents } = await loadSession(runtime.session.filePath);
 		expect(fileEvents.filter((e) => e.type === "agent_spawn")).toHaveLength(1);
 	});
+
+	it("重复 delegate：trivial 判定后再调用也返回 isError「已判定」", async () => {
+		const approval = new ApprovalChain();
+		// 调用序：1=main delegate(trivial)，2=main 再次 delegate（应被守卫拒绝），3=main 文本收尾
+		const { runtime } = await makeRuntime(
+			[
+				delegateRound(
+					'{"difficulty":"trivial","modelTier":"high","task":"1+1 等于几"}',
+				),
+				delegateRound(
+					'{"difficulty":"trivial","modelTier":"high","task":"2+2 等于几"}',
+				),
+				textRound("答案是 4。", { input: 50, output: 10 }),
+			],
+			approval,
+		);
+
+		const events = await collect(
+			runMainTurn({
+				runtime,
+				userMessage: "1+1 等于几",
+				signal: new AbortController().signal,
+				mainTier: "high",
+			}),
+		);
+
+		const results = events.filter(
+			(e) => e.type === "tool_result" && e.name === "delegate",
+		);
+		expect(results).toHaveLength(2);
+		const second = results[1];
+		if (second?.type !== "tool_result") {
+			throw new Error("delegate tool_result missing");
+		}
+		expect(second.output.isError).toBe(true);
+		expect(second.output.content).toContain("已判定");
+		expect(events.at(-1)).toEqual({ type: "done", stopReason: "stop" });
+
+		const { events: fileEvents } = await loadSession(runtime.session.filePath);
+		expect(fileEvents.some((e) => e.type === "agent_spawn")).toBe(false);
+	});
 });
