@@ -12,4 +12,6 @@
 
 当前进度：
 - 已完成（Task 5）：`types.ts`（AgentRole / OrchestrationEvent）、`models.ts`（档位模型解析 `resolveModel`，自 cli 迁入）、`runtime.ts`（`createRuntime` / `OrchestrationRuntime`：spawn 落盘 agent_spawn、按 role 计数的 agentId、档位解析与缺省参数）。
-- 待做：delegate/spawn_workers/spawn_tasks、plan 流程落地、steer/queue 双队列。
+- 已完成（Task 6）：`prompts.ts`（角色系统提示词）、`registries.ts`（按角色装配工具注册表）。
+- 已完成（Task 7）：`tools/delegate.ts`（delegate 元工具：trivial 提示直答 / simple 内联跑 worker turn 回传摘要 / complex 记录状态）、`main-turn.ts`（`runMainTurn` 主流入口：user_msg 落盘 + main 注册表跑 core runTurn + 事件透传；complex 分支为 Task 8 的 plan 占位）。
+- 待做：spawn_workers/spawn_tasks、plan 流程落地、steer/queue 双队列。
