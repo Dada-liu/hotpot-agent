@@ -48,11 +48,13 @@ export type SessionEvent =
 			name: string;
 			input: unknown;
 	  }
-	// tool_result 按架构文档不带 agentId（它通过 toolCallId 关联上游调用）
+	// tool_result 通过 toolCallId 关联上游调用；agentId 标记结果归属（derive 按它过滤）。
+	// 缺省 "main"：M1 旧日志的 tool_result 无此字段，视为主 agent 的结果（向后兼容）
 	| {
 			type: "tool_result";
 			id: string;
 			ts: string;
+			agentId?: string;
 			toolCallId: string;
 			content: string;
 			isError: boolean;

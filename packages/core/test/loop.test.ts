@@ -211,6 +211,7 @@ describe("runTurn", () => {
 			throw new Error("tool_result missing");
 		}
 		expect(toolResult.toolCallId).toBe("tc-1");
+		expect(toolResult.agentId).toBe("main");
 		expect(toolResult.content).toBe("echo: hi");
 		expect(toolResult.isError).toBe(false);
 	});

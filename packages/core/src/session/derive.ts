@@ -5,7 +5,8 @@
 // - tool_result → role:"user" 消息承载 tool_result 块；连续的 tool_result 合并为一条
 //   （Anthropic 要求同一轮的全部 tool_result 放在一条 user 消息里）
 // - 其余事件类型（meta/tool_call/approval/* 等）不进消息历史
-// - 只折叠指定 agentId 的事件；tool_result 按架构文档不带 agentId，M1 不做 agent 过滤
+// - 只折叠指定 agentId 的事件；tool_result 按 agentId 过滤，
+//   无 agentId 的（M1 旧日志）视为 "main"
 
 import type { ContentBlock, Message } from "@hotpot/ai";
 import type { SessionEvent } from "./events.ts";
@@ -23,7 +24,10 @@ export function deriveMessages(
 			});
 		} else if (event.type === "assistant_msg" && event.agentId === agentId) {
 			messages.push({ role: "assistant", content: event.content });
-		} else if (event.type === "tool_result") {
+		} else if (
+			event.type === "tool_result" &&
+			(event.agentId ?? "main") === agentId
+		) {
 			const block: ContentBlock = {
 				type: "tool_result",
 				toolCallId: event.toolCallId,

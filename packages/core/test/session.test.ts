@@ -76,6 +76,7 @@ async function appendConversation(session: {
 		type: "tool_result",
 		id: nextId(),
 		ts: TS,
+		agentId: "main",
 		toolCallId: "tc-1",
 		content: "a.txt\nb.txt",
 		isError: false,

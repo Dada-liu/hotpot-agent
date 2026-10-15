@@ -152,6 +152,7 @@ async function persistToolResult(
 		type: "tool_result",
 		id: randomUUID(),
 		ts: nowIso(),
+		agentId: cfg.agentId,
 		toolCallId: call.id,
 		content: output.content,
 		isError: output.isError ?? false,
