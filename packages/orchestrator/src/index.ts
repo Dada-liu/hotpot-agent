@@ -1,5 +1,6 @@
 // 包入口：仅 re-export，不写逻辑
 
+export * from "./inbox.ts";
 export * from "./main-turn.ts";
 export * from "./models.ts";
 export * from "./plan.ts";
