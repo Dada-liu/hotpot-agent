@@ -41,6 +41,15 @@ importers:
         specifier: ^4
         version: 4.6.5
 
+  packages/orchestrator:
+    dependencies:
+      '@hotpot/ai':
+        specifier: workspace:*
+        version: link:../ai
+      '@hotpot/core':
+        specifier: workspace:*
+        version: link:../core
+
 packages:
 
   '@biomejs/biome@2.5.15':

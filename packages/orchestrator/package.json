@@ -1,0 +1,13 @@
+{
+	"name": "@hotpot/orchestrator",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"dependencies": {
+		"@hotpot/ai": "workspace:*",
+		"@hotpot/core": "workspace:*"
+	}
+}
