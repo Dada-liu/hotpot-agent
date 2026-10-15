@@ -10,4 +10,6 @@
 - plan 审批：执行计划先审批后落地。
 - steer/queue 双队列：steer 队列注入中途指令，queue 队列排队后续任务。
 
-当前状态：M2 进行中，本包仅为脚手架（package.json / AGENTS.md / README.md / 空入口 / 冒烟测试），Task 5 起填充实现。
+当前进度：
+- 已完成（Task 5）：`types.ts`（AgentRole / OrchestrationEvent）、`models.ts`（档位模型解析 `resolveModel`，自 cli 迁入）、`runtime.ts`（`createRuntime` / `OrchestrationRuntime`：spawn 落盘 agent_spawn、按 role 计数的 agentId、档位解析与缺省参数）。
+- 待做：delegate/spawn_workers/spawn_tasks、plan 流程落地、steer/queue 双队列。

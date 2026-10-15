@@ -14,12 +14,12 @@ import {
 	loadSession,
 	type Settings,
 } from "@hotpot/core";
+import { resolveModel } from "@hotpot/orchestrator";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	type ChatInput,
 	type ChatOutput,
 	parseChatArgs,
-	resolveModelAdapter,
 	runChat,
 } from "../src/chat.ts";
 
@@ -370,9 +370,9 @@ describe("parseChatArgs", () => {
 	});
 });
 
-describe("resolveModelAdapter", () => {
+describe("resolveModel", () => {
 	it("目录内模型按 ModelInfo.api 选适配器，无告警", () => {
-		const resolved = resolveModelAdapter({
+		const resolved = resolveModel({
 			provider: "anthropic",
 			model: "claude-sonnet-4-5",
 			apiKey: "k",
@@ -383,7 +383,7 @@ describe("resolveModelAdapter", () => {
 	});
 
 	it("未知模型按 provider 推断协议并给出告警，contextWindow 取 128000", () => {
-		const openaiLike = resolveModelAdapter({
+		const openaiLike = resolveModel({
 			provider: "acme",
 			model: "acme-1",
 			apiKey: "k",
@@ -392,7 +392,7 @@ describe("resolveModelAdapter", () => {
 		expect(openaiLike.model.contextWindow).toBe(128000);
 		expect(openaiLike.warning).toContain("acme/acme-1");
 
-		const anthropicLike = resolveModelAdapter({
+		const anthropicLike = resolveModel({
 			provider: "anthropic",
 			model: "claude-future-9",
 			apiKey: "k",

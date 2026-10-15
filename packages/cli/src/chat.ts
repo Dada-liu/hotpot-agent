@@ -4,13 +4,7 @@
 
 import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline";
-import {
-	createAnthropicMessagesAdapter,
-	createOpenAICompletionsAdapter,
-	findModel,
-	type LlmAdapter,
-	type ModelInfo,
-} from "@hotpot/ai";
+import type { LlmAdapter, ModelInfo } from "@hotpot/ai";
 import {
 	type AgentEvent,
 	ApprovalChain,
@@ -19,7 +13,6 @@ import {
 	createToolRegistry,
 	editTool,
 	loadSettings,
-	type ModelRef,
 	type ModelTier,
 	readTool,
 	resumeSession,
@@ -30,6 +23,7 @@ import {
 	type ToolRegistry,
 	writeTool,
 } from "@hotpot/core";
+import { resolveModel } from "@hotpot/orchestrator";
 import { createTerminalApproval } from "./approval-ui.ts";
 
 // 输入抽象：readLine 返回 null 表示 EOF；interrupt 对应 Ctrl-C（中断当前回合）
@@ -50,51 +44,12 @@ export interface RunChatOptions {
 	sessionPath?: string;
 	// tier 缺省取 settings.mainAgentTier，再缺省 "high"
 	tier?: ModelTier;
-	// 测试注入点：缺省时按 ModelRef 解析真实适配器（resolveModelAdapter）
+	// 测试注入点：缺省时按 ModelRef 解析真实适配器（orchestrator 的 resolveModel）
 	llm?: { adapter: LlmAdapter; model: ModelInfo };
 	input: ChatInput;
 	output: ChatOutput;
 	// 告警通道（如未知模型兜底）；缺省写 output
 	warn?: (text: string) => void;
-}
-
-export interface ResolvedLlm {
-	adapter: LlmAdapter;
-	model: ModelInfo;
-	warning?: string;
-}
-
-// ModelRef → ModelInfo + 协议适配器。
-// 目录（findModel）未命中时按 provider 名推断协议（anthropic→anthropic-messages，其余→openai-completions），
-// 并给出告警：contextWindow 等用保守默认值，定价记 0（未知即不可计费）
-export function resolveModelAdapter(ref: ModelRef): ResolvedLlm {
-	const known = findModel(ref.provider, ref.model);
-	if (known) {
-		return {
-			adapter:
-				known.api === "anthropic-messages"
-					? createAnthropicMessagesAdapter()
-					: createOpenAICompletionsAdapter(),
-			model: known,
-		};
-	}
-	const api =
-		ref.provider === "anthropic" ? "anthropic-messages" : "openai-completions";
-	return {
-		adapter:
-			api === "anthropic-messages"
-				? createAnthropicMessagesAdapter()
-				: createOpenAICompletionsAdapter(),
-		model: {
-			id: ref.model,
-			provider: ref.provider,
-			api,
-			contextWindow: 128000,
-			maxTokens: 8192,
-			cost: { input: 0, output: 0 },
-		},
-		warning: `模型 "${ref.provider}/${ref.model}" 不在内置目录：按 provider 推断协议为 ${api}，contextWindow 取保守默认 128000`,
-	};
 }
 
 // policy=always 时给有副作用的工具包一层审批：execute 前先过 ApprovalChain，deny 直接返回 isError
@@ -198,7 +153,7 @@ export async function runChat(opts: RunChatOptions): Promise<void> {
 		adapter = opts.llm.adapter;
 		model = opts.llm.model;
 	} else {
-		const resolved = resolveModelAdapter(ref);
+		const resolved = resolveModel(ref);
 		if (resolved.warning) {
 			warn(resolved.warning);
 		}
