@@ -4,9 +4,12 @@
 // 修订/审批循环；批准后用挂 delegate+spawn_workers 的注册表跑执行 turn 并透传事件；
 // 拒绝/修订耗尽时 plan 阶段已收尾，回合直接结束。
 // onPlanApproval 缺省时 plan 阶段 fail-closed（拒绝并收尾），见 plan.ts。
+// 传入 inbox 时，core runTurn 的每个 step 顶部经 pollInbox 拉取 next-step 消息
+// （steer/inject 注入），起草轮与执行轮同样生效；缺省不轮询。
 
 import { randomUUID } from "node:crypto";
 import { type LoopConfig, type ModelTier, runTurn } from "@hotpot/core";
+import type { Inbox } from "./inbox.ts";
 import { type PlanDecision, runPlanPhase } from "./plan.ts";
 import { buildRoleSystemPrompt } from "./prompts.ts";
 import { createRoleRegistry } from "./registries.ts";
@@ -24,6 +27,9 @@ export async function* runMainTurn(opts: {
 	signal: AbortSignal;
 	mainTier: ModelTier;
 	onPlanApproval?: (plan: string) => Promise<PlanDecision>;
+	// steer/queue 双队列的 next-step 注入（可选）：存在时 core runTurn 每个 step
+	// 顶部经 pollInbox 拉取已排队消息，逐条落盘为 user_msg 进入模型历史；缺省不轮询
+	inbox?: Inbox;
 }): AsyncIterable<OrchestrationEvent> {
 	const { runtime, userMessage, signal, mainTier } = opts;
 	const state: TurnState = {
@@ -31,6 +37,10 @@ export async function* runMainTurn(opts: {
 		planApproved: false,
 		revisions: 0,
 	};
+	const inbox = opts.inbox;
+	// Inbox.pollNextStep 的返回形状与 core 钩子一致（string[]，消息体已映射为
+	// content），直接适配；起草轮与执行轮共用同一队列
+	const pollInbox = inbox ? () => inbox.pollNextStep() : undefined;
 	const delegateTool = createDelegateTool(runtime, state);
 	const spawnWorkersTool = createSpawnWorkersTool(runtime, state);
 	const registry = createRoleRegistry(MAIN_AGENT_ID, [delegateTool]);
@@ -59,6 +69,7 @@ export async function* runMainTurn(opts: {
 			tools: registry.declarations(),
 		}),
 		tier: mainTier,
+		pollInbox,
 	};
 	for await (const event of runTurn(cfg, signal)) {
 		yield event;
@@ -96,6 +107,7 @@ export async function* runMainTurn(opts: {
 			tools: execRegistry.declarations(),
 		}),
 		tier: mainTier,
+		pollInbox,
 	};
 	for await (const event of runTurn(execCfg, signal)) {
 		yield event;

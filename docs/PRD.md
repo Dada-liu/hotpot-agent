@@ -49,7 +49,7 @@ todo、steer/queue、hooks、skill、prompt templates、web_search/web_fetch、M
 ## 5. 里程碑
 
 - **M1**：最小可用闭环，只做 CLI（ai + core + cli + 会话存储 + 配置）
-- **M2**：三层编排 + human-in-the-loop + 分层模型路由 + steer/queue API
+- **M2**：三层编排 + human-in-the-loop + 分层模型路由 + steer/queue API（已实现，验收见 `docs/archive/04-roadmap.md` M2 节与 `packages/orchestrator/test/m2-acceptance.test.ts`）
 - **M3**：Web 端（server + web）
 - **M4**：P1 扩展功能逐项落地
 - **M5**：benchmarks + 遥测体系

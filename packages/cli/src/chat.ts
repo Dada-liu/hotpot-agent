@@ -219,8 +219,8 @@ export async function runChat(opts: RunChatOptions): Promise<void> {
 	// 测试注入点：opts.llm 覆盖 runtime 的档位解析（main/worker 共用同一录制适配器），
 	// 与 orchestrator 测试 makeRuntime 的展开覆盖同法。
 	// spawn 包装：orchestrator 目前只把 agent_spawn 落盘、不作为 OrchestrationEvent 产出
-	// （与 pollInbox 同属编排层待补口，见 Task 11 报告），CLI 在 spawn 调用点同步渲染
-	// [spawn] 行；renderEvent 仍保留 agent_spawn 分支以兼容将来事件流的直接产出。
+	// （事件流变体无生产者，留 M3），CLI 在 spawn 调用点同步渲染 [spawn] 行；
+	// renderEvent 仍保留 agent_spawn 分支以兼容将来事件流的直接产出。
 	const runtime: OrchestrationRuntime = {
 		...baseRuntime,
 		spawn: async (spawnOpts) => {
@@ -242,8 +242,8 @@ export async function runChat(opts: RunChatOptions): Promise<void> {
 			: {}),
 	};
 
-	// steer/queue 双队列：M2 只消费 next-turn（turn 结束后补发为新用户消息）；
-	// next-step 的 turn 内注入依赖 runMainTurn 接 pollInbox（orchestrator 侧缺口，见 Task 11 报告）
+	// steer/queue 双队列：turn 结束后消费 next-turn（followup 补发为新用户消息）；
+	// turn 内注入走 next-step —— runMainTurn 经 pollInbox 在每个 step 顶部拉取
 	const inbox = createInbox(session, "main", {
 		onCancel: () => currentTurn?.abort(),
 	});
@@ -271,6 +271,7 @@ export async function runChat(opts: RunChatOptions): Promise<void> {
 				signal: ac.signal,
 				mainTier: tier,
 				onPlanApproval,
+				inbox,
 			})) {
 				renderEvent(event, output);
 			}

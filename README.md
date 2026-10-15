@@ -14,6 +14,7 @@
 ├── packages/          # 代码（pnpm monorepo）
 │   ├── ai/            # @hotpot/ai：LLM 协议适配与模型目录
 │   ├── core/          # @hotpot/core：会话日志、turn 循环、工具与审批
+│   ├── orchestrator/  # @hotpot/orchestrator：三层编排（delegate/spawn_workers/spawn_tasks、plan 审批、inbox）
 │   └── cli/           # @hotpot/cli：行式交互入口
 └── scripts/           # 开发辅助脚本（pnpm dev 等）
 ```
@@ -30,6 +31,8 @@ pnpm exec biome check # lint + format 检查
 ## 当前状态
 
 M1 已完成：终端里跑通「对话 → 工具调用 → 完成任务」最小闭环（脚本化验收见 `packages/cli/test/acceptance.test.ts`，验收标准见 `docs/archive/04-roadmap.md` M1 节）。
+
+M2 已完成：三层编排（main 难度路由 → worker 执行/并行拆分 → task 原子任务）、plan 先审后执行、steer/queue 双队列（场景级验收见 `packages/orchestrator/test/m2-acceptance.test.ts`，验收标准见 `docs/archive/04-roadmap.md` M2 节）。
 
 运行方式：
 
