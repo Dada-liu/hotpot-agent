@@ -2,6 +2,38 @@
 
 基于 Node + TypeScript 的 code agent。目标：更低的成本、更好的效果。
 
+## 架构
+
+```
+┌───────────────────────────────────────────────────────────────────────────┐
+│ 【接入层】                                                                │
+│   packages/web    （M3 预留，React SPA）                                  │
+│   packages/cli    行式交互入口（当前唯一界面）                            │
+├───────────────────────────────────────────────────────────────────────────┤
+│ 【服务层】                                                                │
+│   packages/server （M3 预留，HTTP + SSE API）                             │
+├───────────────────────────────────────────────────────────────────────────┤
+│ 【编排层】                                                                │
+│   packages/orchestrator                                                   │
+│     三层 agent 编排：main 难度路由 → worker 执行/并行拆分 → task 原子任务 │
+│     plan 先审后执行、steer/queue 双队列                                   │
+├───────────────────────────────────────────────────────────────────────────┤
+│ 【核心层】                                                                │
+│   packages/core                                                           │
+│     turn/step 两级循环、工具三面分离、审批 waterfall                      │
+│     会话 JSONL 事件日志为唯一事实源                                       │
+├───────────────────────────────────────────────────────────────────────────┤
+│ 【适配层】                                                                │
+│   packages/ai                                                             │
+│     api×provider 二维协议适配（anthropic-messages / openai-completions）  │
+│     SSE 流式解析、模型目录、用量统计                                      │
+└───────────────────────────────────────────────────────────────────────────┘
+```
+
+依赖方向严格自上而下（`cli → orchestrator → core → ai`），禁止反向依赖；server / web 为 M3 预留层，届时插入 cli 与 orchestrator 之间。
+
+一次用户消息的数据流：cli → `runMainTurn`（`delegate` 难度路由）→ worker / task 内联跑 core `runTurn` → 每个 step 由 `deriveMessages` 从会话日志转换历史 → `ai.streamChat` → 工具批次经审批 waterfall 执行 → 全部事件 append 进 JSONL 并流回 cli 渲染。
+
 ## 目录结构
 
 ```

@@ -2,6 +2,30 @@
 
 agent 内核，不依赖任何 UI。
 
+## 架构
+
+```
+┌────────────────────────────────────────────────────────────────────────────────────┐
+│ 【agent 循环】                                                                     │
+│   loop.ts   runTurn：turn/step 两级循环                                            │
+│   types.ts  LoopConfig 收拢入参（adapter / registry / approval / pollInbox）       │
+├────────────────────────────────────────────────────────────────────────────────────┤
+│ 【能力组件】                                                                       │
+│   prompt/    section 注册表（name + order 拼接系统提示词）                         │
+│   tools/     tool.ts 三面 execute/render/present + registry + bash/read/write/edit │
+│   approval/  chain.ts 审批 waterfall；audit.ts 审计包装（asked/decided 落盘）      │
+├────────────────────────────────────────────────────────────────────────────────────┤
+│ 【会话存储：唯一事实源】                                                           │
+│   events.ts  事件联合（v1 定稿）                                                   │
+│   store.ts   JSONL append + fsync、坏行跳过、resumeSession                         │
+│   derive.ts  转换出模型可见历史（按 agentId 过滤）                                 │
+└────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+独立模块 `config.ts`：`loadSettings` 双层配置（用户级必填 + 项目级白名单覆盖），经 `resolveHome` 复用 session 的 home 规则。
+
+数据流：`runTurn` 每个 step 由 `deriveMessages` 从日志转换历史 → adapter 流式输出 → 工具批次执行（`ToolContext` 携带 `ApprovalChain`）→ 事件 append 回会话日志。不变量：模型可见 ⟺ 已记录。
+
 职责（M1 计划）：
 
 - 会话事件日志：append-only JSONL 为唯一事实源，`deriveMessages` 转换历史；加载跳过末尾损坏行。

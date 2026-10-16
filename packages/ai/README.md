@@ -2,6 +2,24 @@
 
 LLM 协议适配层：api×provider 二维适配，对上屏蔽各家 API 差异。
 
+## 架构
+
+```
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│ 【协议适配】实现 types.ts 的 LlmAdapter，对上暴露统一 streamChat                 │
+│   api/anthropic-messages.ts                                                      │
+│   api/openai-completions.ts                                                      │
+├──────────────────────────────────────────────────────────────────────────────────┤
+│ 【流式解析】sse.ts：SSE 字节缓冲按行解析（两个协议适配器共用）                   │
+├──────────────────────────────────────────────────────────────────────────────────┤
+│ 【统一契约】types.ts                                                             │
+│   Message / ContentBlock / StreamEvent / ToolDeclaration / ModelInfo / FetchLike │
+└──────────────────────────────────────────────────────────────────────────────────┘
+```
+
+- 模型目录 `models.ts`：`MODELS` / `findModel`，真实 contextWindow / maxTokens / 定价常量。
+- 测试支撑 `testing/scripted-adapter.ts`：录制-回放适配器；网络 I/O 只经可注入的 `FetchLike` 进出，测试不打真实端点。
+
 职责（M1 计划）：
 
 - 统一类型：`Message` / `ContentBlock` / `StreamEvent` / `ToolDeclaration` / `LlmAdapter` / `ModelInfo`。

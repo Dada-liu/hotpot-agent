@@ -2,6 +2,34 @@
 
 三层 agent 编排，位于 core 之上（依赖方向 `orchestrator → core → ai`）。
 
+## 架构
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ 【主流与 plan】                                                             │
+│   main-turn.ts  runMainTurn：主流入口，透传全部事件                         │
+│   plan.ts       runPlanPhase：plan 起草 / 审批 / 修订循环                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ 【元工具】                                                                  │
+│   delegate.ts        难度判定与派发（trivial / simple / complex）           │
+│   spawn-workers.ts   按档位 spawn worker 并聚合摘要                         │
+│   spawn-tasks.ts     worker 内并行原子任务（并发池，默认 10）               │
+│   run-worker.ts      worker / task 内联跑 core runTurn                      │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ 【运行时与角色】                                                            │
+│   runtime.ts    createRuntime：spawn 落盘、resolveModel、decorateWorkerTool │
+│   models.ts     provider→api 映射                                           │
+│   registries.ts main / worker / task 角色工具注册表                         │
+│   prompts.ts    角色系统提示词（英文）                                      │
+├─────────────────────────────────────────────────────────────────────────────┤
+│ 【基础设施】                                                                │
+│   inbox.ts  steer/queue 双队列 + foldInbox 崩溃恢复                         │
+│   types.ts  AgentRole / OrchestrationEvent                                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+三种角色（main / worker / task）复用 core 的 `runTurn`，差异只在系统提示词与可用工具集；所有事件最终落进 core 的会话 JSONL，依赖方向 `orchestrator → core → ai`。
+
 ## 已实现能力（M2 完成）
 
 - **主流入口 `runMainTurn`**：以 "main" 身份落盘 user_msg → main 角色注册表跑 core `runTurn` → 透传全部事件。complex 流走 plan 修订/审批循环，批准后换挂 delegate+spawn_workers 的注册表执行。
