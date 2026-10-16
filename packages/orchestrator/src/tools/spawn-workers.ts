@@ -57,7 +57,7 @@ export function createSpawnWorkersTool(
 			}
 			const summaries: string[] = [];
 			for (const worker of args.workers) {
-				// parentAgentId 固定 "main"：主流 agentId 是包级约定（与 delegate 一致）
+				// parentAgentId 固定 "main"：主agent 的 agentId 是包级约定（与 delegate 一致）
 				const { agentId } = await runtime.spawn({
 					role: "worker",
 					parentAgentId: "main",

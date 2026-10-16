@@ -31,7 +31,7 @@ export type PlanDecision =
 	| { kind: "reject"; note: string }
 	| { kind: "annotate"; note: string };
 
-// 主流 agentId 固定为 "main"：与 main-turn.ts 的 MAIN_AGENT_ID 是同一包级约定
+// 主agent 的 agentId 固定为 "main"：与 main-turn.ts 的 MAIN_AGENT_ID 是同一包级约定
 const MAIN_AGENT_ID = "main";
 
 // 首轮起草提示：要求只输出 plan 文本，便于整条 assistant 消息直接作为 plan 回收

@@ -18,7 +18,7 @@ import { createDelegateTool, type TurnState } from "./tools/delegate.ts";
 import { createSpawnWorkersTool } from "./tools/spawn-workers.ts";
 import type { OrchestrationEvent } from "./types.ts";
 
-// 主流 agentId 固定为 "main"：spawn 的 parentAgentId、derive 的消息过滤都以此为准
+// 主agent 的 agentId 固定为 "main"：spawn 的 parentAgentId、derive 的消息过滤都以此为准
 const MAIN_AGENT_ID = "main";
 
 export async function* runMainTurn(opts: {
