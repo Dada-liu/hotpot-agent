@@ -2,7 +2,7 @@
 
 `@hotpot/core` 的源码目录。本包是 agent 内核，不依赖任何 UI；会话 JSONL 事件日志是唯一事实源，UI 状态全部由 `deriveMessages` 推导。
 
-- `session/`：append-only JSONL 事件日志（`SessionEvent` 类型、`loadSession`/`createSession`/`resumeSession`、`deriveMessages` 折叠历史；加载跳过末尾损坏行）。
+- `session/`：append-only JSONL 事件日志（`SessionEvent` 类型、`loadSession`/`createSession`/`resumeSession`、`deriveMessages` 转换历史；加载跳过末尾损坏行）。
 - `prompt/`：系统提示词 section 注册表（按 order 拼接，prompt 文案全英文；`registerDefaultSections` 非幂等，有模块级守卫）。
 - `tools/`：工具框架（`ToolDefinition`/`ToolRegistry`，zod 校验擦除层）与 bash、read、write、edit 四个基础工具；高危命令与覆盖写走审批。
 - `approval/`：审批 waterfall `ApprovalChain`，顺序询问，全部 next 时默认 deny（fail-closed）。

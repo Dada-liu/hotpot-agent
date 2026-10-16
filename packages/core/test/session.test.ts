@@ -186,7 +186,7 @@ describe("session store", () => {
 });
 
 describe("deriveMessages", () => {
-	it("折叠 5 个事件产出 4 条 Message，顺序与类型正确", async () => {
+	it("转换 5 个事件产出 4 条 Message，顺序与类型正确", async () => {
 		const session = await createSession("/Users/test/project", home);
 		await appendConversation(session);
 		const { events } = await loadSession(session.filePath);
@@ -210,7 +210,7 @@ describe("deriveMessages", () => {
 				},
 			],
 		});
-		// tool_result 折叠为 role:"user" 消息承载 tool_result 块
+		// tool_result 转换为 role:"user" 消息承载 tool_result 块
 		expect(messages[2]).toEqual({
 			role: "user",
 			content: [
@@ -228,7 +228,7 @@ describe("deriveMessages", () => {
 		});
 	});
 
-	it("只折叠指定 agentId 的事件；meta 等其余类型不进消息历史", async () => {
+	it("只转换指定 agentId 的事件；meta 等其余类型不进消息历史", async () => {
 		const session = await createSession("/Users/test/project", home);
 		await session.append(userMsg("主 agent 消息"));
 		await session.append({

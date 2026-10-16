@@ -402,7 +402,7 @@ describe("spawn_tasks 失败上报（验收 #5）", () => {
 			fileEvents.some((e) => e.type === "error" && e.agentId === "task-5"),
 		).toBe(true);
 
-		// worker 的下一步请求：messages 折叠了含 [FAILED] 的 tool_result（recording 留档）
+		// worker 的下一步请求：messages 转换了含 [FAILED] 的 tool_result（recording 留档）
 		const nextRequest = recording.requests.at(-1);
 		expect(nextRequest).toBeDefined();
 		expect(JSON.stringify(nextRequest?.messages)).toContain(

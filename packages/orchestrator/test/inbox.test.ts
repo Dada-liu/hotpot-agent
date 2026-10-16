@@ -1,5 +1,5 @@
 // inbox 双队列测试：followup（next-turn FIFO）/ steer / inject（next-step）、
-// 每个动词落盘一条 inbox/spliced 全量快照、foldInbox 从事件流折叠恢复（模拟 kill 重启）、
+// 每个动词落盘一条 inbox/spliced 全量快照、foldInbox 从事件流转换恢复（模拟 kill 重启）、
 // 消息 id 去重、cancel 调 onCancel。drain/poll 清空内存队列但不追加新快照事件。
 
 import { mkdtemp, rm } from "node:fs/promises";
@@ -112,14 +112,14 @@ describe("createInbox 双队列语义", () => {
 		).toHaveLength(3);
 	});
 
-	it("foldInbox 从事件流折叠出两队列最终状态（模拟 kill 后恢复）", async () => {
+	it("foldInbox 从事件流转换出两队列最终状态（模拟 kill 后恢复）", async () => {
 		const session = await createSession("/tmp/proj", home);
 		const inbox = createInbox(session, "main");
 
 		await inbox.followup("a");
 		await inbox.followup("b");
 		await inbox.steer("c");
-		// 模拟 kill：不落新事件，直接从文件重新折叠
+		// 模拟 kill：不落新事件，直接从文件重新转换
 		const folded = foldInbox(await loadEvents(session.filePath));
 		expect(folded.nextTurn.map((m) => m.content)).toEqual(["a", "b"]);
 		expect(folded.nextStep.map((m) => m.content)).toEqual(["c"]);

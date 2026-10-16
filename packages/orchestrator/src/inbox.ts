@@ -1,7 +1,7 @@
 // steer/queue 双队列：next-turn（followup，turn 结束消费）与 next-step（steer/inject，step 顶部经
 // LoopConfig.pollInbox 注入）。设计见 docs/archive/03-agent-orchestration.md 第 7 节。
 // 每次变更动词先更新内存队列，再追加一条 inbox/spliced 事件（queue + 该队列全量快照）；
-// foldInbox 从持久化事件流顺序折叠出两队列最终状态，供崩溃恢复重建内存队列。
+// foldInbox 从持久化事件流顺序转换出两队列最终状态，供崩溃恢复重建内存队列。
 // foldInbox 是纯函数、无 IO；变更动词的落盘走 createInbox 闭包的 session 句柄，append 本身带 fsync。
 
 import { randomUUID } from "node:crypto";
@@ -92,7 +92,7 @@ export function createInbox(
 			const drained = state.nextTurn;
 			state.nextTurn = [];
 			// 刻意不落盘：快照只在显式变更动词时写入。drain 是运行时本地消费，
-			// 持久化快照代表用户意图——崩溃后重新折叠应恢复到变更后的队列。
+			// 持久化快照代表用户意图——崩溃后重新转换应恢复到变更后的队列。
 			// 副作用：已 drain 但尚未处理的消息崩溃后会重现，M2 最小实现可接受。
 			return drained;
 		},
@@ -105,9 +105,9 @@ export function createInbox(
 	};
 }
 
-// 从持久化事件流折叠出两队列最终状态（崩溃恢复用）。
+// 从持久化事件流转换出两队列最终状态（崩溃恢复用）。
 // 逐条处理 inbox/spliced：以快照整体替换对应队列（last write wins），并按消息 id 去重。
-// 无 agentId 参数：折叠全部 inbox 事件，不过滤——按 agent 隔离是调用方的职责
+// 无 agentId 参数：转换全部 inbox 事件，不过滤——按 agent 隔离是调用方的职责
 // （调用方只会把自己会话的事件传进来）；非 inbox 事件直接忽略。
 export function foldInbox(events: SessionEvent[]): InboxState {
 	const state: InboxState = { nextTurn: [], nextStep: [] };
