@@ -14,14 +14,48 @@ import {
 	scriptedAdapter,
 	type Usage,
 } from "@hotpot/ai";
+import type * as CoreMod from "@hotpot/core";
 import type { Settings } from "@hotpot/core";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../src/app.ts";
 import {
 	createSessionManager,
 	type SessionManager,
 } from "../src/session-manager.ts";
 import type { WireEvent } from "../src/wire.ts";
+
+// loadSession 闸：只在 miss 重放用例里 armed。测试据此把「包装 sink 已注册、
+// loadSession 尚未返回」的窗口拉开到确定性长度——窗口内发出的 live 事件
+// 必须经 pending 泄洪到达重连连接（否则永久丢失）。
+const gate = vi.hoisted(() => {
+	let enteredResolve: (() => void) | null = null;
+	return {
+		armed: false as boolean,
+		entered: new Promise<void>((resolve) => {
+			enteredResolve = resolve;
+		}),
+		release: null as (() => void) | null,
+		markEntered(): void {
+			enteredResolve?.();
+		},
+	};
+});
+
+vi.mock("@hotpot/core", async (importOriginal) => {
+	const mod = await importOriginal<typeof CoreMod>();
+	return {
+		...mod,
+		loadSession: async (filePath: string) => {
+			if (gate.armed) {
+				gate.markEntered();
+				await new Promise<void>((resolve) => {
+					gate.release = resolve;
+				});
+			}
+			return mod.loadSession(filePath);
+		},
+	};
+});
 
 // llm 注入模式共用的模型信息（scriptedAdapter 只看 adapter，model 仅作记账）
 const MODEL: ModelInfo = {
@@ -221,6 +255,18 @@ async function openSse(
 }
 
 // ---- 断言辅助 ----
+
+// 条件轮询（观察哨等 SSE 句柄之外的等待点）
+async function waitUntil(
+	cond: () => boolean,
+	timeoutMs = 10000,
+): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
+	while (!cond()) {
+		if (Date.now() > deadline) throw new Error("waitUntil 超时");
+		await new Promise((resolve) => setTimeout(resolve, 10));
+	}
+}
 
 function isLog(e: WireEvent): e is Extract<WireEvent, { kind: "log" }> {
 	return e.kind === "log";
@@ -435,6 +481,69 @@ describe("HTTP API", () => {
 			.filter((e) => e.event.type === "user_msg")
 			.map((e) => (e.event.type === "user_msg" ? e.event.content : ""));
 		expect(contents).toEqual(["第一条", "第二条"]);
+	}, 20000);
+
+	it("miss 重放不丢窗口内事件：loadSession 期间到达的 live 事件经 pending 泄洪补发，先历史后 live 且不重复", async () => {
+		const fx = await startApi(
+			scriptedAdapter([
+				textRound("历史回答", { input: 10, output: 5 }),
+				textRound("回答二", { input: 10, output: 5 }),
+			]),
+			"never",
+		);
+		const { id } = await createSession(fx, fx.proj);
+		// 观察哨（直接 manager 订阅）：判定 live 事件已广播——即重连连接的包装 sink 已收到
+		const observed: WireEvent[] = [];
+		fx.manager.subscribe(id, null, (e) => {
+			observed.push(e);
+		});
+		await postJson(`${fx.base}/api/sessions/${id}/messages`, {
+			content: "第一条",
+		});
+		await waitUntil(() => observed.filter(isTurnEnd).length === 1);
+
+		// 武装闸并发起 miss 重连：服务端注册包装 sink 后进入被闸住的 loadSession
+		gate.armed = true;
+		const ssePromise = openSse(fx.base, id, { after: 999999 });
+		try {
+			await gate.entered;
+			// 窗口内发出第二条消息：整个第二回合（turn 瞬态 + durable 日志）
+			// 都只广播给已注册订阅者（包装 sink 收进 pending）
+			await postJson(`${fx.base}/api/sessions/${id}/messages`, {
+				content: "第二条",
+			});
+			await waitUntil(() => observed.filter(isTurnEnd).length === 2);
+		} finally {
+			gate.release?.();
+			gate.armed = false;
+		}
+
+		const sse = await ssePromise;
+		await sse.waitFor(() => sse.events.filter(isTurnEnd).length === 1);
+		sse.close();
+
+		// 重放（文件历史，含窗口内第二回合的 durable——快照在放闸后读取）在前；
+		// 瞬态 turn(start)/delta/turn(end) 不在日志里，只能经 pending 泄洪到达。
+		// 旧实现无包装 sink，窗口内这 3 个瞬态事件会永久丢失
+		expect(sse.events.map(describeEvent)).toEqual([
+			"log:meta",
+			"log:user_msg",
+			"log:assistant_msg",
+			"log:user_msg",
+			"log:assistant_msg",
+			"turn:start",
+			"delta",
+			"turn:end",
+		]);
+		const durableIds = sse.events
+			.filter(isLog)
+			.map((e) => (e.event.type === "meta" ? "meta" : e.event.id));
+		expect(new Set(durableIds).size).toBe(durableIds.length);
+		const secondMsg = sse.events.filter(
+			(e) =>
+				isLog(e) && e.event.type === "user_msg" && e.event.content === "第二条",
+		);
+		expect(secondMsg.length).toBe(1);
 	}, 20000);
 
 	it("审批全流程：bash 高危→SSE 收 approval→turn running→allow→log(approval/decided)+turn(end)→idle；未知 requestId→404", async () => {

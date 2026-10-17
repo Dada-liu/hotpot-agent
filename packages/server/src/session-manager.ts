@@ -106,8 +106,9 @@ export interface SessionManager {
 	): () => void;
 	// SSE 断线重连订阅：afterSeq 命中留存窗口则增量补发；为 null 走 buffer 全量；
 	// 掉出窗口则 loadSession 全量日志重放——每条 durable 事件经 hub.replay 分配新 seq
-	// （与 live 流 seq 连续）后先送达 sink，再注册 live 回调。重放与注册在同一同步段内
-	// 完成，本订阅者的 FIFO 序与 seq 单调由单线程交付保证。返回退订函数
+	// （与 live 流 seq 连续）后先送达 sink。miss 路径先注册包装 sink 把 live 事件收进
+	// pending，重放后按日志事件 id 去重泄洪、再同步换成真 sink：loadSession 期间的
+	// live 事件不丢，先历史后 live 的到达序由同步段保证。返回退订函数
 	subscribeResuming(
 		id: string,
 		afterSeq: number | null,
@@ -602,14 +603,49 @@ export function createSessionManager(
 					return registerLive(m, sink);
 				}
 			}
-			// 掉出窗口：全量日志重放。durable 事件经 hub.replay 借 emit 管道分配新 seq
-			// （seq 与 live 流连续、单调），先全部送达 sink，再注册 live 回调；
-			// 重放→注册之间无 await，本订阅者的 FIFO 序不会被插入的 live 事件打破
-			const { events } = await loadSession(m.filePath);
-			for (const e of events) {
+			// 掉出窗口：全量日志重放。为堵住 loadSession 期间的 live 窗口，先注册包装
+			// sink 把 live 事件收进 pending（同步注册，先于任何 await），重放完成后
+			// 再把 pending 泄洪并同步换成真 sink——泄洪与换 sink 在同一同步段完成，
+			// 任何 emit 要么已进 pending、要么直送 sink，事件不会落在缝隙里
+			const pending: WireEvent[] = [];
+			const subId = m.nextSubscriberId;
+			m.nextSubscriberId += 1;
+			m.subscribers.set(subId, (e) => {
+				pending.push(e);
+			});
+			let logEvents: SessionEvent[];
+			try {
+				const loaded = await loadSession(m.filePath);
+				logEvents = loaded.events;
+			} catch (err) {
+				m.subscribers.delete(subId);
+				throw err;
+			}
+			// 重放：durable 事件经 hub.replay 借 emit 管道分配新 seq（seq 与 live 流
+			// 连续、单调；hub.replay 不入公共 buffer、不广播，其他订阅者不受影响）
+			const replayedIds = new Set<string>();
+			let sawMeta = false;
+			for (const e of logEvents) {
+				if (e.type === "meta") sawMeta = true;
+				else replayedIds.add(e.id);
 				sink(m.hub.replay({ kind: "log", event: e }));
 			}
-			return registerLive(m, sink);
+			// 泄洪 pending：重放已覆盖的 durable 事件按日志事件 id 去重（tailer 与本
+			// 连接重放读到同一批历史时只留一份）；瞬态事件不在日志中，一律补发
+			for (const e of pending) {
+				if (e.kind === "log") {
+					if (e.event.type === "meta") {
+						if (sawMeta) continue;
+					} else if (replayedIds.has(e.event.id)) {
+						continue;
+					}
+				}
+				sink(e);
+			}
+			m.subscribers.set(subId, sink);
+			return () => {
+				m.subscribers.delete(subId);
+			};
 		},
 
 		async usage(id: string): Promise<UsageSummary> {
