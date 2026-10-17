@@ -1,0 +1,14 @@
+{
+	"name": "@hotpot/server",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"dependencies": {
+		"@hotpot/core": "workspace:*",
+		"@hotpot/orchestrator": "workspace:*",
+		"hono": "^4.13.13"
+	}
+}

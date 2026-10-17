@@ -1,0 +1,2 @@
+// 包入口：仅 re-export，不写逻辑
+export * from "./tailer.ts";

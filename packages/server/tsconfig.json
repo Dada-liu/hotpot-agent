@@ -1,0 +1,10 @@
+{
+	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		// 依赖 @hotpot/core 与 @hotpot/orchestrator；tailer 用到 fs.watch/setInterval/TextDecoder 等
+		// Node 22 运行时全局；类型声明来自 DOM lib + src/node-builtins.d.ts，
+		// 做法与 packages/orchestrator/tsconfig.json 一致
+		"lib": ["es2023", "dom"]
+	},
+	"include": ["src", "test"]
+}
