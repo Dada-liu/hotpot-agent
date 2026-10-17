@@ -2,6 +2,10 @@
 // 伪造 webDist 验证 SPA 兜底（/ 与任意非 /api 路径回 index.html）与 assets MIME；
 // 伪造 publicDir 验证根路径资源直出与 404；/api 前缀永不被静态路由拦截。
 // 直接用 app.request() 走 Hono，不开端口；manager 用 mkdtemp home 的空会话目录。
+// 每个 mountStatic 调用都显式传齐两个路径（缺失语义传 mkdtemp 下不存在的子路径），
+// 与真实仓库布局完全解耦——默认值会静默解析到 <仓库根>/packages/web/dist 与 <仓库根>/public，
+// 工作树里存在构建产物时（如 Task 6/7 之后）未隔离的用例会被 SPA 兜底/真实 public 劫持。
+// 真实仓库布局下的行为由 bin 冒烟覆盖（Task 5 已验证：logo.png 200 image/png、/ 404、/api 200）。
 
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -63,7 +67,7 @@ describe("webDist 存在（SPA + assets）", () => {
 	it("/ 与任意非 /api 路径回退 index.html（text/html）", async () => {
 		await writeWebDist();
 		const app = createApp(createSessionManager({ home }));
-		mountStatic(app, { webDist });
+		mountStatic(app, { webDist, publicDir: join(publicDir, "missing-public") });
 		for (const path of ["/", "/some/spa/route"]) {
 			const res = await app.request(path);
 			expect(res.status).toBe(200);
@@ -75,7 +79,7 @@ describe("webDist 存在（SPA + assets）", () => {
 	it("GET /assets/app.js 返回 js 与正确 MIME", async () => {
 		await writeWebDist();
 		const app = createApp(createSessionManager({ home }));
-		mountStatic(app, { webDist });
+		mountStatic(app, { webDist, publicDir: join(publicDir, "missing-public") });
 		const res = await app.request("/assets/app.js");
 		expect(res.status).toBe(200);
 		expect(res.headers.get("content-type")).toContain("javascript");
@@ -85,7 +89,7 @@ describe("webDist 存在（SPA + assets）", () => {
 	it("静态路由不拦截 /api 前缀", async () => {
 		await writeWebDist();
 		const app = createApp(createSessionManager({ home }));
-		mountStatic(app, { webDist });
+		mountStatic(app, { webDist, publicDir: join(publicDir, "missing-public") });
 		const res = await app.request("/api/sessions");
 		expect(res.status).toBe(200);
 		expect(await res.json()).toEqual({ sessions: [] });
@@ -100,7 +104,7 @@ describe("publicDir 存在（根 public/ 直出）", () => {
 		]);
 		await writeFile(join(publicDir, "logo.png"), bytes);
 		const app = createApp(createSessionManager({ home }));
-		mountStatic(app, { publicDir });
+		mountStatic(app, { webDist: join(webDist, "missing-dist"), publicDir });
 		const res = await app.request("/logo.png");
 		expect(res.status).toBe(200);
 		expect(res.headers.get("content-type")).toBe("image/png");
