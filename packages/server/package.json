@@ -7,6 +7,7 @@
 		".": "./src/index.ts"
 	},
 	"dependencies": {
+		"@hotpot/ai": "workspace:*",
 		"@hotpot/core": "workspace:*",
 		"@hotpot/orchestrator": "workspace:*",
 		"hono": "^4.13.13"

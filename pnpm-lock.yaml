@@ -58,6 +58,9 @@ importers:
 
   packages/server:
     dependencies:
+      '@hotpot/ai':
+        specifier: workspace:*
+        version: link:../ai
       '@hotpot/core':
         specifier: workspace:*
         version: link:../core

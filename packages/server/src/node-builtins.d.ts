@@ -39,6 +39,12 @@ declare module "node:fs/promises" {
 	): Promise<string | undefined>;
 	export function readFile(path: string, encoding: "utf8"): Promise<string>;
 	export function writeFile(path: string, data: string): Promise<void>;
+	// 三参重载：会话管理器测试按 utf8 显式写夹具文件（与 core 的两参声明合并为重载）
+	export function writeFile(
+		path: string,
+		data: string,
+		encoding: string,
+	): Promise<void>;
 	export function readdir(path: string): Promise<string[]>;
 	export function appendFile(path: string, data: string): Promise<void>;
 	export function mkdtemp(prefix: string): Promise<string>;

@@ -1,2 +1,6 @@
 // 包入口：仅 re-export，不写逻辑
+export * from "./approvals.ts";
+export * from "./session-manager.ts";
 export * from "./tailer.ts";
+export * from "./usage.ts";
+export * from "./wire.ts";

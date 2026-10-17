@@ -2,27 +2,41 @@
 
 M3 服务层：在 cli 与 orchestrator 之上提供 REST + SSE API，负责会话管理、事件推送与断线重连（重连时从 JSONL 日志按 offset 补发 missed 事件）。依赖方向 `server → orchestrator → core → ai`。
 
-## 当前已实现（Task 2）
+## 当前已实现（Task 2 + Task 3）
 
-- **`createTailer` JSONL 日志 tailer**（`src/tailer.ts`）：后续事件总线的基础。
+- **`createTailer` JSONL 日志 tailer**（`src/tailer.ts`）：事件总线的基础。
   - `start()` 先补读历史（`fromOffset`，缺省 0）整批回调，再进入跟随模式；
   - 跟随：`fs.watch` 触发增量读 + `pollIntervalMs`（默认 250）轮询文件大小兜底；
   - 只读新增字节：空行与 `JSON.parse` 失败的坏行跳过；末尾无换行的半行留待下次拼接（写入中途被杀不掉数据）；
   - `offset()` 返回已消费字节数（半行不算），客户端断线重连时携带它即可从 tailer 续读补发；
   - `stop()` 清除 watch 与轮询；原地再 `start()` 从上次 offset 续读；`fs.watch` 报错自动降级为纯轮询，不抛给调用方。
+- **UI 事件协议与总线**（`src/wire.ts`）：`WireEvent` 六事件联合（`log`/`delta`/`turn`/`plan`/`spawn`/`approval`，全部带会话内单调 `seq`）；`createWireHub` 分配 seq 并留存 ring buffer（上限 2000，超出丢最旧），供订阅重放（`buffer()`）与断线增量（`tailAfter()`）。
+- **审批桥**（`src/approvals.ts`）：`createApprovalBridge(notify)` 把审批询问转成「入 pending 表 → 广播 approval 事件 → 返回 parked promise」；`answer(requestId)` 按 id 应答，`answerPendingPlan` 应答唯一挂起的 plan 询问。
+- **usage 统计**（`src/usage.ts`）：`summarizeUsage(events)` 折叠 `assistant_msg.usage`，产出 total/byTier（含条数 count）/byAgent。
+- **会话管理器**（`src/session-manager.ts`）：`createSessionManager({home, llm?, warn?})`。
+  - 回合装配镜像 `cli/src/chat.ts` 的 runChat（tier 解析、审批链 + 审计落盘、policy=always 的 worker 工具预审批、`createRuntime` + `llm` 覆盖 `resolveModel`、`createInbox` + `foldInbox` 播种、followup 补发循环）；
+  - turn 串行化：每会话一条 `turnTail` promise 链，`send` 排队执行；
+  - 事件转发架构规则：durable 事件只由 tailer 推 `log`；迭代器只转发瞬态 `delta`/`spawn`/`plan`，`done`/`error` 收敛为回合级一次 `turn(end)`；delta 前与 `turn(end)` 前做 durable 水位同步（`wrapAppend` 计数 + `syncDurable`）；
+  - 广播顺序不变量：每会话一条 emit 管道分配 seq，同步 fan-out 到各订阅者 FIFO（重放先于 live 到达）；
+  - `create`/`attachById`/`get`/`list`/`send`/`steer`/`cancel`/`answerToolApproval`/`answerPlan`/`subscribe`/`usage`/`close`。
 
 ## 目录
 
 ```
 src/
-  index.ts             包入口：re-export tailer
+  index.ts             包入口：re-export 全部公开模块
   tailer.ts            JSONL 会话日志 tailer（createTailer）
+  wire.ts              UI 事件协议（WireEvent）与 seq 总线（createWireHub）
+  approvals.ts         审批桥（pending 表 + parked promise）
+  usage.ts             usage 折叠统计（summarizeUsage）
+  session-manager.ts   会话管理器（createSessionManager）
   node-builtins.d.ts   Node 内置模块的最小 ambient 声明（禁 @types/node，超集自 core）
 test/
-  tailer.test.ts       补读/坏行/半行/stop/offset 续读用例
+  tailer.test.ts              补读/坏行/半行/stop/offset 续读用例
+  session-manager.test.ts     事件顺序/spawn/审批/plan/串行/attach/usage 集成用例
 ```
 
 ## 计划（后续任务）
 
-- hono REST 路由（会话列表、创建、resume）与 SSE 事件流；
+- hono REST 路由（会话列表、创建、resume）与 SSE 事件流（协议逐字照抄 `src/wire.ts`）；
 - bin 入口（`hotpot-server`，Task 4 建 `src/bin.ts` 后再在 package.json 加 bin 字段）。

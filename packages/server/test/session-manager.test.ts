@@ -1,0 +1,501 @@
+// 会话管理器集成测试：turn 串行化、审批桥（parked promise）、seq/订阅广播、usage 统计。
+// 全部 scriptedAdapter 不触网；settings 用 mkdtemp home 下的三档夹具（provider 为不存在的
+// 测试值，resolveModel 兜底告警但 llm 注入模式下不真正解析）。审批场景用 ask-on-dangerous，
+// 无审批场景用 policy:"never" 且脚本不触发需要审批的工具。
+
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+	type LlmAdapter,
+	type ModelInfo,
+	type StreamEvent,
+	scriptedAdapter,
+	type Usage,
+} from "@hotpot/ai";
+import { loadSession, type SessionEvent, type Settings } from "@hotpot/core";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createSessionManager } from "../src/session-manager.ts";
+import type { WireEvent } from "../src/wire.ts";
+
+let home: string;
+let proj: string;
+
+beforeEach(async () => {
+	home = await mkdtemp(join(tmpdir(), "hotpot-server-home-"));
+	proj = await mkdtemp(join(tmpdir(), "hotpot-server-proj-"));
+	await writeFile(join(proj, "note.txt"), "hello hotpot\n", "utf8");
+});
+
+afterEach(async () => {
+	await rm(home, { recursive: true, force: true });
+	await rm(proj, { recursive: true, force: true });
+});
+
+// llm 注入模式共用的模型信息（scriptedAdapter 只看 adapter，model 仅作记账）
+const MODEL: ModelInfo = {
+	id: "test-high",
+	provider: "test-provider",
+	api: "openai-completions",
+	contextWindow: 128000,
+	maxTokens: 8192,
+	cost: { input: 0, output: 0 },
+};
+
+// 用户级 settings 夹具：三档指向不存在的 provider（resolveModel 会兜底并给 warning，
+// 但本测试一律注入 llm，不真正解析）；approval.policy 按场景传入
+async function writeSettings(
+	policy?: "ask-on-dangerous" | "always" | "never",
+): Promise<void> {
+	const settings: Settings = {
+		models: {
+			high: { provider: "test-provider", model: "test-high", apiKey: "hk" },
+			medium: { provider: "test-provider", model: "test-medium", apiKey: "mk" },
+			low: { provider: "test-provider", model: "test-low", apiKey: "lk" },
+		},
+		...(policy === undefined ? {} : { approval: { policy } }),
+	};
+	await writeFile(
+		join(home, "settings.json"),
+		JSON.stringify(settings),
+		"utf8",
+	);
+}
+
+// ---- 订阅收集与断言辅助 ----
+
+function makeSink(): { events: WireEvent[]; sink: (e: WireEvent) => void } {
+	const events: WireEvent[] = [];
+	return {
+		events,
+		sink: (e: WireEvent) => {
+			events.push(e);
+		},
+	};
+}
+
+function isLog(e: WireEvent): e is Extract<WireEvent, { kind: "log" }> {
+	return e.kind === "log";
+}
+
+function isTurnEnd(e: WireEvent): boolean {
+	return e.kind === "turn" && e.phase === "end";
+}
+
+// 事件的一句话描述（kind + 关键区分字段），用于顺序断言
+function describeEvent(e: WireEvent): string {
+	if (e.kind === "turn") return `turn:${e.phase}`;
+	if (e.kind === "log") return `log:${e.event.type}`;
+	if (e.kind === "plan") return `plan:${e.phase}`;
+	return e.kind;
+}
+
+function logEvents(
+	events: WireEvent[],
+	type: SessionEvent["type"],
+): SessionEvent[] {
+	return events
+		.filter(isLog)
+		.filter((e) => e.event.type === type)
+		.map((e) => e.event);
+}
+
+// tailer 走 fs.watch/轮询异步推送，统一用条件轮询等待
+async function waitFor(cond: () => boolean, timeoutMs = 5000): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
+	while (!cond()) {
+		if (Date.now() > deadline) throw new Error("waitFor 超时");
+		await new Promise((resolve) => setTimeout(resolve, 10));
+	}
+}
+
+// ---- 脚本轮辅助（与 orchestrator m2 验收测试同款） ----
+
+function toolCallRound(
+	name: string,
+	id: string,
+	inputJson: string,
+): StreamEvent[] {
+	return [
+		{ type: "tool_call_start", id, name },
+		{ type: "tool_call_delta", id, inputDelta: inputJson },
+		{ type: "tool_call_end", id },
+		{ type: "usage", usage: { input: 100, output: 20 } },
+		{ type: "finish", reason: "tool_calls" },
+	];
+}
+
+function textRound(delta: string, usage: Usage): StreamEvent[] {
+	return [
+		{ type: "text_delta", delta },
+		{ type: "usage", usage },
+		{ type: "finish", reason: "stop" },
+	];
+}
+
+function delegateRound(inputJson: string): StreamEvent[] {
+	return toolCallRound("delegate", "m-tc-1", inputJson);
+}
+
+function spawnWorkersRound(inputJson: string): StreamEvent[] {
+	return toolCallRound("spawn_workers", "m-tc-2", inputJson);
+}
+
+describe("createSessionManager", () => {
+	it("send 后 sink 顺序：log(meta) → turn(start) → log(user_msg) → delta… → log(assistant_msg) → turn(end)", async () => {
+		await writeSettings("never");
+		const adapter: LlmAdapter = scriptedAdapter([
+			[
+				{ type: "text_delta", delta: "你好" },
+				{ type: "text_delta", delta: "，世界" },
+				{ type: "usage", usage: { input: 10, output: 5 } },
+				{ type: "finish", reason: "stop" },
+			],
+		]);
+		const sm = createSessionManager({ home, llm: { adapter, model: MODEL } });
+		const rec = await sm.create(proj);
+		const { events, sink } = makeSink();
+		sm.subscribe(rec.id, null, sink);
+
+		await sm.send(rec.id, "第一条消息");
+		await waitFor(() => events.some(isTurnEnd));
+
+		expect(events.map(describeEvent)).toEqual([
+			"log:meta",
+			"turn:start",
+			"log:user_msg",
+			"delta",
+			"delta",
+			"log:assistant_msg",
+			"turn:end",
+		]);
+		const deltas = events.filter((e) => e.kind === "delta");
+		expect(deltas.map((e) => (e.kind === "delta" ? e.text : "")).join("")).toBe(
+			"你好，世界",
+		);
+		// seq 全会话单调递增
+		const seqs = events.map((e) => e.seq);
+		expect([...seqs].sort((a, b) => a - b)).toEqual(seqs);
+	});
+
+	it("delegate→simple：收到 spawn 瞬态事件；子 agent 事件只经 log 路径到达（迭代器未转发 tool_call）", async () => {
+		await writeSettings("never");
+		const adapter = scriptedAdapter([
+			delegateRound(
+				'{"difficulty":"simple","modelTier":"low","task":"读取 note.txt 并总结内容"}',
+			),
+			toolCallRound("read", "w-tc-1", '{"path":"note.txt"}'),
+			textRound("note.txt 有一行：hello hotpot。", {
+				input: 2000,
+				output: 400,
+			}),
+			textRound("worker 已读完并总结。", { input: 120, output: 30 }),
+		]);
+		const sm = createSessionManager({ home, llm: { adapter, model: MODEL } });
+		const rec = await sm.create(proj);
+		const { events, sink } = makeSink();
+		sm.subscribe(rec.id, null, sink);
+
+		await sm.send(rec.id, "看一下 note.txt");
+		await waitFor(() => events.some(isTurnEnd));
+
+		// 瞬态 spawn 事件（parentAgentId 固定 main）
+		const spawn = events.find((e) => e.kind === "spawn");
+		if (spawn?.kind !== "spawn") throw new Error("spawn 事件缺失");
+		expect(spawn).toMatchObject({
+			agentId: "worker-1",
+			role: "worker",
+			tier: "low",
+			parentAgentId: "main",
+			task: "读取 note.txt 并总结内容",
+		});
+
+		// 子 agent 的 durable 事件经 tailer 的 log 路径到达。
+		// 注意：core 的 runTurn 不落独立的 tool_call 会话事件（tool_call 只存在于
+		// assistant_msg 内容块与瞬态事件里），故「tool_call 只来自 log 路径」以
+		// worker assistant_msg 的内容块 + tool_result 事件断言
+		const spawns = logEvents(events, "agent_spawn");
+		expect(
+			spawns.some((e) => e.type === "agent_spawn" && e.agentId === "worker-1"),
+		).toBe(true);
+		expect(
+			logEvents(events, "assistant_msg").some(
+				(e) =>
+					e.type === "assistant_msg" &&
+					e.agentId === "worker-1" &&
+					e.content.some((b) => b.type === "tool_call" && b.name === "read"),
+			),
+		).toBe(true);
+		expect(
+			logEvents(events, "tool_result").some(
+				(e) => e.type === "tool_result" && e.agentId === "worker-1",
+			),
+		).toBe(true);
+
+		// 迭代器未转发 durable 事件：非 log 事件的 kind 只允许瞬态 turn/spawn/delta
+		const nonLogKinds = events
+			.filter((e) => e.kind !== "log")
+			.map((e) => e.kind);
+		expect(new Set(nonLogKinds)).toEqual(new Set(["turn", "spawn", "delta"]));
+	});
+
+	it("bash 高危命令：sink 收到 approval；未应答期间 turn 不结束；allow 后收到 log(approval/asked→decided) 与 turn(end)", async () => {
+		await writeSettings("ask-on-dangerous");
+		const adapter = scriptedAdapter([
+			delegateRound(
+				'{"difficulty":"simple","modelTier":"low","task":"清理临时目录 x"}',
+			),
+			toolCallRound("bash", "w-tc-1", '{"command":"rm -rf x"}'),
+			textRound("清理完成。", { input: 50, output: 10 }),
+			textRound("临时目录已清理。", { input: 20, output: 5 }),
+		]);
+		const sm = createSessionManager({ home, llm: { adapter, model: MODEL } });
+		const rec = await sm.create(proj);
+		const { events, sink } = makeSink();
+		sm.subscribe(rec.id, null, sink);
+
+		await sm.send(rec.id, "清理临时目录");
+		await waitFor(() => events.some((e) => e.kind === "approval"));
+
+		const approval = events.find((e) => e.kind === "approval");
+		if (approval?.kind !== "approval") throw new Error("approval 事件缺失");
+		expect(approval.approvalType).toBe("tool");
+		expect(approval.summary).toContain("rm -rf x");
+
+		// 未应答期间 turn 不结束（parked promise 挂起 delegate → worker 的 bash 执行）
+		await new Promise((resolve) => setTimeout(resolve, 300));
+		expect(events.some(isTurnEnd)).toBe(false);
+		expect(sm.answerToolApproval(rec.id, approval.requestId, "allow")).toBe(
+			true,
+		);
+
+		await waitFor(() => events.some(isTurnEnd));
+		const askedIdx = events.findIndex(
+			(e) => isLog(e) && e.event.type === "approval/asked",
+		);
+		const decidedIdx = events.findIndex(
+			(e) => isLog(e) && e.event.type === "approval/decided",
+		);
+		const endIdx = events.findIndex(isTurnEnd);
+		expect(askedIdx).toBeGreaterThan(-1);
+		expect(decidedIdx).toBeGreaterThan(askedIdx);
+		expect(endIdx).toBeGreaterThan(decidedIdx);
+	});
+
+	it("complex：plan(drafted) → answerPlan approve → plan(approved) → 执行 turn 完成", async () => {
+		await writeSettings("ask-on-dangerous");
+		const planV1 =
+			"PLAN v1: (1) add auth routes (2) add login page. Files: auth.ts, login.tsx.";
+		const adapter = scriptedAdapter([
+			delegateRound(
+				'{"difficulty":"complex","modelTier":"high","task":"给项目加用户认证"}',
+			),
+			textRound("我来起草实现计划。", { input: 100, output: 20 }),
+			textRound(planV1, { input: 200, output: 60 }),
+			spawnWorkersRound(
+				'{"workers":[{"task":"实现后端 auth 路由","modelTier":"high"}]}',
+			),
+			toolCallRound(
+				"write",
+				"w-tc-1",
+				'{"path":"auth.ts","content":"export const auth = true;\\n"}',
+			),
+			textRound("auth 路由已完成。", { input: 500, output: 100 }),
+			textRound("用户认证已按计划实现。", { input: 100, output: 20 }),
+		]);
+		const sm = createSessionManager({ home, llm: { adapter, model: MODEL } });
+		const rec = await sm.create(proj);
+		const { events, sink } = makeSink();
+		sm.subscribe(rec.id, null, sink);
+
+		await sm.send(rec.id, "给项目加用户认证");
+		await waitFor(() =>
+			events.some((e) => e.kind === "plan" && e.phase === "drafted"),
+		);
+		const drafted = events.find((e) => e.kind === "plan");
+		if (drafted?.kind !== "plan") throw new Error("plan 事件缺失");
+		expect(drafted.phase).toBe("drafted");
+		expect(drafted.plan).toBe(planV1);
+
+		// plan 审批询问经桥广播为 approval(approvalType:"plan")，parked 等应答
+		await waitFor(() =>
+			events.some((e) => e.kind === "approval" && e.approvalType === "plan"),
+		);
+		const approval = events.find(
+			(e) => e.kind === "approval" && e.approvalType === "plan",
+		);
+		if (approval?.kind !== "approval") throw new Error("plan approval 缺失");
+		expect(approval.plan).toBe(planV1);
+		expect(
+			events.some((e) => e.kind === "plan" && e.phase === "approved"),
+		).toBe(false);
+
+		expect(sm.answerPlan(rec.id, { kind: "approve" })).toBe(true);
+		await waitFor(() =>
+			events.some((e) => e.kind === "plan" && e.phase === "approved"),
+		);
+		await waitFor(() => events.some(isTurnEnd));
+
+		const draftedIdx = events.findIndex(
+			(e) => e.kind === "plan" && e.phase === "drafted",
+		);
+		const approvalIdx = events.findIndex((e) => e.kind === "approval");
+		const approvedIdx = events.findIndex(
+			(e) => e.kind === "plan" && e.phase === "approved",
+		);
+		const endIdx = events.findIndex(isTurnEnd);
+		expect(draftedIdx).toBeLessThan(approvalIdx);
+		expect(approvalIdx).toBeLessThan(approvedIdx);
+		expect(approvedIdx).toBeLessThan(endIdx);
+
+		// 执行阶段确有 worker 诞生并落盘执行记录
+		expect(
+			logEvents(events, "agent_spawn").some(
+				(e) => e.type === "agent_spawn" && e.agentId === "worker-1",
+			),
+		).toBe(true);
+	});
+
+	it("两个 send 连发：turn 串行，第二回合的 user_msg 推送/落盘都在第一回合 turn(end) 之后", async () => {
+		await writeSettings("never");
+		const adapter = scriptedAdapter([
+			textRound("回答一", { input: 10, output: 5 }),
+			textRound("回答二", { input: 10, output: 5 }),
+		]);
+		const sm = createSessionManager({ home, llm: { adapter, model: MODEL } });
+		const rec = await sm.create(proj);
+		const { events, sink } = makeSink();
+		sm.subscribe(rec.id, null, sink);
+
+		await sm.send(rec.id, "第一条");
+		await sm.send(rec.id, "第二条");
+		await waitFor(() => events.filter(isTurnEnd).length === 2);
+
+		const end1Idx = events.findIndex(isTurnEnd);
+		const start2Idx = events.findIndex(
+			(e, i) => i > end1Idx && e.kind === "turn" && e.phase === "start",
+		);
+		const msg2Idx = events.findIndex(
+			(e) =>
+				isLog(e) &&
+				e.event.type === "user_msg" &&
+				e.event.agentId === "main" &&
+				e.event.content === "第二条",
+		);
+		expect(end1Idx).toBeGreaterThan(-1);
+		expect(start2Idx).toBeGreaterThan(end1Idx);
+		expect(msg2Idx).toBeGreaterThan(start2Idx);
+
+		// 落盘顺序同理（tailer 按文件序推送，sink 顺序即文件顺序）
+		const { events: fileEvents } = await loadSession(rec.filePath);
+		const idxOf = (pred: (e: SessionEvent) => boolean): number =>
+			fileEvents.findIndex(pred);
+		const msg1File = idxOf(
+			(e) =>
+				e.type === "user_msg" && e.agentId === "main" && e.content === "第一条",
+		);
+		const answer1File = idxOf(
+			(e) => e.type === "assistant_msg" && e.agentId === "main",
+		);
+		const msg2File = idxOf(
+			(e) =>
+				e.type === "user_msg" && e.agentId === "main" && e.content === "第二条",
+		);
+		expect(msg1File).toBeGreaterThan(-1);
+		expect(msg1File).toBeLessThan(answer1File);
+		expect(answer1File).toBeLessThan(msg2File);
+	});
+
+	it("attachById：close 后恢复会话，tailer 补读历史经 buffer 重放拿到旧 assistant_msg，且可继续对话", async () => {
+		await writeSettings("never");
+		const sm = createSessionManager({
+			home,
+			llm: {
+				adapter: scriptedAdapter([
+					textRound("旧回答", { input: 10, output: 5 }),
+				]),
+				model: MODEL,
+			},
+		});
+		const rec = await sm.create(proj);
+		const first = makeSink();
+		sm.subscribe(rec.id, null, first.sink);
+		await sm.send(rec.id, "旧问题");
+		await waitFor(() => first.events.some(isTurnEnd));
+		expect(
+			first.events.some((e) => isLog(e) && e.event.type === "assistant_msg"),
+		).toBe(true);
+		sm.close(rec.id);
+		expect(sm.get(rec.id)).toBeNull();
+
+		// 新 manager 实例按 id 恢复（web 打开/CLI 创建过的会话）
+		const sm2 = createSessionManager({
+			home,
+			llm: {
+				adapter: scriptedAdapter([
+					textRound("新回答", { input: 10, output: 5 }),
+				]),
+				model: MODEL,
+			},
+		});
+		const attached = await sm2.attachById(rec.id);
+		if (attached === null) throw new Error("attachById 未命中");
+		expect(attached.filePath).toBe(rec.filePath);
+
+		const second = makeSink();
+		sm2.subscribe(attached.id, null, second.sink);
+		// 补读的历史直接经 buffer 重放（tailer 初始批已入 hub）
+		expect(
+			second.events.some(
+				(e) =>
+					isLog(e) &&
+					e.event.type === "user_msg" &&
+					e.event.agentId === "main" &&
+					e.event.content === "旧问题",
+			),
+		).toBe(true);
+		expect(
+			second.events.some((e) => isLog(e) && e.event.type === "assistant_msg"),
+		).toBe(true);
+
+		await sm2.send(attached.id, "新问题");
+		await waitFor(() => second.events.some(isTurnEnd));
+		expect(second.events.some((e) => e.kind === "delta")).toBe(true);
+	});
+
+	it("usage()：折叠 assistant_msg.usage，total/byTier/byAgent 正确", async () => {
+		await writeSettings("never");
+		const adapter = scriptedAdapter([
+			delegateRound(
+				'{"difficulty":"simple","modelTier":"low","task":"读取 note.txt 并总结内容"}',
+			),
+			toolCallRound("read", "w-tc-1", '{"path":"note.txt"}'),
+			textRound("note.txt 有一行：hello hotpot。", {
+				input: 2000,
+				output: 400,
+			}),
+			textRound("worker 已读完并总结。", { input: 120, output: 30 }),
+		]);
+		const sm = createSessionManager({ home, llm: { adapter, model: MODEL } });
+		const rec = await sm.create(proj);
+		const { events, sink } = makeSink();
+		sm.subscribe(rec.id, null, sink);
+
+		await sm.send(rec.id, "看一下 note.txt");
+		await waitFor(() => events.some(isTurnEnd));
+		const { events: fileEvents } = await loadSession(rec.filePath);
+		expect(
+			fileEvents.some(
+				(e) => e.type === "assistant_msg" && e.agentId === "worker-1",
+			),
+		).toBe(true);
+
+		const usage = await sm.usage(rec.id);
+		// main 两轮（delegate 100/20 + 收尾 120/30），worker 两轮（read 100/20 + 摘要 2000/400）
+		expect(usage.total).toEqual({ input: 2320, output: 470 });
+		expect(usage.byTier.high).toEqual({ input: 220, output: 50, count: 2 });
+		expect(usage.byTier.low).toEqual({ input: 2100, output: 420, count: 2 });
+		expect(usage.byAgent.main).toEqual({ input: 220, output: 50 });
+		expect(usage.byAgent["worker-1"]).toEqual({ input: 2100, output: 420 });
+	});
+});
