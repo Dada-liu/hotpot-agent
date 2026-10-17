@@ -31,6 +31,8 @@ export type SessionEvent =
 			ts: string;
 			agentId: string;
 			content: ContentBlock[];
+			// server 侧恒有 usage；镜像为可选以兼容历史日志与测试构造
+			usage?: { input: number; output: number };
 	  }
 	| {
 			type: "tool_result";

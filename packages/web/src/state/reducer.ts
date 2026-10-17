@@ -99,6 +99,8 @@ export interface ChatState {
 	turn: "idle" | "running";
 	// agent 面板：首个 spawn 到达即展开
 	panelOpen: boolean;
+	// token 用量累计：log(assistant_msg) 时累加（含历史重放，幂等去重保证不重复计）
+	usage: { input: number; output: number };
 	// 已见过的 log 事件 id（幂等去重）
 	seenEventIds: string[];
 }
@@ -112,6 +114,7 @@ export function createInitialState(): ChatState {
 		pendingPlan: null,
 		turn: "idle",
 		panelOpen: false,
+		usage: { input: 0, output: 0 },
 		seenEventIds: [],
 	};
 }
@@ -237,6 +240,13 @@ function reduceLog(state: ChatState, event: SessionEvent): ChatState {
 			};
 			return {
 				...state,
+				// 工具块落成工具卡片；usage 累计进面板用量条
+				usage: event.usage
+					? {
+							input: state.usage.input + event.usage.input,
+							output: state.usage.output + event.usage.output,
+						}
+					: state.usage,
 				transcript: [...state.transcript, assistantEntry, ...toolEntries],
 				// 流式段定格：durable 消息已落 transcript，以 content 为准
 				streaming:
