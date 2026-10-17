@@ -24,7 +24,7 @@
 ## 3. 架构决议
 
 - pnpm monorepo，Node >= 22 + TypeScript erasable-syntax-only（`.ts` 后缀 import，Node strip-only 开发直跑），vitest 测试，biome 检查，tsdown 发布
-- 包结构：`packages/ai`（LLM 适配，api×provider 二维，首批 anthropic-messages + openai-completions）→ `packages/core`（turn/step 循环、工具、提示词、会话日志）→ `packages/orchestrator`（三层编排）→ `packages/server` + `packages/web`（M3）、`packages/cli`（M1）
+- 包结构：`packages/ai`（LLM 适配，api×provider 二维，首批 anthropic-messages + openai-completions）→ `packages/core`（turn/step 循环、工具、提示词、会话日志）→ `packages/orchestrator`（三层编排）→ `packages/server`（REST + SSE 服务层，实现见 [packages/server/README.md](../packages/server/README.md)）+ `packages/web`（React SPA，实现见 [packages/web/README.md](../packages/web/README.md)）（M3，已实现）、`packages/cli`（M1）
 - **会话日志即唯一事实源**：append-only JSONL 事件日志，`deriveMessages()` 转换出模型历史；存储于 `~/.hotpot/sessions/`
 - 配置：双层——用户级 `~/.hotpot/settings.json`（三档模型 high/medium/low、`maxParallelTasks` 默认 10、`planMaxRevisions` 默认 3）+ 项目级 `./.hotpot/settings.json`（仅可覆盖非凭证字段；凭证只从用户级读取）
 - 技术方案参考 pi 与 deepseek-harness，借鉴与取舍清单见 `docs/archive/02-architecture.md` 第 7、8 节
@@ -50,7 +50,7 @@ todo、steer/queue、hooks、skill、prompt templates、web_search/web_fetch、M
 
 - **M1**：最小可用闭环，只做 CLI（ai + core + cli + 会话存储 + 配置）
 - **M2**：三层编排 + human-in-the-loop + 分层模型路由 + steer/queue API（已实现，验收见 `docs/archive/04-roadmap.md` M2 节与 `packages/orchestrator/test/m2-acceptance.test.ts`）
-- **M3**：Web 端（server + web）
+- **M3**：Web 端（server + web，已实现，验收见 `docs/archive/04-roadmap.md` M3 节）
 - **M4**：P1 扩展功能逐项落地
 - **M5**：benchmarks + 遥测体系
 

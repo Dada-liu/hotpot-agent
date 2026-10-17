@@ -44,8 +44,8 @@
 
 ## 已知边界（留待后续里程碑）
 
-- worker/task 内联 turn 的事件不透出主流：CLI 只能渲染 main 事件流与 spawn 标记行，子 agent 的 text/tool_call 过程不可见。
-- steer/inject 只做入队 + step 顶部轮询，M2 无进程内唤醒；已排队消息在 abort 后是否保留由调用方决定。
+- worker/task 内联 turn 的事件仍不透出主流：CLI 只能渲染 main 事件流与 spawn 标记行；子 agent 的过程事件全量落盘会话日志，经 server tailer 补发可在 web 端右侧面板实时观察（M3）。
+- steer/inject 只做入队 + step 顶部轮询，无进程内唤醒；已排队消息在 abort 后是否保留由调用方决定（两队列崩溃恢复已由 `foldInbox` + `createInbox({seed})` 播种解决，M3）。
 
 ## 测试
 
