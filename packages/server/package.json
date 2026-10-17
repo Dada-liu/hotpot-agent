@@ -3,13 +3,18 @@
 	"version": "0.0.0",
 	"private": true,
 	"type": "module",
+	"bin": {
+		"hotpot-server": "src/bin.ts"
+	},
 	"exports": {
 		".": "./src/index.ts"
 	},
 	"dependencies": {
+		"@hono/node-server": "^2.1.5",
 		"@hotpot/ai": "workspace:*",
 		"@hotpot/core": "workspace:*",
 		"@hotpot/orchestrator": "workspace:*",
-		"hono": "^4.13.13"
+		"hono": "^4.13.13",
+		"zod": "^4.6.5"
 	}
 }

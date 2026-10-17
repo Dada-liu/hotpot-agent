@@ -67,6 +67,7 @@ export interface SessionRecord {
 	id: string;
 	cwd: string;
 	filePath: string;
+	createdAt: string;
 	// 是否有回合正在执行（turn 串行链非空闲）
 	running: boolean;
 }
@@ -103,6 +104,15 @@ export interface SessionManager {
 		afterSeq: number | null,
 		sink: (e: WireEvent) => void,
 	): () => void;
+	// SSE 断线重连订阅：afterSeq 命中留存窗口则增量补发；为 null 走 buffer 全量；
+	// 掉出窗口则 loadSession 全量日志重放——每条 durable 事件经 hub.replay 分配新 seq
+	// （与 live 流 seq 连续）后先送达 sink，再注册 live 回调。重放与注册在同一同步段内
+	// 完成，本订阅者的 FIFO 序与 seq 单调由单线程交付保证。返回退订函数
+	subscribeResuming(
+		id: string,
+		afterSeq: number | null,
+		sink: (e: WireEvent) => void,
+	): Promise<() => void>;
 	usage(id: string): Promise<UsageSummary>;
 	close(id: string): Promise<void>;
 }
@@ -111,6 +121,7 @@ interface ManagedSession {
 	id: string;
 	cwd: string;
 	filePath: string;
+	createdAt: string;
 	tier: ModelTier;
 	hub: WireHub;
 	bridge: ApprovalBridge;
@@ -232,6 +243,7 @@ export function createSessionManager(
 		session: Session;
 		cwd: string;
 		settings: Settings;
+		createdAt: string;
 		inboxSeed?: InboxState;
 	}): Promise<ManagedSession> {
 		const { settings, cwd } = init;
@@ -348,6 +360,7 @@ export function createSessionManager(
 			id: init.session.id,
 			cwd,
 			filePath: init.session.filePath,
+			createdAt: init.createdAt,
 			tier,
 			hub,
 			bridge,
@@ -447,7 +460,22 @@ export function createSessionManager(
 			id: m.id,
 			cwd: m.cwd,
 			filePath: m.filePath,
+			createdAt: m.createdAt,
 			running: m.holder.running,
+		};
+	}
+
+	// live 回调注册（subscribe/subscribeResuming 共用）：补发在调用方同步完成后执行，
+	// 保证重放事件先于 live 到达同一订阅者
+	function registerLive(
+		m: ManagedSession,
+		sink: (e: WireEvent) => void,
+	): () => void {
+		const subId = m.nextSubscriberId;
+		m.nextSubscriberId += 1;
+		m.subscribers.set(subId, sink);
+		return () => {
+			m.subscribers.delete(subId);
 		};
 	}
 
@@ -455,7 +483,16 @@ export function createSessionManager(
 		async create(cwd: string): Promise<SessionRecord> {
 			const settings = loadSettings({ cwd, home: opts.home });
 			const session = await createSession(cwd, opts.home);
-			const m = await assemble({ session, cwd, settings });
+			const { meta } = await loadSession(session.filePath);
+			if (meta.type !== "meta") {
+				throw new Error(`会话文件缺 meta 头: ${session.filePath}`);
+			}
+			const m = await assemble({
+				session,
+				cwd,
+				settings,
+				createdAt: meta.createdAt,
+			});
 			managed.set(m.id, m);
 			return recordOf(m);
 		},
@@ -472,6 +509,7 @@ export function createSessionManager(
 				session,
 				cwd: meta.cwd,
 				settings,
+				createdAt: meta.createdAt,
 				inboxSeed: foldInbox(events),
 			});
 			managed.set(m.id, m);
@@ -539,12 +577,39 @@ export function createSessionManager(
 			for (const e of catchUp) {
 				sink(e);
 			}
-			const subId = m.nextSubscriberId;
-			m.nextSubscriberId += 1;
-			m.subscribers.set(subId, sink);
-			return () => {
-				m.subscribers.delete(subId);
-			};
+			return registerLive(m, sink);
+		},
+
+		async subscribeResuming(
+			id: string,
+			afterSeq: number | null,
+			sink: (e: WireEvent) => void,
+		): Promise<() => void> {
+			const m = requireManaged(id);
+			if (afterSeq === null) {
+				for (const e of m.hub.buffer()) {
+					sink(e);
+				}
+				return registerLive(m, sink);
+			}
+			// 命中留存窗口：增量补发（同步段，注册前无 await）
+			if (m.hub.hasSeq(afterSeq)) {
+				const incremental = m.hub.tailAfter(afterSeq);
+				if (incremental !== null) {
+					for (const e of incremental) {
+						sink(e);
+					}
+					return registerLive(m, sink);
+				}
+			}
+			// 掉出窗口：全量日志重放。durable 事件经 hub.replay 借 emit 管道分配新 seq
+			// （seq 与 live 流连续、单调），先全部送达 sink，再注册 live 回调；
+			// 重放→注册之间无 await，本订阅者的 FIFO 序不会被插入的 live 事件打破
+			const { events } = await loadSession(m.filePath);
+			for (const e of events) {
+				sink(m.hub.replay({ kind: "log", event: e }));
+			}
+			return registerLive(m, sink);
 		},
 
 		async usage(id: string): Promise<UsageSummary> {
@@ -555,6 +620,16 @@ export function createSessionManager(
 
 		async close(id: string): Promise<void> {
 			const m = requireManaged(id);
+			// 会话销毁：未决审批一律拒绝（tool 型 deny；plan 型 reject），
+			// 让 parked promise 落盘 decided 并释放等待中的回合链
+			for (const requestId of m.bridge.pending()) {
+				if (!m.bridge.answer(requestId, "deny")) {
+					m.bridge.answer(requestId, {
+						kind: "reject",
+						note: "session closed",
+					});
+				}
+			}
 			m.tailer.stop();
 			managed.delete(id);
 		},

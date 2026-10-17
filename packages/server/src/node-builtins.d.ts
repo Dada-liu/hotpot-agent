@@ -97,6 +97,82 @@ declare module "node:crypto" {
 	export function randomUUID(): string;
 }
 
+// ---- node:http 家族：@hono/node-server 的类型面 + serve 返回句柄的关断/寻址 ----
+
+interface HotpotAddressInfo {
+	address: string;
+	family: string;
+	port: number;
+}
+
+declare module "node:net" {
+	export interface AddressInfo extends HotpotAddressInfo {}
+}
+
+declare module "node:stream" {
+	export interface Duplex {
+		on(event: string, listener: (...args: unknown[]) => void): Duplex;
+		destroy(error?: Error): void;
+	}
+}
+
+interface HotpotHttpServer {
+	listen(
+		port: number,
+		hostname?: string,
+		listeningListener?: () => void,
+	): HotpotHttpServer;
+	close(callback?: (err?: Error) => void): void;
+	closeAllConnections(): void;
+	address(): HotpotAddressInfo | string | null;
+	on(event: string, listener: (...args: unknown[]) => void): HotpotHttpServer;
+}
+
+declare module "node:http" {
+	export interface IncomingMessage {
+		method?: string;
+		url?: string;
+		headers: Record<string, string | string[] | undefined>;
+	}
+	export interface ServerResponse {
+		writeHead(status: number, headers?: Record<string, string>): ServerResponse;
+		end(chunk?: string | Uint8Array): void;
+		on(event: string, listener: (...args: unknown[]) => void): ServerResponse;
+	}
+	export interface ServerOptions {}
+	export interface Server extends HotpotHttpServer {}
+	export function createServer(
+		options: ServerOptions,
+		listener?: (req: IncomingMessage, res: ServerResponse) => void,
+	): Server;
+}
+
+declare module "node:https" {
+	export interface ServerOptions {}
+	export interface Server extends HotpotHttpServer {}
+	export function createServer(
+		options: ServerOptions,
+		listener?: (req: unknown, res: unknown) => void,
+	): Server;
+}
+
+declare module "node:http2" {
+	export interface Http2ServerRequest {}
+	export interface Http2ServerResponse {}
+	export interface ServerOptions {}
+	export interface SecureServerOptions {}
+	export interface Http2Server extends HotpotHttpServer {}
+	export interface Http2SecureServer extends HotpotHttpServer {}
+	export function createServer(
+		options: ServerOptions,
+		listener?: (req: Http2ServerRequest, res: Http2ServerResponse) => void,
+	): Http2Server;
+	export function createSecureServer(
+		options: SecureServerOptions,
+		listener?: (req: Http2ServerRequest, res: Http2ServerResponse) => void,
+	): Http2SecureServer;
+}
+
 declare const process: {
 	env: Record<string, string | undefined>;
 	platform: string;

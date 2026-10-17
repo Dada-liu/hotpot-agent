@@ -57,6 +57,10 @@ export interface WireHub {
 	// 增量：返回 seq 之后的留存事件；seq 早于窗口（中间事件已被淘汰）返回 null，
 	// 调用方需降级为全量重放
 	tailAfter(seq: number): WireEvent[] | null;
+	// 重放专用：与 emit 共享 seq 单调分配（seq 与 live 流连续），
+	// 但不入 ring buffer、不广播——SSE 全量日志重放经此把 durable 事件
+	// 重新包装为 wire 事件发给单个订阅者，不污染其他订阅者的 buffer/广播
+	replay(event: WireEventInput): WireEvent;
 }
 
 const DEFAULT_CAPACITY = 2000;
@@ -92,5 +96,10 @@ export function createWireHub(opts?: { capacity?: number }): WireHub {
 		return buf.filter((e) => e.seq > seq);
 	}
 
-	return { emit, buffer, hasSeq, tailAfter };
+	function replay(event: WireEventInput): WireEvent {
+		lastSeq += 1;
+		return { seq: lastSeq, ...event };
+	}
+
+	return { emit, buffer, hasSeq, tailAfter, replay };
 }
