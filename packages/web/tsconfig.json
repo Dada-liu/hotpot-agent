@@ -1,0 +1,11 @@
+{
+	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		// vite 惯例：bundler 解析 + react-jsx；DOM lib 供浏览器 API 类型
+		"jsx": "react-jsx",
+		"lib": ["es2023", "dom", "dom.iterable"],
+		"module": "esnext",
+		"moduleResolution": "bundler"
+	},
+	"include": ["src", "test"]
+}
