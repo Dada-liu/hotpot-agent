@@ -1,7 +1,8 @@
 // steer/queue 双队列：next-turn（followup，turn 结束消费）与 next-step（steer/inject，step 顶部经
 // LoopConfig.pollInbox 注入）。设计见 docs/archive/03-agent-orchestration.md 第 7 节。
 // 每次变更动词先更新内存队列，再追加一条 inbox/spliced 事件（queue + 该队列全量快照）；
-// foldInbox 从持久化事件流顺序转换出两队列最终状态，供崩溃恢复重建内存队列。
+// foldInbox 从持久化事件流顺序转换出两队列最终状态，供崩溃恢复重建内存队列
+// （createInbox 的 seed 选项直接消费 foldInbox 的返回，播种不追加新快照）。
 // foldInbox 是纯函数、无 IO；变更动词的落盘走 createInbox 闭包的 session 句柄，append 本身带 fsync。
 
 import { randomUUID } from "node:crypto";
@@ -49,9 +50,17 @@ function dedupeById(messages: InboxMessage[]): InboxMessage[] {
 export function createInbox(
 	session: Session,
 	agentId: string,
-	opts?: { onCancel?: () => void },
+	opts?: { onCancel?: () => void; seed?: InboxState },
 ): Inbox {
-	const state: InboxState = { nextTurn: [], nextStep: [] };
+	// seed 存在时以 foldInbox 的结果初始化两队列（崩溃恢复路径）：快照代表的
+	// 意图已在上次变更动词时落盘，播种只重建内存队列，不追加 inbox/spliced。
+	// 拷贝数组避免与调用方共享引用（drain 会整体替换队列）
+	const state: InboxState = opts?.seed
+		? {
+				nextTurn: [...opts.seed.nextTurn],
+				nextStep: [...opts.seed.nextStep],
+			}
+		: { nextTurn: [], nextStep: [] };
 
 	// 变更动词共用路径：入队（同 id 去重）→ 落盘该队列全量快照
 	async function splice(queue: InboxQueue, content: string): Promise<void> {

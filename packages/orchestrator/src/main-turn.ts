@@ -6,6 +6,8 @@
 // onPlanApproval 缺省时 plan 阶段 fail-closed（拒绝并收尾），见 plan.ts。
 // 传入 inbox 时，core runTurn 的每个 step 顶部经 pollInbox 拉取 next-step 消息
 // （steer/inject 注入），起草轮与执行轮同样生效；缺省不轮询。
+// worker/task 的 spawn 经包装 runtime.spawn 记录进本回合待产队列，主循环先 drain
+// 再透传 —— agent_spawn 流事件先于对应 tool_result 到达、与调用序一致。
 
 import { randomUUID } from "node:crypto";
 import { type LoopConfig, type ModelTier, runTurn } from "@hotpot/core";
@@ -41,8 +43,37 @@ export async function* runMainTurn(opts: {
 	// Inbox.pollNextStep 的返回形状与 core 钩子一致（string[]，消息体已映射为
 	// content），直接适配；起草轮与执行轮共用同一队列
 	const pollInbox = inbox ? () => inbox.pollNextStep() : undefined;
-	const delegateTool = createDelegateTool(runtime, state);
-	const spawnWorkersTool = createSpawnWorkersTool(runtime, state);
+	// 本回合待产的 agent_spawn 事件：spawn 包装在调用成功后推入，主循环每轮
+	// （以及循环结束后）先 drain 再 yield runTurn 事件 —— spawn 事件因而稳定出现在
+	// delegate/spawn_workers 的 tool_result 之前，且与调用序一致。base spawn 内部经
+	// Promise 链串行化（见 runtime.ts），并发 spawn_tasks 的包装 push 也按调用序完成
+	const pendingSpawns: Extract<OrchestrationEvent, { type: "agent_spawn" }>[] =
+		[];
+	async function* drainPendingSpawns(): AsyncGenerator<OrchestrationEvent> {
+		while (pendingSpawns.length > 0) {
+			const event = pendingSpawns.shift();
+			if (event !== undefined) yield event;
+		}
+	}
+	// spawn 包装：只在调用成功后追加事件记录，落盘语义不变（仍由 base runtime 负责）。
+	// simple 路径的 spawn 发生在 delegate 的 execute 内部，complex 执行阶段的 spawn
+	// 发生在 spawn_workers 的 execute 内部，两者都经这里进 pendingSpawns
+	const turnRuntime: OrchestrationRuntime = {
+		...runtime,
+		spawn: async (spawnOpts) => {
+			const { agentId } = await runtime.spawn(spawnOpts);
+			pendingSpawns.push({
+				type: "agent_spawn",
+				agentId,
+				role: spawnOpts.role,
+				tier: spawnOpts.tier,
+				task: spawnOpts.task,
+			});
+			return { agentId };
+		},
+	};
+	const delegateTool = createDelegateTool(turnRuntime, state);
+	const spawnWorkersTool = createSpawnWorkersTool(turnRuntime, state);
 	const registry = createRoleRegistry(MAIN_AGENT_ID, [delegateTool]);
 	await runtime.session.append({
 		type: "user_msg",
@@ -72,14 +103,16 @@ export async function* runMainTurn(opts: {
 		pollInbox,
 	};
 	for await (const event of runTurn(cfg, signal)) {
+		yield* drainPendingSpawns();
 		yield event;
 	}
+	yield* drainPendingSpawns();
 	if (state.lastDelegate?.difficulty !== "complex") {
 		return;
 	}
 
 	// complex 流：plan 修订/审批循环（拒绝与修订耗尽都在其中收尾并结束回合）
-	yield* runPlanPhase(runtime, state, signal, opts.onPlanApproval);
+	yield* runPlanPhase(turnRuntime, state, signal, opts.onPlanApproval);
 	if (!state.planApproved || signal.aborted) {
 		return;
 	}
@@ -110,6 +143,8 @@ export async function* runMainTurn(opts: {
 		pollInbox,
 	};
 	for await (const event of runTurn(execCfg, signal)) {
+		yield* drainPendingSpawns();
 		yield event;
 	}
+	yield* drainPendingSpawns();
 }

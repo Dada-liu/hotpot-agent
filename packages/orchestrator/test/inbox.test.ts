@@ -180,6 +180,42 @@ describe("createInbox 双队列语义", () => {
 		]);
 	});
 
+	it("seed 播种恢复：两队列初始化为 foldInbox 形状，poll/drain 取播种内容且不追加 spliced", async () => {
+		const session = await createSession("/tmp/proj", home);
+		const seed = {
+			nextTurn: [{ id: "f1", content: "followup-1" }],
+			nextStep: [
+				{ id: "s1", content: "steer-1" },
+				{ id: "s2", content: "steer-2" },
+			],
+		};
+		const inbox = createInbox(session, "main", { seed });
+
+		// 播种内容可直接消费，顺序保持
+		expect(await inbox.pollNextStep()).toEqual(["steer-1", "steer-2"]);
+		expect(await inbox.pollNextStep()).toEqual([]);
+		const nextTurn = await inbox.drainNextTurn();
+		expect(nextTurn.map((m) => m.content)).toEqual(["followup-1"]);
+		expect(await inbox.drainNextTurn()).toEqual([]);
+
+		// 播种不追加 inbox/spliced（快照只由显式变更动词写入）
+		expect(
+			(await loadEvents(session.filePath)).filter(
+				(e) => e.type === "inbox/spliced",
+			),
+		).toHaveLength(0);
+
+		// 播种后照常走变更动词：入队并落盘该队列全量快照（只含新消息）
+		await inbox.followup("新 followup");
+		const spliced = (await loadEvents(session.filePath)).filter(
+			(e) => e.type === "inbox/spliced",
+		);
+		expect(spliced).toHaveLength(1);
+		const first = spliced[0];
+		if (first.type !== "inbox/spliced") throw new Error("unreachable");
+		expect(first.messages.map((m) => m.content)).toEqual(["新 followup"]);
+	});
+
 	it("cancel：每次调用触发一次 onCancel，不做队列变更、不落盘", async () => {
 		const session = await createSession("/tmp/proj", home);
 		const onCancel = vi.fn();

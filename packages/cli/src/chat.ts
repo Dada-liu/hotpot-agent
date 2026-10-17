@@ -218,18 +218,10 @@ export async function runChat(opts: RunChatOptions): Promise<void> {
 	});
 	// 测试注入点：opts.llm 覆盖 runtime 的档位解析（main/worker 共用同一录制适配器），
 	// 与 orchestrator 测试 makeRuntime 的展开覆盖同法。
-	// spawn 包装：orchestrator 目前只把 agent_spawn 落盘、不作为 OrchestrationEvent 产出
-	// （事件流变体无生产者，留 M3），CLI 在 spawn 调用点同步渲染 [spawn] 行；
-	// renderEvent 仍保留 agent_spawn 分支以兼容将来事件流的直接产出。
+	// agent_spawn 已由 runMainTurn 事件流直产（M3），renderEvent 的 agent_spawn
+	// 分支直接渲染 [spawn] 行，无需再在 spawn 调用点同步打印
 	const runtime: OrchestrationRuntime = {
 		...baseRuntime,
-		spawn: async (spawnOpts) => {
-			const { agentId } = await baseRuntime.spawn(spawnOpts);
-			output.write(
-				`\n[spawn] ${agentId} (tier=${spawnOpts.tier}): ${truncate(spawnOpts.task, 80)}\n`,
-			);
-			return { agentId };
-		},
 		...(opts.llm
 			? {
 					resolveModel: (_t: ModelTier) => ({

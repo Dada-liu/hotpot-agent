@@ -283,6 +283,54 @@ describe("runMainTurn", () => {
 		expect(mainTokens).toBeLessThan(0.2 * workerTokens);
 	});
 
+	it("simple：agent_spawn 流事件由主流直产，位于 delegate tool_result 之前", async () => {
+		const approval = new ApprovalChain();
+		// 调用序：1=main delegate(simple)，2=worker 读文件，3=worker 摘要收尾，4=main 收尾
+		const { runtime } = await makeRuntime(
+			[
+				delegateRound(
+					'{"difficulty":"simple","modelTier":"low","task":"读取 note.txt 并总结"}',
+				),
+				toolCallRound("read", "w-tc-1", '{"path":"note.txt"}'),
+				textRound("note.txt 有一行：hello hotpot。", {
+					input: 2000,
+					output: 400,
+				}),
+				textRound("worker 已读完 note.txt。", {
+					input: 120,
+					output: 30,
+				}),
+			],
+			approval,
+		);
+
+		const events = await collect(
+			runMainTurn({
+				runtime,
+				userMessage: "看一下 note.txt",
+				signal: new AbortController().signal,
+				mainTier: "high",
+			}),
+		);
+
+		const spawnIdx = events.findIndex((e) => e.type === "agent_spawn");
+		expect(spawnIdx).toBeGreaterThanOrEqual(0);
+		const spawn = events[spawnIdx];
+		expect(spawn).toEqual({
+			type: "agent_spawn",
+			agentId: "worker-1",
+			role: "worker",
+			tier: "low",
+			task: "读取 note.txt 并总结",
+		});
+		const resultIdx = events.findIndex(
+			(e) => e.type === "tool_result" && e.name === "delegate",
+		);
+		expect(resultIdx).toBeGreaterThanOrEqual(0);
+		// spawn 事件必须先于 delegate 的 tool_result 到达
+		expect(spawnIdx).toBeLessThan(resultIdx);
+	});
+
 	it("重复 delegate：第二次调用返回 isError「已判定」", async () => {
 		const approval = new ApprovalChain();
 		// 调用序：1=main 首次 delegate(simple)，2=worker 摘要收尾，
