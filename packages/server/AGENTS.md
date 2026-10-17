@@ -1,6 +1,6 @@
 # Working in packages/server/
 
-- Source in `src/`, tests in `test/*.test.ts`. `src/index.ts` is the package entry, re-exporting `app.ts`, `tailer.ts`, `wire.ts`, `approvals.ts`, `usage.ts` and `session-manager.ts`. `src/bin.ts` is the `hotpot-server` bin (Hono REST + SSE).
+- Source in `src/`, tests in `test/*.test.ts`. `src/index.ts` is the package entry, re-exporting `app.ts`, `tailer.ts`, `wire.ts`, `approvals.ts`, `usage.ts`, `static.ts` and `session-manager.ts`. `src/bin.ts` is the `hotpot-server` bin (Hono REST + SSE + static hosting).
 - May depend on `@hotpot/ai`, `@hotpot/core` and `@hotpot/orchestrator` (all `workspace:*`); never import from `@hotpot/cli`.
 - This package is the M3 service layer: REST + SSE APIs between cli and orchestrator, session management, and resume-from-log replay for reconnecting clients. The JSONL tailer (`createTailer`) is the event-bus foundation; later tasks add hono routes and the `hotpot-server` bin.
 - Dependency direction is fixed: `server → orchestrator → core → ai`. Never add a reverse edge.

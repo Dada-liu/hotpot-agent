@@ -2,6 +2,7 @@
 export * from "./app.ts";
 export * from "./approvals.ts";
 export * from "./session-manager.ts";
+export * from "./static.ts";
 export * from "./tailer.ts";
 export * from "./usage.ts";
 export * from "./wire.ts";

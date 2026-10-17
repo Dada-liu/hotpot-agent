@@ -37,8 +37,12 @@ declare module "node:fs/promises" {
 		path: string,
 		options?: { recursive?: boolean },
 	): Promise<string | undefined>;
+	// 无编码重载：静态托管按字节读二进制资产（png/webp 等）
+	export function readFile(path: string): Promise<Uint8Array<ArrayBuffer>>;
 	export function readFile(path: string, encoding: "utf8"): Promise<string>;
 	export function writeFile(path: string, data: string): Promise<void>;
+	// 二参字节重载：静态托管测试写假 PNG 夹具
+	export function writeFile(path: string, data: Uint8Array): Promise<void>;
 	// 三参重载：会话管理器测试按 utf8 显式写夹具文件（与 core 的两参声明合并为重载）
 	export function writeFile(
 		path: string,
@@ -56,6 +60,10 @@ declare module "node:fs/promises" {
 
 declare module "node:fs" {
 	export function existsSync(path: string): boolean;
+	export function statSync(path: string): {
+		isDirectory(): boolean;
+		isFile(): boolean;
+	};
 	export function readFileSync(path: string, encoding: "utf8"): string;
 	export function watch(
 		path: string,
@@ -91,6 +99,12 @@ declare module "node:path" {
 	export function join(...parts: string[]): string;
 	export function resolve(...parts: string[]): string;
 	export function dirname(path: string): string;
+	export function extname(path: string): string;
+	export const sep: string;
+}
+
+declare module "node:url" {
+	export function fileURLToPath(url: string | URL): string;
 }
 
 declare module "node:crypto" {

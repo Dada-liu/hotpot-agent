@@ -19,6 +19,10 @@ M3 服务层：在 cli 与 orchestrator 之上提供 REST + SSE API，负责会�
   - 事件转发架构规则：durable 事件只由 tailer 推 `log`；迭代器只转发瞬态 `delta`/`spawn`/`plan`，`done`/`error` 收敛为回合级一次 `turn(end)`；delta 前与 `turn(end)` 前做 durable 水位同步（`wrapAppend` 计数 + `syncDurable`）；
   - 广播顺序不变量：每会话一条 emit 管道分配 seq，同步 fan-out 到各订阅者 FIFO（重放先于 live 到达）；
   - `create`/`attachById`/`get`/`list`/`send`/`steer`/`cancel`/`answerToolApproval`/`answerPlan`/`subscribe`/`usage`/`close`。
+- **静态托管**（`src/static.ts`）：`mountStatic(app, {webDist?, publicDir?})`，零依赖（`node:fs` 自读）。
+  - webDist（默认按 `import.meta.url` 定位 `<仓库根>/packages/web/dist`）：产物文件（`/assets/*` 等）按扩展名给 Content-Type；`/` 与任意非 `/api` 路径的 GET 回退 `index.html`（SPA 兜底）；
+  - publicDir（默认 `<仓库根>/public`）：`/<文件名>` 原样直出；
+  - 两个目录都不存在时不挂任何路由（纯 API 模式）；`/api` 前缀永不进静态路由，URL 路径规范化后拒绝逃逸根目录。
 
 ## 目录
 
@@ -30,13 +34,15 @@ src/
   approvals.ts         审批桥（pending 表 + parked promise）
   usage.ts             usage 折叠统计（summarizeUsage）
   session-manager.ts   会话管理器（createSessionManager）
+  static.ts            静态托管（mountStatic：web 产物 + 根 public/）
   node-builtins.d.ts   Node 内置模块的最小 ambient 声明（禁 @types/node，超集自 core）
 test/
   tailer.test.ts              补读/坏行/半行/stop/offset 续读用例
   session-manager.test.ts     事件顺序/spawn/审批/plan/串行/attach/usage 集成用例
+  static.test.ts              纯 API 模式/SPA 兜底/资产 MIME/public 直出用例
 ```
 
 ## 计划（后续任务）
 
-- hono REST 路由（会话列表、创建、resume）与 SSE 事件流（协议逐字照抄 `src/wire.ts`）；
-- bin 入口（`hotpot-server`，Task 4 建 `src/bin.ts` 后再在 package.json 加 bin 字段）。
+- web 前端（packages/web 尚不存在）：产出接入 static.ts 托管的 `packages/web/dist`；
+- `hotpot-server` bin（`src/bin.ts`）启动时挂载静态托管：`HOTPOT_WEB_DIST`/`HOTPOT_PUBLIC_DIR` 可覆盖默认目录。
