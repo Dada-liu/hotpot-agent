@@ -25,6 +25,24 @@ function assistantMsg(
 	return { type: "assistant_msg", id, ts, agentId, content };
 }
 
+// 带 usage/tier 的 assistant_msg（tier 缺省时构造体不含该字段，走缺省语义）
+function assistantUsageMsg(
+	id: string,
+	agentId: string,
+	usage: { input: number; output: number },
+	tier?: string,
+): SessionEvent {
+	return {
+		type: "assistant_msg",
+		id,
+		ts,
+		agentId,
+		content: [],
+		usage,
+		...(tier === undefined ? {} : { tier }),
+	};
+}
+
 describe("reduce：spawn 登记与 agent 树", () => {
 	it("spawn 登记 worker 与 task，字段齐全，panelOpen 置 true", () => {
 		let state = createInitialState();
@@ -388,5 +406,81 @@ describe("reduce：approval 登记与清除", () => {
 		});
 		state = reduce(state, { seq: 2, kind: "turn", phase: "end" });
 		expect(state.pendingApproval).toBeNull();
+	});
+});
+
+describe("reduce：usage 按 tier 累计", () => {
+	it("两条不同 tier 的 assistant_msg 后 byTier 分组与 total 累加正确", () => {
+		let state = createInitialState();
+		expect(state.usage).toEqual({
+			total: { input: 0, output: 0 },
+			byTier: {},
+		});
+		state = reduce(
+			state,
+			log(
+				1,
+				assistantUsageMsg("a-1", "main", { input: 100, output: 50 }, "high"),
+			),
+		);
+		state = reduce(
+			state,
+			log(
+				2,
+				assistantUsageMsg(
+					"a-2",
+					"worker-1",
+					{ input: 40, output: 10 },
+					"medium",
+				),
+			),
+		);
+		state = reduce(
+			state,
+			log(
+				3,
+				assistantUsageMsg("a-3", "main", { input: 60, output: 30 }, "high"),
+			),
+		);
+
+		expect(state.usage.total).toEqual({ input: 200, output: 90 });
+		expect(state.usage.byTier.high).toEqual({
+			input: 160,
+			output: 80,
+			count: 2,
+		});
+		expect(state.usage.byTier.medium).toEqual({
+			input: 40,
+			output: 10,
+			count: 1,
+		});
+	});
+
+	it("tier 缺省的 assistant_msg 计入 high（与 core 缺省语义一致）", () => {
+		let state = createInitialState();
+		state = reduce(
+			state,
+			log(1, assistantUsageMsg("a-1", "main", { input: 10, output: 5 })),
+		);
+		expect(state.usage.byTier.high).toEqual({ input: 10, output: 5, count: 1 });
+		expect(state.usage.total).toEqual({ input: 10, output: 5 });
+	});
+
+	it("相同 id 的 assistant_msg 重复投递不重复累计（幂等）", () => {
+		let state = createInitialState();
+		const event = assistantUsageMsg(
+			"a-1",
+			"main",
+			{ input: 100, output: 50 },
+			"high",
+		);
+		state = reduce(state, log(1, event));
+		state = reduce(state, log(2, event)); // 同 id 不同 seq 的重复投递
+		expect(state.usage.total).toEqual({ input: 100, output: 50 });
+		expect(state.usage.byTier.high).toEqual({
+			input: 100,
+			output: 50,
+			count: 1,
+		});
 	});
 });

@@ -519,12 +519,41 @@ textarea {
 }
 
 .agent-panel-footer {
-	display: flex;
-	justify-content: space-between;
 	border-top: 1px solid var(--border);
 	color: var(--fg-dim);
 	font-size: 11px;
 	padding: 8px 12px;
+}
+
+.agent-panel-footer-label {
+	display: block;
+	margin-bottom: 4px;
+}
+
+.usage-list {
+	list-style: none;
+	margin: 0;
+	padding: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.usage-row {
+	display: flex;
+	justify-content: space-between;
+	gap: 8px;
+}
+
+.usage-row-total {
+	border-top: 1px dashed var(--border);
+	margin-top: 2px;
+	padding-top: 2px;
+	color: var(--fg);
+}
+
+.usage-tier {
+	color: var(--accent);
 }
 
 .agent-row {

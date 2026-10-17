@@ -99,10 +99,16 @@ export interface ChatState {
 	turn: "idle" | "running";
 	// agent 面板：首个 spawn 到达即展开
 	panelOpen: boolean;
-	// token 用量累计：log(assistant_msg) 时累加（含历史重放，幂等去重保证不重复计）
-	usage: { input: number; output: number };
+	// token 用量累计：log(assistant_msg) 时按 tier 分组累加
+	// （含历史重放，幂等去重保证不重复计；tier 缺省 "high"，与 core 一致）
+	usage: UsageTotals;
 	// 已见过的 log 事件 id（幂等去重）
 	seenEventIds: string[];
+}
+
+export interface UsageTotals {
+	total: { input: number; output: number };
+	byTier: Record<string, { input: number; output: number; count: number }>;
 }
 
 export function createInitialState(): ChatState {
@@ -114,8 +120,31 @@ export function createInitialState(): ChatState {
 		pendingPlan: null,
 		turn: "idle",
 		panelOpen: false,
-		usage: { input: 0, output: 0 },
+		usage: { total: { input: 0, output: 0 }, byTier: {} },
 		seenEventIds: [],
+	};
+}
+
+// 把一条 assistant_msg 的 usage 累加进 totals（按 tier 分桶）
+function accumulateUsage(
+	totals: UsageTotals,
+	usage: { input: number; output: number },
+	tier: string,
+): UsageTotals {
+	const bucket = totals.byTier[tier] ?? { input: 0, output: 0, count: 0 };
+	return {
+		total: {
+			input: totals.total.input + usage.input,
+			output: totals.total.output + usage.output,
+		},
+		byTier: {
+			...totals.byTier,
+			[tier]: {
+				input: bucket.input + usage.input,
+				output: bucket.output + usage.output,
+				count: bucket.count + 1,
+			},
+		},
 	};
 }
 
@@ -240,12 +269,9 @@ function reduceLog(state: ChatState, event: SessionEvent): ChatState {
 			};
 			return {
 				...state,
-				// 工具块落成工具卡片；usage 累计进面板用量条
+				// 工具块落成工具卡片；usage 按 tier 分桶累计进面板用量条
 				usage: event.usage
-					? {
-							input: state.usage.input + event.usage.input,
-							output: state.usage.output + event.usage.output,
-						}
+					? accumulateUsage(state.usage, event.usage, event.tier ?? "high")
 					: state.usage,
 				transcript: [...state.transcript, assistantEntry, ...toolEntries],
 				// 流式段定格：durable 消息已落 transcript，以 content 为准

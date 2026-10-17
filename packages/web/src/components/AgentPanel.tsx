@@ -5,11 +5,11 @@
 // 图片加载失败回退纯色圆点（onError 隐藏 img）。
 
 import { type ReactElement, useState } from "react";
-import type { AgentNode, AgentStatus } from "../state/reducer.ts";
+import type { AgentNode, AgentStatus, UsageTotals } from "../state/reducer.ts";
 
 interface AgentPanelProps {
 	agents: AgentNode[];
-	usage: { input: number; output: number };
+	usage: UsageTotals;
 	turn: "idle" | "running";
 	open: boolean;
 	sessionName: string;
@@ -18,6 +18,14 @@ interface AgentPanelProps {
 
 function truncate(text: string, max: number): string {
 	return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
+// token 数紧凑格式：1234 → 1.2k
+function compact(n: number): string {
+	if (n >= 1000) {
+		return `${(n / 1000).toFixed(1)}k`;
+	}
+	return String(n);
 }
 
 // 头像：加载失败回退为纯色圆点
@@ -153,11 +161,25 @@ export function AgentPanel({
 				<AgentTree agents={agents} parentId="main" depth={1} />
 			</div>
 			<div className="agent-panel-footer">
-				<span>用量</span>
-				<span>
-					in {usage.input.toLocaleString()} · out{" "}
-					{usage.output.toLocaleString()}
-				</span>
+				<span className="agent-panel-footer-label">用量</span>
+				<ul className="usage-list">
+					{Object.entries(usage.byTier).map(([tier, bucket]) => (
+						<li key={tier} className="usage-row">
+							<span className="usage-tier">{tier}</span>
+							<span>
+								in {compact(bucket.input)} · out {compact(bucket.output)} ·{" "}
+								{bucket.count} 次
+							</span>
+						</li>
+					))}
+					<li className="usage-row usage-row-total">
+						<span className="usage-tier">total</span>
+						<span>
+							in {compact(usage.total.input)} · out{" "}
+							{compact(usage.total.output)}
+						</span>
+					</li>
+				</ul>
 			</div>
 		</aside>
 	);
