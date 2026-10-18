@@ -1,7 +1,7 @@
 // 工具调用卡片：图标 + 名称 + 入参摘要（JSON 截断 200 字符）+ 输出可展开 + isError 橙标。
 
 import { ChevronDown, ChevronRight, Wrench } from "lucide-react";
-import { type ReactElement, useState } from "react";
+import { memo, type ReactElement, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -26,7 +26,8 @@ interface ToolCallCardProps {
 	result?: { content: string; isError: boolean };
 }
 
-export function ToolCallCard({
+// memo：打字机流式期间历史工具卡片跳过重渲染
+export const ToolCallCard = memo(function ToolCallCard({
 	name,
 	input,
 	result,
@@ -81,4 +82,4 @@ export function ToolCallCard({
 			)}
 		</Card>
 	);
-}
+});

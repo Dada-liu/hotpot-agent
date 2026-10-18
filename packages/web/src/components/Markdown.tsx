@@ -3,7 +3,7 @@
 // 支持：#/##/### 标题、``` 围栏代码块、`行内代码`、**粗体**、- 无序列表、段落；
 // 其余行原样输出。健壮优先：畸形输入（未闭合围栏/悬垂标记）不抛异常。
 
-import { Fragment, type ReactElement, type ReactNode } from "react";
+import { Fragment, memo, type ReactElement, type ReactNode } from "react";
 
 // 行内格式：`code` 与 **bold**，其余原样文本
 const INLINE_RE = /(`[^`]*`|\*\*[^*]*\*\*)/g;
@@ -24,7 +24,13 @@ function renderInline(text: string): ReactNode[] {
 	});
 }
 
-export function Markdown({ text }: { text: string }): ReactElement {
+// memo：流式打字期间每个 delta 都触发 ChatView 重渲染，
+// 历史消息经 memo 跳过重渲染，打字机只重绘当前流式段
+export const Markdown = memo(function Markdown({
+	text,
+}: {
+	text: string;
+}): ReactElement {
 	const lines = text.split("\n");
 	const blocks: ReactElement[] = [];
 	// 未闭合围栏也安全：吞掉剩余全部行
@@ -116,4 +122,4 @@ export function Markdown({ text }: { text: string }): ReactElement {
 	flushAll();
 
 	return <>{blocks}</>;
-}
+});
