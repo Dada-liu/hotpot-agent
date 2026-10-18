@@ -4,6 +4,7 @@ export * from "./agent/types.ts";
 export * from "./approval/audit.ts";
 export * from "./approval/chain.ts";
 export * from "./config.ts";
+export * from "./hooks.ts";
 export * from "./prompt/default-sections.ts";
 export * from "./prompt/sections.ts";
 export * from "./session/derive.ts";

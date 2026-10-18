@@ -28,6 +28,7 @@ import type { LlmAdapter, ModelInfo } from "@hotpot/ai";
 import {
 	ApprovalChain,
 	createAuditedApprovalChain,
+	createHookChain,
 	createSession,
 	discoverSkills,
 	featureEnabled,
@@ -368,6 +369,17 @@ export function createSessionManager(
 				])
 			: [];
 
+		// M4 Feature③ hooks：开关打开时构造生命周期链（配置只来自用户级 settings）；
+		// pre/post tool 由 runTurn 触发，turn_end 由 runMainTurn/runAgentInline 触发，
+		// session_start 在 runtime 装配完成后触发一次
+		const hooks = featureEnabled(settings.features, "hooks")
+			? createHookChain(settings.hooks, {
+					session: watermark.session,
+					cwd,
+					agentId: MAIN_AGENT_ID,
+				})
+			: undefined;
+
 		const baseRuntime = createRuntime({
 			session: watermark.session,
 			cwd,
@@ -380,6 +392,7 @@ export function createSessionManager(
 			skills,
 			mcpTools: mcpConnections.flatMap((c) => c.tools),
 			webSearch: settings.webSearch,
+			hooks,
 		});
 		// opts.llm 覆盖档位解析（main/worker 共用同一录制适配器）；
 		// 未注入时仅为主档位解析一次拿兜底告警（runtime 内部每回合自行解析）
@@ -403,6 +416,9 @@ export function createSessionManager(
 					}
 				: {}),
 		};
+
+		// 会话级钩子：装配完成后触发一次（attach 到已存在会话同样算一次会话开始）
+		await hooks?.run("session_start", {});
 
 		const inbox = createInbox(watermark.session, MAIN_AGENT_ID, {
 			onCancel: () => holder.currentAbort?.abort(),

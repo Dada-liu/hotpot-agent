@@ -2,6 +2,7 @@
 
 import type { FinishReason, LlmAdapter, LlmError, ModelInfo } from "@hotpot/ai";
 import type { ApprovalChain } from "../approval/chain.ts";
+import type { HookChain } from "../hooks.ts";
 import type { ModelTier } from "../session/events.ts";
 import type { Session } from "../session/store.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
@@ -24,6 +25,9 @@ export interface LoopConfig {
 	// step 边界注入钩子（M2 steer/queue）：每个 step 顶部调用一次，
 	// 返回的字符串逐条落盘为 user_msg（agentId = cfg.agentId）后进入模型历史；缺省不轮询
 	pollInbox?: () => Promise<string[]>;
+	// 生命周期钩子链（M4 hooks）：pre_tool 在工具执行前、post_tool 在执行后（含失败）触发；
+	// session_start/turn_end 由装配层与回合包装层触发。缺省不挂钩子
+	hooks?: HookChain;
 }
 
 export type AgentEvent =

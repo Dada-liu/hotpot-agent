@@ -95,17 +95,27 @@ export async function runAgentInline(
 			{ skills, todos },
 		),
 		tier,
+		hooks: runtime.hooks,
 	};
 	const failures: string[] = [];
 	let aborted = false;
+	let stopReason: string | undefined;
 	for await (const event of runTurn(cfg, signal)) {
 		if (event.type === "error") {
 			failures.push(`${event.error.code}: ${event.error.message}`);
 		}
-		if (event.type === "done" && event.stopReason === "aborted") {
-			aborted = true;
+		if (event.type === "done") {
+			stopReason = event.stopReason;
+			if (event.stopReason === "aborted") {
+				aborted = true;
+			}
 		}
 	}
+	// 每个下层 agent 的 turn 收尾触发一次 Stop 钩子（归属该 agent）
+	await runtime.hooks?.run("turn_end", {
+		agent_id: agentId,
+		stop_reason: stopReason ?? "stop",
+	});
 	const summary = await readAgentSummary(runtime.session.filePath, agentId);
 	return { summary, failures, aborted };
 }

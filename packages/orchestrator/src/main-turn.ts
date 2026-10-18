@@ -117,19 +117,33 @@ export async function* runMainTurn(opts: {
 		),
 		tier: mainTier,
 		pollInbox,
+		hooks: runtime.hooks,
+	};
+	let stopReason: string | undefined;
+	// 回合收尾钩子（Stop → turn_end）：runMainTurn 的每条出口都要触发一次
+	const endTurn = async (): Promise<void> => {
+		await runtime.hooks?.run("turn_end", {
+			agent_id: MAIN_AGENT_ID,
+			stop_reason: stopReason ?? "stop",
+		});
 	};
 	for await (const event of runTurn(cfg, signal)) {
+		if (event.type === "done") {
+			stopReason = event.stopReason;
+		}
 		yield* drainPendingSpawns();
 		yield event;
 	}
 	yield* drainPendingSpawns();
 	if (state.lastDelegate?.difficulty !== "complex") {
+		await endTurn();
 		return;
 	}
 
 	// complex 流：plan 修订/审批循环（拒绝与修订耗尽都在其中收尾并结束回合）
 	yield* runPlanPhase(turnRuntime, state, signal, opts.onPlanApproval);
 	if (!state.planApproved || signal.aborted) {
+		await endTurn();
 		return;
 	}
 
@@ -161,10 +175,15 @@ export async function* runMainTurn(opts: {
 		),
 		tier: mainTier,
 		pollInbox,
+		hooks: runtime.hooks,
 	};
 	for await (const event of runTurn(execCfg, signal)) {
+		if (event.type === "done") {
+			stopReason = event.stopReason;
+		}
 		yield* drainPendingSpawns();
 		yield event;
 	}
 	yield* drainPendingSpawns();
+	await endTurn();
 }

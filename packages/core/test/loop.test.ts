@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -14,6 +14,7 @@ import { z } from "zod";
 import { runTurn } from "../src/agent/loop.ts";
 import type { AgentEvent, LoopConfig } from "../src/agent/types.ts";
 import { ApprovalChain } from "../src/approval/chain.ts";
+import { createHookChain } from "../src/hooks.ts";
 import type { SessionEvent } from "../src/session/events.ts";
 import { createSession, loadSession } from "../src/session/store.ts";
 import { createToolRegistry } from "../src/tools/registry.ts";
@@ -727,5 +728,100 @@ describe("runTurn", () => {
 			"tool_result",
 			"assistant_msg",
 		]);
+	});
+});
+
+// M4 Feature③：hooks 与 runTurn 的接线（pre 阻断 / post 失败仍触发）
+describe("runTurn hooks 接线", () => {
+	it("PreToolUse 阻断：工具不执行、isError 结果落盘、hook/fired 记 pre_tool", async () => {
+		let executed = false;
+		const cfg = await makeConfig([
+			toolCallRound("probe", "tc-1", "{}"),
+			STOP_ROUND,
+		]);
+		// makeConfig 的缺省 cwd 是虚拟路径；hooks 以 cwd 启动子进程，改用真实临时目录
+		cfg.cwd = home;
+		cfg.registry.register({
+			name: "probe",
+			description: "probe tool",
+			parameters: z.object({}),
+			execute: async () => {
+				executed = true;
+				return { content: "ran" };
+			},
+		});
+		cfg.hooks = createHookChain(
+			{
+				PreToolUse: [
+					{
+						matcher: "probe",
+						hooks: [{ type: "command", command: "exit 7" }],
+					},
+				],
+			},
+			{ session: cfg.session, cwd: cfg.cwd, agentId: "main" },
+		);
+
+		const events = await collectTurn(cfg, new AbortController().signal);
+		expect(executed).toBe(false);
+		const result = onlyToolResult(events);
+		expect(result.output.isError).toBe(true);
+		expect(result.output.content).toContain("blocked by PreToolUse hook");
+
+		const { events: fileEvents } = await loadSession(cfg.session.filePath);
+		const fired = fileEvents.filter(
+			(e): e is Extract<SessionEvent, { type: "hook/fired" }> =>
+				e.type === "hook/fired",
+		);
+		expect(fired).toHaveLength(1);
+		expect(fired[0]).toMatchObject({
+			hook: "pre_tool",
+			exitCode: 7,
+			agentId: "main",
+		});
+	});
+
+	it("PostToolUse 在工具抛错时仍触发，payload 带 is_error=true", async () => {
+		const cfg = await makeConfig([
+			toolCallRound("boom", "tc-1", "{}"),
+			STOP_ROUND,
+		]);
+		cfg.cwd = home;
+		cfg.registry.register({
+			name: "boom",
+			description: "always throws",
+			parameters: z.object({}),
+			execute: async () => {
+				throw new Error("kaboom");
+			},
+		});
+		const payloadPath = join(home, "post-payload.json");
+		cfg.hooks = createHookChain(
+			{
+				PostToolUse: [
+					{
+						matcher: "boom",
+						hooks: [{ type: "command", command: `cat > '${payloadPath}'` }],
+					},
+				],
+			},
+			{ session: cfg.session, cwd: cfg.cwd, agentId: "main" },
+		);
+
+		const events = await collectTurn(cfg, new AbortController().signal);
+		const result = onlyToolResult(events);
+		expect(result.output.isError).toBe(true);
+		expect(result.output.content).toContain("kaboom");
+
+		const payload = JSON.parse(await readFile(payloadPath, "utf8")) as Record<
+			string,
+			unknown
+		>;
+		expect(payload).toMatchObject({
+			hook_event: "post_tool",
+			agent_id: "main",
+			tool_name: "boom",
+			is_error: true,
+		});
 	});
 });

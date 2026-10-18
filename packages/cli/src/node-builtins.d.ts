@@ -48,6 +48,7 @@ declare module "node:fs" {
 
 declare module "node:child_process" {
 	export interface HotpotChildProcess {
+		stdin: { write(data: string): unknown; end(): void } | null;
 		stdout: HotpotChildStream | null;
 		stderr: HotpotChildStream | null;
 		kill(signal?: string): boolean;
@@ -61,7 +62,7 @@ declare module "node:child_process" {
 	export function spawn(
 		command: string,
 		args: string[],
-		options?: { cwd?: string },
+		options?: { cwd?: string; env?: Record<string, string | undefined> },
 	): HotpotChildProcess;
 }
 

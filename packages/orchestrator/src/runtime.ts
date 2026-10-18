@@ -8,6 +8,7 @@
 import { randomUUID } from "node:crypto";
 import type {
 	ApprovalChain,
+	HookChain,
 	ModelTier,
 	Session,
 	SessionEvent,
@@ -49,6 +50,9 @@ export interface OrchestrationRuntime {
 	// 经 core 的 createWebSearchBackendFromConfig 解析（缺省 duckduckgo），
 	// 显式注入（webSearchBackend opt）优先，是 hermetic 测试的注入缝
 	readonly webSearchBackend?: WebSearchBackend;
+	// hooks：生命周期钩子链（M4 Feature③）；装配层按 features.hooks 门控注入，
+	// 回合包装层经 runtime.hooks 触发 session_start/turn_end，runTurn 触发 pre/post tool
+	readonly hooks?: HookChain;
 	resolveModel(tier: ModelTier): ModelResolution;
 	spawn(opts: {
 		role: AgentRole;
@@ -71,6 +75,7 @@ export function createRuntime(opts: {
 	mcpTools?: readonly ToolDefinition<unknown>[];
 	webSearch?: Settings["webSearch"];
 	webSearchBackend?: WebSearchBackend;
+	hooks?: HookChain;
 }): OrchestrationRuntime {
 	// 每个 role 一条计数链：同一 runtime 内单调递增，编号不复用
 	const counters = new Map<AgentRole, number>();
@@ -125,6 +130,7 @@ export function createRuntime(opts: {
 		mcpTools: opts.mcpTools,
 		webSearchBackend:
 			opts.webSearchBackend ?? createWebSearchBackendFromConfig(opts.webSearch),
+		hooks: opts.hooks,
 
 		resolveModel(tier: ModelTier): ModelResolution {
 			return resolveModel(opts.models[tier]);

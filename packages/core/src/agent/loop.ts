@@ -82,28 +82,51 @@ interface CallResult {
 	output: ToolOutput;
 }
 
-// 执行单个 tool call：未知工具与 execute rejection 都兜底为 isError 结果，不向上抛
+// 执行单个 tool call：未知工具与 execute rejection 都兜底为 isError 结果，不向上抛。
+// M4 hooks：pre_tool 在工具执行前触发（非零退出直接产 isError、跳过执行），
+// post_tool 在工具执行后触发（含执行失败/未知工具）；hook 先于工具内建审批，
+// 高危命令仍要过人审——hook 不替代审批。
 async function executeCall(
 	cfg: LoopConfig,
 	call: ResolvedCall,
 	ctx: ToolContext,
 ): Promise<ToolOutput> {
-	const tool = cfg.registry.get(call.name);
-	if (!tool) {
-		return { content: `unknown tool: ${call.name}`, isError: true };
-	}
-	try {
-		// Task 7（hooks）挂点：PreToolUse 在 tool.execute 之前于此触发（exit≠0 直接产
-		// isError 结果、跳过执行），PostToolUse 在 finally 里触发——先于工具内建审批
-		// （高危命令仍要过人审，hook 不替代审批），阻断与执行共用本函数的兜底语义
-		return await tool.execute(call.input, ctx);
-	} catch (err) {
-		const message = err instanceof Error ? err.message : String(err);
+	const hookBase = {
+		agent_id: ctx.agentId,
+		tool_name: call.name,
+		tool_input: call.input,
+	};
+	const pre = await cfg.hooks?.run("pre_tool", hookBase);
+	if (pre?.blocked === true) {
 		return {
-			content: `tool "${call.name}" failed: ${message}`,
+			content: `tool "${call.name}" blocked by PreToolUse hook: ${pre.output}`,
 			isError: true,
 		};
 	}
+
+	const startedAt = Date.now();
+	let output: ToolOutput;
+	const tool = cfg.registry.get(call.name);
+	if (!tool) {
+		output = { content: `unknown tool: ${call.name}`, isError: true };
+	} else {
+		try {
+			output = await tool.execute(call.input, ctx);
+		} catch (err) {
+			const message = err instanceof Error ? err.message : String(err);
+			output = {
+				content: `tool "${call.name}" failed: ${message}`,
+				isError: true,
+			};
+		}
+	}
+	await cfg.hooks?.run("post_tool", {
+		...hookBase,
+		tool_output: output.content,
+		is_error: output.isError === true,
+		duration_ms: Date.now() - startedAt,
+	});
+	return output;
 }
 
 // 同批全部 isConcurrencySafe 才 Promise.all 并行，否则按序执行；并行结果按调用顺序返回

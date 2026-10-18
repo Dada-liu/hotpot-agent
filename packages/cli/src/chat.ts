@@ -13,6 +13,7 @@ import {
 	type AgentEvent,
 	ApprovalChain,
 	createAuditedApprovalChain,
+	createHookChain,
 	createSession,
 	discoverSkills,
 	featureEnabled,
@@ -259,6 +260,17 @@ export async function runChat(opts: RunChatOptions): Promise<void> {
 			])
 		: [];
 
+	// M4 Feature③ hooks：开关（features.hooks，缺省开）打开时构造生命周期链。
+	// 配置只来自用户级 settings（项目级白名单不含 hooks）；session_start 在
+	// runtime 装配完成后触发一次，pre/post tool 由 runTurn 触发，turn_end 由回合包装层触发
+	const hooks = featureEnabled(settings.features, "hooks")
+		? createHookChain(settings.hooks, {
+				session,
+				cwd: opts.cwd,
+				agentId: "main",
+			})
+		: undefined;
+
 	const baseRuntime = createRuntime({
 		session,
 		cwd: opts.cwd,
@@ -271,6 +283,7 @@ export async function runChat(opts: RunChatOptions): Promise<void> {
 		skills,
 		mcpTools: mcpConnections.flatMap((c) => c.tools),
 		webSearch: settings.webSearch,
+		hooks,
 	});
 	// 测试注入点：opts.llm 覆盖 runtime 的档位解析（main/worker 共用同一录制适配器），
 	// 与 orchestrator 测试 makeRuntime 的展开覆盖同法。
@@ -289,6 +302,10 @@ export async function runChat(opts: RunChatOptions): Promise<void> {
 				}
 			: {}),
 	};
+
+	// 会话级钩子：runtime 装配完成后触发一次（进程内一次；CLI 与 server 各开一次会话文件
+	// 时各触发一次，属预期）。失败不阻塞 REPL——HookChain.run 自身不 reject
+	await hooks?.run("session_start", {});
 
 	// steer/queue 双队列：turn 结束后消费 next-turn（followup 补发为新用户消息）；
 	// turn 内注入走 next-step —— runMainTurn 经 pollInbox 在每个 step 顶部拉取
