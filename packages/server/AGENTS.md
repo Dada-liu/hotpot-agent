@@ -6,5 +6,6 @@
 - Dependency direction is fixed: `server → orchestrator → core → ai`. Never add a reverse edge.
 - `node-builtins.d.ts` must stay a superset of `packages/core/src/node-builtins.d.ts` (workspace source references pull core's sources into this package's compilation). Add new ambient declarations there, never `@types/node`.
 - LLM-facing prompt text is English; code comments in Simplified Chinese.
+- M4: `assemble()` also scans skills/prompt templates, connects MCP servers, and builds the hook chain (firing `session_start`). `/name args` messages are expanded in `send()` (unknown commands throw `PromptCommandError` → HTTP 400). New routes: `GET /api/sessions/:id/prompts` and `GET /api/sessions/:id/inbox`. `summarizeUsage` takes the feature flags and reports per-feature event/tool-call counts.
 - Erasable TypeScript only, `.ts` extension on relative imports, no `any`, no inline imports.
 - Verify with `pnpm test`, `pnpm typecheck`, and `pnpm exec biome check` from the repo root before committing.

@@ -172,6 +172,8 @@ interface ManagedSession {
 	mcpConnections: McpConnection[];
 	// M4 Feature⑤ prompt templates：装配时扫描（features.promptTemplates 关闭为空）
 	promptTemplates: PromptTemplate[];
+	// 功能开关快照（usage 端点报告 enabled 状态）
+	features: Settings["features"];
 	emit: (input: WireEventInput) => WireEvent;
 	syncDurable: () => Promise<void>;
 	holder: { currentAbort: AbortController | null; running: boolean };
@@ -484,6 +486,7 @@ export function createSessionManager(
 			tailer,
 			mcpConnections,
 			promptTemplates,
+			features: settings.features,
 			emit: emitLocal,
 			syncDurable: watermark.syncDurable,
 			holder,
@@ -809,7 +812,7 @@ export function createSessionManager(
 		async usage(id: string): Promise<UsageSummary> {
 			const m = requireManaged(id);
 			const { events } = await loadSession(m.filePath);
-			return summarizeUsage(events);
+			return summarizeUsage(events, m.features);
 		},
 
 		async close(id: string): Promise<void> {

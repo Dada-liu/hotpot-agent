@@ -115,6 +115,11 @@ WorkerAgent: 可并行则 spawn TaskAgent × N（上限可配，默认 10）
 {"type":"approval/asked","id":"...","ts":"...","agentId":"...","payload":{...}}
 {"type":"approval/decided","id":"...","ts":"...","requestId":"...","decision":"approved"}
 {"type":"inbox/spliced","id":"...","ts":"...","agentId":"main","queue":"next-step","messages":[...]}
+{"type":"todo/set","id":"...","ts":"...","agentId":"worker-1","todos":[{"content":"...","status":"pending"}]}
+{"type":"hook/fired","id":"...","ts":"...","agentId":"main","hook":"pre_tool","command":"...","exitCode":0,"durationMs":12}
+{"type":"skill/loaded","id":"...","ts":"...","agentId":"worker-1","skill":"commit","path":".../SKILL.md"}
+{"type":"prompt/invoked","id":"...","ts":"...","agentId":"main","name":"commit","args":"fix lint","content":"..."}
+{"type":"mcp/attached","id":"...","ts":"...","server":"fs","transport":"stdio","tools":["mcp__fs__read"]}
 {"type":"error","id":"...","ts":"...","agentId":"...","code":"...","message":"..."}
 ```
 
@@ -122,6 +127,7 @@ WorkerAgent: 可并行则 spawn TaskAgent × N（上限可配，默认 10）
 - 一个会话内所有 agent（含子 agent）写同一文件，`agentId` 区分
 - `request_header`：config + 工具 schema 快照变化时才记新条目（借鉴 dsh），支撑缓存命中分析
 - 队列变更（`inbox/spliced`）也落盘，崩溃恢复后 steering 队列不丢（借鉴 dsh）
+- M4 新增的 `todo/set`、`hook/fired`、`skill/loaded`、`prompt/invoked`、`mcp/attached` 均**不进模型历史**（`deriveMessages` 不折叠）：todo 由 `foldTodos` 重建清单并注入提示词段，其余供审计与遥测计数
 - 崩溃最多丢最后一行；关键事件写入后 fsync
 
 ## 6. 配置体系
@@ -134,7 +140,9 @@ WorkerAgent: 可并行则 spawn TaskAgent × N（上限可配，默认 10）
 ~/.hotpot/
 ├── settings.json     # 主配置（含模型与凭证）
 ├── sessions/         # 会话日志
-└── memory/           # 用户记忆（M4）
+├── skills/           # M4 skill（<name>/SKILL.md）
+├── prompts/          # M4 prompt templates（<name>.md → /命令）
+└── memory/           # 用户记忆（M4 后续项）
 ```
 
 **项目级 `./.hotpot/`**（自 cwd 向上逐级查找，首个含 `settings.json` 的目录生效）：
@@ -153,9 +161,15 @@ WorkerAgent: 可并行则 spawn TaskAgent × N（上限可配，默认 10）
 | **maxParallelTasks** | **10** | 用户级+项目级 | 并行 TaskAgent 上限 |
 | **planMaxRevisions** | **3** | 用户级+项目级 | plan 审批修订轮次上限 |
 | approval.policy | ask-on-dangerous | 用户级+项目级 | 高危命令确认策略 |
+| features.* | 全开 | 仅用户级 | M4 功能开关：todo/hooks/skills/promptTemplates/webSearch/webFetch/mcp |
+| hooks | 无 | 仅用户级 | Claude Code 钩子格式（SessionStart/PreToolUse/PostToolUse/Stop） |
+| webSearch | duckduckgo | 仅用户级 | web_search 后端（duckduckgo 或 custom + baseUrl/apiKey/headers） |
+| mcpServers | 无 | 仅用户级 | MCP server：stdio（command/args/env）或 streamable HTTP（url/headers） |
+| skillsDirs | [] | 仅用户级 | 额外 skill 扫描目录（相对 cwd） |
+| promptsDirs | [] | 仅用户级 | 额外 prompt template 扫描目录（相对 cwd） |
 | telemetry.enabled | true | 用户级 | 本地遥测开关（M5） |
 
-项目级可覆盖白名单：`mainAgentTier`、`maxParallelTasks`、`planMaxRevisions`、`approval.policy`；其余字段（含 models）一律忽略。凭证只从用户级读取，规避恶意仓库注入风险（M4 再考虑 pi 式 project trust 提示）。
+项目级可覆盖白名单：`mainAgentTier`、`maxParallelTasks`、`planMaxRevisions`、`approval.policy`；其余字段（含 models）一律忽略。凭证只从用户级读取，规避恶意仓库注入风险（M4 再考虑 pi 式 project trust 提示）。M4 新增字段（features/hooks/webSearch/mcpServers/skillsDirs/promptsDirs）一律仅用户级：hooks/mcpServers 涉及任意命令执行，项目级注入即 RCE；扫描目录与外发流量同理。
 
 ## 7. 从 pi / dsh 借鉴的设计（汇总）
 

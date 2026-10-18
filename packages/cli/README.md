@@ -27,3 +27,11 @@
 - 配置经 `@hotpot/core` 的 `loadSettings({ cwd })` 双层读取：用户级 `~/.hotpot/settings.json`（`HOTPOT_HOME` 可覆盖，三档模型与凭证必填）+ 项目级 `.hotpot/settings.json`（自 cwd 向上查找、可选，只覆盖非凭证白名单字段）；真实适配器由 `@hotpot/orchestrator` 的 `resolveModel` 按 `ModelRef` 的 provider→api 映射选择，未知模型按 provider 名推断协议并告警（contextWindow 取 128000）。
 
 当前状态：M2 编排接入已完成（Task 11）：`runChat` 主干走 `runMainTurn`，plan 终端审批见 `src/plan-approval.ts`，测试（含 M1 验收场景的编排流迁移版）见 `test/`。
+
+## M4 增量
+
+- **prompt templates**：启动时扫描 `settings.promptsDirs` + `<home>/prompts` + `<cwd>/.hotpot/prompts`；输入 `/name args` 命中模板则展开（`$ARGUMENTS`/`$1..$9`）、落 `prompt/invoked` 再跑回合；未知 `/` 命令提示可用列表。`features.promptTemplates` 关闭时 `/` 按普通消息处理。
+- **hooks**：按用户级 `settings.hooks`（Claude Code 格式）构造生命周期链，装配完成触发 `session_start`；pre/post tool 与 turn_end 由 core/orchestrator 触发。
+- **skill**：启动扫描 `<home>/skills`、`<cwd>/.hotpot/skills` 与 `skillsDirs`，清单注入三角色提示词（渐进式，模型按需 read）。
+- **MCP**：按 `settings.mcpServers` 连接（stdio/HTTP），`[mcp] attached: ...` 提示，工具桥接为 `mcp__<server>__<tool>`；退出时关闭连接。
+- **todo / web 工具**：由 orchestrator 按 `features.*` 注入 worker/task，CLI 无需额外接线。

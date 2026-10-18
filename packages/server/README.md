@@ -26,6 +26,14 @@ M3 服务层：在 cli 与 orchestrator 之上提供 REST + SSE API，负责会�
 - **REST + SSE 路由**（`src/app.ts`）：全部路由挂 `/api/sessions*`；`GET /:id` 与 `events`（SSE）等单会话路由经共享的 `requireSession` 解析——内存 managed 表未命中时降级 `attachById` 恢复磁盘会话（CLI 创建的会话同样可打开），attach 也未命中才 404。
 - **`hotpot-server` bin**（`src/bin.ts`）：装配 SessionManager + Hono app，经 `@hono/node-server` 监听（端口取 `HOTPOT_PORT`，缺省 4573）；启动时挂载静态托管，`HOTPOT_WEB_DIST`/`HOTPOT_PUBLIC_DIR` 可覆盖默认目录，目录不存在则纯 API 模式。
 
+## M4 增量
+
+- **装配扩展**：`assemble()` 按 `settings.features` 装配 M4 能力——扫描 skill / prompt template 目录、连接 MCP server（成功落 `mcp/attached`）、构造 hooks 链并触发一次 `session_start`；功能开关、`webSearch` 后端与附件配置全部经 `createRuntime` 透传。
+- **prompt templates**：`send()` 对 `/name args` 统一展开并落 `prompt/invoked`；未知命令抛 `PromptCommandError`，REST 转 400（消息不进入回合）。
+- **新增路由**：`GET /api/sessions/:id/prompts`（`/` 补全列表）、`GET /api/sessions/:id/inbox`（steer/queue 两队列快照）。
+- **usage 扩展**：`summarizeUsage(events, features)` 增加 `features` 段（todo/hooks/skills/promptTemplates/webSearch/webFetch/mcp 的开关 + 事件/工具调用计数），满足 M4 遥测验收；M5 报表直接消费。
+- **hooks 生命周期**：`session_start` 在装配完成时触发；pre/post tool 与 turn_end 由 core / orchestrator 的回合路径触发，server 只负责装配与关闭。
+
 ## 目录
 
 ```

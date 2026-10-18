@@ -43,6 +43,14 @@
 - **steer/queue 双队列 `createInbox`**：next-turn（followup，turn 结束后消费补发）与 next-step（steer/inject，经 `LoopConfig.pollInbox` 在 step 顶部注入模型历史）双队列；`inbox/spliced` 事件落盘 + `foldInbox` 纯函数崩溃恢复。`createInbox` 支持 `seed` 从 `foldInbox` 结果播种恢复两队列（不追加新快照）。`runMainTurn` 接受可选 `inbox` 接线注入；缺省不轮询。
 - **分层 usage 记账依据**：worker/task 经 `runtime.resolveModel(tier)` 走自己的档位模型，core 把 tier/model/agentId 落盘进 assistant_msg（`packages/orchestrator/test/m2-acceptance.test.ts` 验收 4 钉住）。
 
+## M4 增量
+
+- **注册表按 runtime 派生**：`createRoleRegistry(runtime, role, metaTools)` 统一装配。worker/task 按 `features.*` 并入 todo、web_fetch、web_search、MCP 工具；main 永远只有元工具。`decorateWorkerTool`（policy=always 预审批）仍只作用于四件套基础工具。
+- **todo**：`features.todo` 开时 worker/task 注册 todo 工具；`runAgentInline` 构建 prompt 前 `foldTodos`，把该 agent 的清单段（order 1500）注入系统提示词。
+- **skill**：装配层扫描出的清单经 `runtime.skills` 注入三角色 prompt（order 1400，只给 name/description/path）；worker/task 的 read 工具包一层追踪，命中 SKILL.md 时落 `skill/loaded`（每会话每文件一次）。
+- **hooks**：`runtime.hooks` 贯穿 main/worker/task 的 `LoopConfig`；`executeCall` 触发 pre/post tool，`runMainTurn` 与 `runAgentInline` 在回合收尾触发 turn_end，CLI/server 装配时触发 session_start。
+- **web 工具**：`runtime.webSearchBackend` 依 `settings.webSearch` 解析（duckduckgo 缺省，可换 custom）；`features.webFetch`/`features.webSearch` 分别门控注册。
+
 ## 已知边界（留待后续里程碑）
 
 - worker/task 内联 turn 的事件仍不透出主流：CLI 只能渲染 main 事件流与 spawn 标记行；子 agent 的过程事件全量落盘会话日志，经 server tailer 补发可在 web 端右侧面板实时观察（M3）。

@@ -17,6 +17,11 @@ export interface UsageSummary {
 	total: { input: number; output: number };
 	byTier: Record<string, { input: number; output: number; count: number }>;
 	byAgent: Record<string, { input: number; output: number }>;
+	// M4 功能用量（开关 + 事件/工具调用计数）
+	features: Record<
+		string,
+		{ enabled: boolean; events: number; toolCalls: number }
+	>;
 }
 
 // GET /api/sessions/:id/prompts 的响应项（M4 prompt templates）
