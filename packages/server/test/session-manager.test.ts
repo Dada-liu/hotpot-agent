@@ -14,6 +14,11 @@ import {
 	type Usage,
 } from "@hotpot/ai";
 import { loadSession, type SessionEvent, type Settings } from "@hotpot/core";
+import type {
+	McpClientFactory,
+	McpClientHandle,
+	McpToolCallResult,
+} from "@hotpot/orchestrator";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createSessionManager } from "../src/session-manager.ts";
 import type { WireEvent } from "../src/wire.ts";
@@ -43,9 +48,14 @@ const MODEL: ModelInfo = {
 };
 
 // 用户级 settings 夹具：三档指向不存在的 provider（resolveModel 会兜底并给 warning，
-// 但本测试一律注入 llm，不真正解析）；approval.policy 按场景传入
+// 但本测试一律注入 llm，不真正解析）；approval.policy 按场景传入；
+// extra 可带 mcpServers/features（MCP 挂载用例）
 async function writeSettings(
 	policy?: "ask-on-dangerous" | "always" | "never",
+	extra?: {
+		mcpServers?: Settings["mcpServers"];
+		features?: Settings["features"];
+	},
 ): Promise<void> {
 	const settings: Settings = {
 		models: {
@@ -54,6 +64,10 @@ async function writeSettings(
 			low: { provider: "test-provider", model: "test-low", apiKey: "lk" },
 		},
 		...(policy === undefined ? {} : { approval: { policy } }),
+		...(extra?.mcpServers === undefined
+			? {}
+			: { mcpServers: extra.mcpServers }),
+		...(extra?.features === undefined ? {} : { features: extra.features }),
 	};
 	await writeFile(
 		join(home, "settings.json"),
@@ -497,5 +511,197 @@ describe("createSessionManager", () => {
 		expect(usage.byTier.low).toEqual({ input: 2100, output: 420, count: 2 });
 		expect(usage.byAgent.main).toEqual({ input: 220, output: 50 });
 		expect(usage.byAgent["worker-1"]).toEqual({ input: 2100, output: 420 });
+	});
+});
+
+// ---- M4 Feature⑦ MCP 挂载 ----
+// 连接层全部打桩（mcpCreateClient 注入 stub client），不触真实 MCP server；
+// 钉死：装配期 attach + mcp/attached 落盘、失败 server 不阻塞、开关关闭不连接、
+// 桥接工具经 runtime.mcpTools 进 worker 注册表并可被回合真实调用
+
+interface StubMcpClient extends McpClientHandle {
+	calls: { name: string; args: unknown }[];
+	closeCalls: number;
+}
+
+function mcpStubClient(
+	tools: { name: string; description?: string; inputSchema?: unknown }[],
+	callImpl?: (name: string, args: unknown) => Promise<McpToolCallResult>,
+): StubMcpClient {
+	const client: StubMcpClient = {
+		calls: [],
+		closeCalls: 0,
+		async listTools() {
+			return tools;
+		},
+		async callTool(name, args) {
+			client.calls.push({ name, args });
+			return callImpl
+				? callImpl(name, args)
+				: { content: [{ type: "text", text: "pong" }] };
+		},
+		async close() {
+			client.closeCalls += 1;
+		},
+	};
+	return client;
+}
+
+describe("MCP 挂载（mcpServers 配置）", () => {
+	it("attach 成功逐个落盘 mcp/attached（server/transport/桥接工具名），close 关闭连接", async () => {
+		await writeSettings("never", {
+			mcpServers: {
+				demo: { command: "demo-cmd", args: ["--fast"] },
+				web: {
+					url: "https://mcp.example.com/mcp",
+					headers: { authorization: "Bearer t" },
+				},
+			},
+		});
+		const clients = new Map<string, StubMcpClient>();
+		const factory: McpClientFactory = async (name) => {
+			const client = mcpStubClient([
+				{
+					name: `t-${name}`,
+					description: `tool of ${name}`,
+					inputSchema: { type: "object" },
+				},
+			]);
+			clients.set(name, client);
+			return client;
+		};
+		const sm = createSessionManager({
+			home,
+			llm: { adapter: scriptedAdapter([]), model: MODEL },
+			mcpCreateClient: factory,
+		});
+		const rec = await sm.create(proj);
+
+		const { events: fileEvents } = await loadSession(rec.filePath);
+		const attached = fileEvents.filter(
+			(e): e is Extract<SessionEvent, { type: "mcp/attached" }> =>
+				e.type === "mcp/attached",
+		);
+		expect(attached.map((a) => a.server)).toEqual(["demo", "web"]);
+		expect(attached[0]).toMatchObject({
+			transport: "stdio",
+			tools: ["mcp__demo__t-demo"],
+		});
+		expect(attached[1]).toMatchObject({
+			transport: "http",
+			tools: ["mcp__web__t-web"],
+		});
+
+		await sm.close(rec.id);
+		expect(clients.get("demo")?.closeCalls).toBe(1);
+		expect(clients.get("web")?.closeCalls).toBe(1);
+	});
+
+	it("失败 server warn + 跳过，成功 server 仍 attach，装配不阻塞", async () => {
+		await writeSettings("never", {
+			mcpServers: {
+				bad: { command: "bad-cmd" },
+				good: { command: "good-cmd" },
+			},
+		});
+		const warnings: string[] = [];
+		const factory: McpClientFactory = async (name) => {
+			if (name === "bad") {
+				throw new Error("spawn failed");
+			}
+			return mcpStubClient([{ name: "up" }]);
+		};
+		const sm = createSessionManager({
+			home,
+			llm: { adapter: scriptedAdapter([]), model: MODEL },
+			warn: (t) => warnings.push(t),
+			mcpCreateClient: factory,
+		});
+		const rec = await sm.create(proj);
+		// 失败 server 不阻塞：会话正常建立、好 server 落盘
+		expect(sm.get(rec.id)?.filePath).toBe(rec.filePath);
+		const { events: fileEvents } = await loadSession(rec.filePath);
+		const attached = fileEvents.filter(
+			(e): e is Extract<SessionEvent, { type: "mcp/attached" }> =>
+				e.type === "mcp/attached",
+		);
+		expect(attached.map((a) => a.server)).toEqual(["good"]);
+		expect(warnings).toHaveLength(1);
+		expect(warnings[0]).toContain('"bad"');
+		expect(warnings[0]).toContain("spawn failed");
+		await sm.close(rec.id);
+	});
+
+	it("features.mcp=false：不连接（工厂不被调用），无 mcp/attached 事件", async () => {
+		await writeSettings("never", {
+			features: { mcp: false },
+			mcpServers: { demo: { command: "demo-cmd" } },
+		});
+		let factoryCalls = 0;
+		const factory: McpClientFactory = async () => {
+			factoryCalls += 1;
+			return mcpStubClient([{ name: "x" }]);
+		};
+		const sm = createSessionManager({
+			home,
+			llm: { adapter: scriptedAdapter([]), model: MODEL },
+			mcpCreateClient: factory,
+		});
+		const rec = await sm.create(proj);
+		expect(factoryCalls).toBe(0);
+		const { events: fileEvents } = await loadSession(rec.filePath);
+		expect(fileEvents.some((e) => e.type === "mcp/attached")).toBe(false);
+		await sm.close(rec.id);
+	});
+
+	it("桥接工具进 worker 注册表：回合内经 mcp__<server>__<tool> 真实调用 stub", async () => {
+		await writeSettings("never", {
+			mcpServers: { demo: { command: "demo-cmd" } },
+		});
+		const demoClient = mcpStubClient([
+			{
+				name: "ping",
+				description: "ping the demo server",
+				inputSchema: {
+					type: "object",
+					properties: { target: { type: "string" } },
+					required: ["target"],
+				},
+			},
+		]);
+		const adapter = scriptedAdapter([
+			delegateRound(
+				'{"difficulty":"simple","modelTier":"low","task":"用 ping 工具探测 demo"}',
+			),
+			toolCallRound("mcp__demo__ping", "w-tc-1", '{"target":"demo"}'),
+			textRound("pong 已收到。", { input: 20, output: 5 }),
+			textRound("worker 已用 ping 完成探测。", { input: 30, output: 8 }),
+		]);
+		const sm = createSessionManager({
+			home,
+			llm: { adapter, model: MODEL },
+			mcpCreateClient: async () => demoClient,
+		});
+		const rec = await sm.create(proj);
+		const { events, sink } = makeSink();
+		sm.subscribe(rec.id, null, sink);
+
+		await sm.send(rec.id, "探测 demo");
+		await waitFor(() => events.some(isTurnEnd));
+
+		// stub 收到的是 MCP 原始工具名 + parse 后的入参；结果落盘为 worker 的 tool_result
+		expect(demoClient.calls).toEqual([
+			{ name: "ping", args: { target: "demo" } },
+		]);
+		const results = logEvents(events, "tool_result");
+		expect(
+			results.some(
+				(e) =>
+					e.type === "tool_result" &&
+					e.agentId === "worker-1" &&
+					e.content === "pong",
+			),
+		).toBe(true);
+		await sm.close(rec.id);
 	});
 });

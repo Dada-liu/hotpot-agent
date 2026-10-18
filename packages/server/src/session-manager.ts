@@ -6,6 +6,9 @@
 //   的等价重写，cli 包不可导入）
 // - createRuntime + opts.llm 覆盖 resolveModel（scriptedAdapter 测试注入，同 chat.ts）
 // - createInbox(session, "main", {onCancel, seed})；onPlanApproval 走桥的 registerPlanAsk
+// - M4 Feature⑦ MCP：开关打开且 settings.mcpServers 非空时 connectMcpServers 建连，
+//   工具经 mcpTools 注入 runtime；mcp/attached 经 watermark.session 落盘；
+//   mcpCreateClient 为测试注入缝；manager.close 里 closeMcpConnections 统一关闭
 //
 // 事件转发架构规则（计划级决策）：
 // - durable 事件只由 tailer 产出一条路径：迭代器收到的 tool_call/tool_result/
@@ -19,11 +22,13 @@
 // seq 在 emit 时刻分配；订阅时重放先于 live 到达（重放在注册回调前同步完成），
 // live 事件按 seq 序推送——每订阅者的 FIFO 序由单线程同步交付天然保证。
 
+import { randomUUID } from "node:crypto";
 import type { LlmAdapter, ModelInfo } from "@hotpot/ai";
 import {
 	ApprovalChain,
 	createAuditedApprovalChain,
 	createSession,
+	featureEnabled,
 	type InboxMessage,
 	listSessions,
 	loadSession,
@@ -37,11 +42,15 @@ import {
 	type ToolDefinition,
 } from "@hotpot/core";
 import {
+	closeMcpConnections,
+	connectMcpServers,
 	createInbox,
 	createRuntime,
 	foldInbox,
 	type Inbox,
 	type InboxState,
+	type McpClientFactory,
+	type McpConnection,
 	type OrchestrationRuntime,
 	type PlanDecision,
 	resolveModel,
@@ -79,6 +88,8 @@ export interface SessionManagerOptions {
 	llm?: { adapter: LlmAdapter; model: ModelInfo };
 	// 未知模型兜底等告警通道；缺省静默
 	warn?: (text: string) => void;
+	// 测试注入点：MCP 连接层打桩（缺省走真实 SDK client），配 mcpServers 配置做 attach 用例
+	mcpCreateClient?: McpClientFactory;
 }
 
 export interface SessionManager {
@@ -129,6 +140,8 @@ interface ManagedSession {
 	inbox: Inbox;
 	runtime: OrchestrationRuntime;
 	tailer: Tailer;
+	// M4 Feature⑦ MCP：本会话挂载的 MCP 连接（close 时统一关闭）
+	mcpConnections: McpConnection[];
 	emit: (input: WireEventInput) => WireEvent;
 	syncDurable: () => Promise<void>;
 	holder: { currentAbort: AbortController | null; running: boolean };
@@ -309,6 +322,37 @@ export function createSessionManager(
 							: withApproval(tool, tool.name === "bash" ? "command" : "write")
 				: undefined;
 
+		// M4 Feature⑦ MCP：开关（features.mcp，缺省开）打开且配置了 server 才连接。
+		// 单 server 失败由 connectMcpServers 内部告警跳过，不阻塞装配；连接成功逐个经
+		// watermark.session 落盘 mcp/attached（此时 tailer 未 start，初始补读会把它与
+		// 历史事件一起交付，markBaseline 清计数，无水位悬挂）。mcpCreateClient 为测试注入缝
+		const mcpConnections: McpConnection[] = [];
+		if (
+			featureEnabled(settings.features, "mcp") &&
+			settings.mcpServers !== undefined &&
+			Object.keys(settings.mcpServers).length > 0
+		) {
+			mcpConnections.push(
+				...(await connectMcpServers(settings.mcpServers, {
+					cwd,
+					warn,
+					...(opts.mcpCreateClient === undefined
+						? {}
+						: { createClient: opts.mcpCreateClient }),
+				})),
+			);
+			for (const conn of mcpConnections) {
+				await watermark.session.append({
+					type: "mcp/attached",
+					id: randomUUID(),
+					ts: new Date().toISOString(),
+					server: conn.name,
+					transport: conn.transport,
+					tools: conn.tools.map((t) => t.name),
+				});
+			}
+		}
+
 		const baseRuntime = createRuntime({
 			session: watermark.session,
 			cwd,
@@ -317,6 +361,8 @@ export function createSessionManager(
 			maxParallelTasks: settings.maxParallelTasks,
 			planMaxRevisions: settings.planMaxRevisions,
 			decorateWorkerTool,
+			features: settings.features,
+			mcpTools: mcpConnections.flatMap((c) => c.tools),
 		});
 		// opts.llm 覆盖档位解析（main/worker 共用同一录制适配器）；
 		// 未注入时仅为主档位解析一次拿兜底告警（runtime 内部每回合自行解析）
@@ -368,6 +414,7 @@ export function createSessionManager(
 			inbox,
 			runtime,
 			tailer,
+			mcpConnections,
 			emit: emitLocal,
 			syncDurable: watermark.syncDurable,
 			holder,
@@ -667,7 +714,10 @@ export function createSessionManager(
 				}
 			}
 			m.tailer.stop();
+			// managed 同步摘除保持旧行为（close 不 await 时 get 立即为 null）；
+			// MCP 连接关闭是异步收尾，放最后不阻塞摘除
 			managed.delete(id);
+			await closeMcpConnections(m.mcpConnections);
 		},
 	};
 }
