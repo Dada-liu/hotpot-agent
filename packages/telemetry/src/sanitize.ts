@@ -69,11 +69,20 @@ export function sanitizeErrorMessage(
 	}
 }
 
+// 只有 Web scheme 允许保留 host + pathname；其余 scheme（file、vscode、ssh 等）的
+// host 或 pathname 可能直接是本机绝对路径或仓库名，必须整体替换为 <path>。
+const WEB_SCHEMES = new Set(["http:", "https:", "ws:", "wss:"]);
+
 function normalizeUrl(raw: string): string {
 	try {
 		const url = new URL(raw);
-		// file: URL 的 pathname 就是本机绝对路径，不能保留
-		if (url.protocol === "file:") {
+		// host 为空（如 error:///Users/x）或为 file（如 vscode://file/Users/x）时，
+		// pathname 就是本机绝对路径，不能保留
+		if (
+			!WEB_SCHEMES.has(url.protocol) ||
+			url.host === "" ||
+			url.host === "file"
+		) {
 			return "<path>";
 		}
 		return `${url.protocol}//${url.host}${url.pathname}`;
