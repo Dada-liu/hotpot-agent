@@ -119,7 +119,7 @@ M5 拆成两条独立工作流：工具侧遥测客户端（M5.1，本仓库，�
 
 #### Lite 10 题验收状态（2026-10-19，macmini）
 
-macmini 环境：Node v24.21.0（fnm）、pnpm 10.33.0、Python 3.12.15（uv）、swebench 5.0.2、Docker Desktop 4.95 / Engine 29.8.2（VM 8GB 内存）。仓库同步后 `pnpm install` 与 `pnpm test` 通过（64 个测试文件 / 539 条用例）。
+macmini 环境：Node v24.21.0（fnm）、pnpm 10.33.0、Python 3.12.15（uv）、swebench 5.0.2、Docker Desktop 4.95 / Engine 29.8.2（VM 8GB 内存）。仓库同步后 `pnpm install` 通过；`pnpm test --maxWorkers=4` 64 个测试文件 / 539 条用例全部通过（默认 64 worker 并发在 macmini 上会触发 orchestrator `spawn-tasks` 的既有计时 flake，单文件重跑通过）。
 
 已完成的操作性预检：
 
