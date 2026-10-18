@@ -1,3 +1,4 @@
+import { chmodSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -65,5 +66,34 @@ describe("loadOrCreateInstallId", () => {
 		expect(loadOrCreateInstallId({ home })).toBe(
 			loadOrCreateInstallId({ home, kind: "user" }),
 		);
+	});
+
+	it("returns a fresh UUID instead of throwing when the home is read-only", async () => {
+		const home = await makeHome();
+		chmodSync(home, 0o500);
+		try {
+			let id = "";
+			expect(() => {
+				id = loadOrCreateInstallId({ home, kind: "user" });
+			}).not.toThrow();
+			expect(id).toMatch(/^[0-9a-f-]{36}$/);
+			// 写不进去就不落盘，但绝不能因此拒绝服务
+			await expect(
+				readFile(join(home, "telemetry", "install-id"), "utf8"),
+			).rejects.toThrow();
+		} finally {
+			chmodSync(home, 0o700);
+		}
+	});
+
+	it("returns the persisted UUID when the home is read-only", async () => {
+		const home = await makeHome();
+		const id = loadOrCreateInstallId({ home, kind: "user" });
+		chmodSync(home, 0o500);
+		try {
+			expect(loadOrCreateInstallId({ home, kind: "user" })).toBe(id);
+		} finally {
+			chmodSync(home, 0o700);
+		}
 	});
 });

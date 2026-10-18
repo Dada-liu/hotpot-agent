@@ -55,6 +55,7 @@ declare module "node:fs" {
 		path: string,
 		options?: { recursive?: boolean },
 	): string | undefined;
+	export function chmodSync(path: string, mode: number): void;
 }
 
 declare module "node:child_process" {

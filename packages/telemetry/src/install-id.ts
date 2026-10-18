@@ -34,8 +34,12 @@ export function loadOrCreateInstallId(
 	}
 
 	const installId = randomUUID();
-	mkdirSync(dir, { recursive: true });
-	writeFileSync(path, installId, "utf8");
+	try {
+		mkdirSync(dir, { recursive: true });
+		writeFileSync(path, installId, "utf8");
+	} catch {
+		// 遥测绝不阻塞调用方：目录只读、磁盘满等情况退化为“不落盘”，本次仍返回生成的 ID
+	}
 	return installId;
 }
 
