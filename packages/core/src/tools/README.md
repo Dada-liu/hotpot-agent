@@ -1,5 +1,7 @@
 # src/tools/
 
+`index.ts` 是本特性的对外出口；内部文件之间按具体路径导入。
+
 工具框架：`ToolDefinition` 定义工具（参数为 zod schema），`ToolRegistry` 负责注册、擦除泛型、产出 LLM 所需的 `ToolDeclaration`。
 
 - `tool.ts` — `ToolDefinition<T>` / `ToolOutput` / `ToolContext`。泛型 T 与 `parameters: z.ZodType<T>` 绑定；`ToolContext` 携带 cwd、`AbortSignal`、`ApprovalChain` 与 M4 新增的 `agentId`/`session`（工具落盘功能事件的归属与通道）。

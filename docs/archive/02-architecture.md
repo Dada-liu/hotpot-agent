@@ -78,6 +78,48 @@
 - 最小可用：直接对话、恢复会话、审批交互
 - 不引入自研 TUI 库（pi 自研 TUI 是一个包的工作量，过重）；M1 用行式交互即可
 
+## 3.1 模块目录约定（core / orchestrator）
+
+`packages/core` 与 `packages/orchestrator` 的 `src/` 采用「一个特性一个子文件夹」：
+
+- 特性文件夹自带 `index.ts`（该特性的对外 barrel）、实现文件、`README.md`（中文）与 `AGENTS.md`（英文）。
+- `src/` 根目录只保留包入口 `index.ts` 与 `node-builtins.d.ts`；包入口只做 re-export，不写逻辑。
+- 跨特性调用按具体文件路径导入，不互相引用特性 `index.ts`，避免 barrel 循环依赖。
+- 包对外 API 保持不变，接入层（cli/server/web）仍从 `@hotpot/core` / `@hotpot/orchestrator` 根入口导入。
+
+```text
+packages/core/src/
+├── index.ts                 # 包入口，仅 re-export
+├── node-builtins.d.ts
+├── agent/                   # turn/step 循环
+├── approval/                # 审批 waterfall 与审计包装
+├── config/                  # 双层 settings 加载
+├── frontmatter/             # 最小 frontmatter 解析（skill / prompt template 共用）
+├── hooks/                   # 生命周期钩子链
+├── prompt/                  # 系统提示词 section 注册表
+├── prompt-templates/        # prompts/*.md → /命令
+├── session/                 # 事件日志、derive、todo 折叠
+├── skills/                  # SKILL.md 发现
+└── tools/                   # 工具框架与 bash/read/write/edit/todo/web 工具
+```
+
+```text
+packages/orchestrator/src/
+├── index.ts                 # 包入口，仅 re-export
+├── node-builtins.d.ts
+├── inbox/                   # steer/queue 双队列
+├── json-schema-to-zod/      # MCP inputSchema 子集转换
+├── main-turn/               # runMainTurn 主流入口
+├── mcp/                     # MCP 客户端桥接
+├── models/                  # 档位模型解析
+├── plan/                    # plan 审批与修订循环
+├── prompts/                 # 三角色系统提示词
+├── registries/              # 角色工具注册表
+├── runtime/                 # 编排运行时（spawn / resolveModel）
+├── types/                   # 角色与编排事件类型
+└── tools/                   # delegate / spawn_workers / spawn_tasks / run-worker
+```
+
 ## 4. 关键数据流：一次用户消息
 
 ```

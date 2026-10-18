@@ -10,7 +10,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { z } from "zod";
-import { resolveHome } from "./session/store.ts";
+import { resolveHome } from "../session/store.ts";
 
 const modelRefSchema = z.object({
 	provider: z.string().min(1),

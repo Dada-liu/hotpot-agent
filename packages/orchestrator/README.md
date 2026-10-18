@@ -7,25 +7,25 @@
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
 │ 【主流与 plan】                                                             │
-│   main-turn.ts  runMainTurn：主流入口，透传全部事件                         │
-│   plan.ts       runPlanPhase：plan 复用 / 起草 / 审批 / 修订循环           │
+│   main-turn/  runMainTurn：主流入口，透传全部事件                           │
+│   plan/       runPlanPhase：plan 复用 / 起草 / 审批 / 修订循环              │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ 【元工具】                                                                  │
-│   delegate.ts        难度判定与派发（trivial / simple / complex）           │
-│   spawn-workers.ts   按档位 spawn worker 并聚合摘要                         │
-│   spawn-tasks.ts     worker 内并行原子任务（并发池，默认 10）               │
-│   run-worker.ts      worker / task 内联跑 core runTurn                      │
+│   tools/delegate.ts        难度判定与派发（trivial / simple / complex）     │
+│   tools/spawn-workers.ts   按档位 spawn worker 并聚合摘要                   │
+│   tools/spawn-tasks.ts     worker 内并行原子任务（并发池，默认 10）         │
+│   tools/run-worker.ts      worker / task 内联跑 core runTurn                │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ 【运行时与角色】                                                            │
-│   runtime.ts    createRuntime：spawn 落盘、resolveModel、decorateWorkerTool │
-│   models.ts     provider→api 映射                                           │
-│   registries.ts main / worker / task 角色工具注册表                         │
-│   prompts.ts    角色系统提示词（英文）                                      │
+│   runtime/      createRuntime：spawn 落盘、resolveModel、decorateWorkerTool │
+│   models/       provider→api 映射                                           │
+│   registries/   main / worker / task 角色工具注册表                         │
+│   prompts/      角色系统提示词（英文）                                      │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │ 【基础设施】                                                                │
-│   inbox.ts  steer/queue 双队列 + foldInbox 崩溃恢复                         │
-│   mcp.ts    MCP 客户端桥接（stdio / streamable HTTP → 注册表工具）          │
-│   types.ts  AgentRole / OrchestrationEvent                                  │
+│   inbox/  steer/queue 双队列 + foldInbox 崩溃恢复                           │
+│   mcp/    MCP 客户端桥接（stdio / streamable HTTP → 注册表工具）            │
+│   types/  AgentRole / OrchestrationEvent                                    │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -59,15 +59,15 @@
 ## 测试
 
 - `test/m2-acceptance.test.ts`：M2 验收 1-5 场景级串联（全部从 `runMainTurn` 入口跑完整流）+ pollInbox 接线用例。
-- 单点行为见 `main-turn.test.ts`（delegate 主流）、`plan-flow.test.ts`（plan 审批流）、`spawn-tasks.test.ts`（并行调度/失败上报/abort）、`inbox.test.ts`、`runtime.test.ts`、`registries.ts`。
+- 单点行为见 `main-turn.test.ts`（delegate 主流）、`plan-flow.test.ts`（plan 审批流）、`spawn-tasks.test.ts`（并行调度/失败上报/abort）、`inbox.test.ts`、`runtime.test.ts`、`registries.test.ts`。
 
 ## MCP 支持（M4 Feature⑦）
 
-`mcp.ts` 把 `settings.mcpServers` 配置的 MCP server 桥接为编排工具：
+`mcp/mcp.ts` 把 `settings.mcpServers` 配置的 MCP server 桥接为编排工具：
 
 - **传输**：stdio（`command`/`args`/`env`，SDK `StdioClientTransport` 起子进程，stderr 走 inherit 便于排障）与 streamable HTTP（`url`/`headers` 经 `requestInit` 传入，`StreamableHTTPClientTransport`）。
 - **连接**：`connectMcpServers` 逐 server try/catch，单 server 失败 warn + 跳过，不阻塞其余装配；连接超时缺省 30s（`MCP_CONNECT_TIMEOUT_MS`），connect 与中止信号竞速，超时关闭 transport（stdio 会杀子进程）。连接层可注入（`createClient` 工厂），测试用 stub 保证 hermetic。
-- **桥接**：`listTools` 结果转 `ToolDefinition`：命名 `mcp__<server>__<tool>`（server 名含空格等非法字符替换为 `_` 并 warn），description 透传，inputSchema 经 `json-schema-to-zod.ts` 子集转换（object/string/number/integer/boolean/array/enum；结构性不支持回退 `z.unknown()` 放行，顶层非 object 回退空对象 passthrough——保住「不拦」且 `declarations()` 顶层必须是 object）。
+- **桥接**：`listTools` 结果转 `ToolDefinition`：命名 `mcp__<server>__<tool>`（server 名含空格等非法字符替换为 `_` 并 warn），description 透传，inputSchema 经 `json-schema-to-zod/json-schema-to-zod.ts` 子集转换（object/string/number/integer/boolean/array/enum；结构性不支持回退 `z.unknown()` 放行，顶层非 object 回退空对象 passthrough——保住「不拦」且 `declarations()` 顶层必须是 object）。
 - **执行**：`client.callTool`，60s 超时（`AbortSignal.timeout`，与 `ctx.signal` 组合），content 的 text 块换行拼接（非 text 块以占位行保留），MCP `isError` 透传；`isConcurrencySafe: false`。
 - **装配**：CLI（`packages/cli/src/chat.ts`）与 server（`packages/server/src/session-manager.ts`）在 `featureEnabled(features, "mcp")` 且 `settings.mcpServers` 非空时连接，工具经 `runtime.mcpTools` 只进 worker/task 注册表（main 永远只有元工具）；连接成功逐个落盘 `mcp/attached` 事件；CLI REPL 结束 finally / `manager.close()` 里 `closeMcpConnections` 统一关闭。
 

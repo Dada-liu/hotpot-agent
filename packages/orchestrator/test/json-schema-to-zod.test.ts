@@ -6,7 +6,7 @@
 // - 「不拦」原则：回退结果对任意输入 parse 成功，绝不把合法调用拦死
 
 import { describe, expect, it } from "vitest";
-import { jsonSchemaToZod } from "../src/json-schema-to-zod.ts";
+import { jsonSchemaToZod } from "../src/json-schema-to-zod/json-schema-to-zod.ts";
 
 describe("jsonSchemaToZod 基本类型", () => {
 	it("string/number/integer/boolean 各自校验类型", () => {

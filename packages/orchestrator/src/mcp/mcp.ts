@@ -14,7 +14,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { z } from "zod";
-import { jsonSchemaToZod } from "./json-schema-to-zod.ts";
+import { jsonSchemaToZod } from "../json-schema-to-zod/json-schema-to-zod.ts";
 
 // 单次 callTool 超时（AbortSignal.timeout 硬上限，与 ctx.signal 经 AbortSignal.any 组合）
 export const MCP_TOOL_TIMEOUT_MS = 60_000;

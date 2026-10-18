@@ -22,7 +22,7 @@ import {
 	type TodoItem,
 	toolsSection,
 } from "@hotpot/core";
-import type { AgentRole } from "./types.ts";
+import type { AgentRole } from "../types/types.ts";
 
 // 主 agent 指令：难度三分类（trivial/simple/complex），trivial 直接答、simple 派单个 worker、
 // complex 先 plan 等用户批准；难度判定示例规则逐条来自 §2（≤3 文件→simple、拿不准→complex 等）；

@@ -14,7 +14,7 @@
 // 任一路都能中断底层 fetch。只读网络资源、无本地副作用，isConcurrencySafe 为 true。
 
 import { z } from "zod";
-import type { WebSearchConfig } from "../config.ts";
+import type { WebSearchConfig } from "../config/config.ts";
 import type { ToolDefinition } from "./tool.ts";
 
 // 默认超时与结果数上限（模块顶部常量，测试直接引用）：30s 超时、默认 5 条、上限 10 条

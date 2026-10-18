@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { featureEnabled, loadSettings } from "../src/config.ts";
+import { featureEnabled, loadSettings } from "../src/config/config.ts";
 import { resolveHome } from "../src/session/store.ts";
 
 // 每个用例一个临时 home；用户级 settings.json 写在 <home>/settings.json

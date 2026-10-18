@@ -14,7 +14,7 @@ import { z } from "zod";
 import { runTurn } from "../src/agent/loop.ts";
 import type { AgentEvent, LoopConfig } from "../src/agent/types.ts";
 import { ApprovalChain } from "../src/approval/chain.ts";
-import { createHookChain } from "../src/hooks.ts";
+import { createHookChain } from "../src/hooks/hooks.ts";
 import type { SessionEvent } from "../src/session/events.ts";
 import { createSession, loadSession } from "../src/session/store.ts";
 import { createToolRegistry } from "../src/tools/registry.ts";

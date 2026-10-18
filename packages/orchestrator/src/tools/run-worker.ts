@@ -16,9 +16,12 @@ import {
 	type ModelTier,
 	runTurn,
 } from "@hotpot/core";
-import { buildRoleSystemPrompt } from "../prompts.ts";
-import { createRoleRegistry, createWorkerRegistry } from "../registries.ts";
-import type { OrchestrationRuntime } from "../runtime.ts";
+import { buildRoleSystemPrompt } from "../prompts/prompts.ts";
+import {
+	createRoleRegistry,
+	createWorkerRegistry,
+} from "../registries/registries.ts";
+import type { OrchestrationRuntime } from "../runtime/runtime.ts";
 
 // 读取指定 agent 最后一条 assistant_msg，拼接其文本块作为回传摘要；
 // 没有任何 assistant_msg 或文本块为空时返回 undefined，由调用方标注失败

@@ -22,12 +22,15 @@ import {
 	type ModelTier,
 	runTurn,
 } from "@hotpot/core";
-import type { Inbox } from "./inbox.ts";
-import { buildRoleSystemPrompt, PLANNING_INSTRUCTIONS } from "./prompts.ts";
-import { createRoleRegistry } from "./registries.ts";
-import type { OrchestrationRuntime } from "./runtime.ts";
-import type { TurnState } from "./tools/delegate.ts";
-import type { OrchestrationEvent } from "./types.ts";
+import type { Inbox } from "../inbox/inbox.ts";
+import {
+	buildRoleSystemPrompt,
+	PLANNING_INSTRUCTIONS,
+} from "../prompts/prompts.ts";
+import { createRoleRegistry } from "../registries/registries.ts";
+import type { OrchestrationRuntime } from "../runtime/runtime.ts";
+import type { TurnState } from "../tools/delegate.ts";
+import type { OrchestrationEvent } from "../types/types.ts";
 
 export type PlanDecision =
 	| { kind: "approve" }

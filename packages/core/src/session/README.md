@@ -1,5 +1,7 @@
 # src/session/
 
+`index.ts` 是本特性的对外出口；内部文件之间按具体路径导入。
+
 会话事件日志：append-only JSONL，**日志即唯一事实源**。UI 与 LLM 历史都由日志转换得出，不存在并行的可变状态。
 
 - `events.ts` — `SessionEvent` 联合类型（v1 定稿）。字段对齐 `docs/archive/02-architecture.md` 第 5 节；M1 只写入 meta/user_msg/assistant_msg/tool_call/tool_result/error，M2 起 agent_spawn、approval/*、inbox/spliced 由编排层（packages/orchestrator）产出。

@@ -23,7 +23,7 @@ import {
 	type McpConnection,
 	type McpToolCallResult,
 	type McpToolInfo,
-} from "../src/mcp.ts";
+} from "../src/mcp/mcp.ts";
 
 // ---- stub 连接层 ----
 

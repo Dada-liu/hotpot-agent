@@ -25,9 +25,12 @@ import {
 	type Settings,
 } from "@hotpot/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { buildRoleSystemPrompt } from "../src/prompts.ts";
-import { createWorkerRegistry } from "../src/registries.ts";
-import { createRuntime, type OrchestrationRuntime } from "../src/runtime.ts";
+import { buildRoleSystemPrompt } from "../src/prompts/prompts.ts";
+import { createWorkerRegistry } from "../src/registries/registries.ts";
+import {
+	createRuntime,
+	type OrchestrationRuntime,
+} from "../src/runtime/runtime.ts";
 
 let home: string;
 let proj: string;

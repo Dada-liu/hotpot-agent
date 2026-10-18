@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createSession, loadSession, type SessionEvent } from "@hotpot/core";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createInbox, foldInbox } from "../src/inbox.ts";
+import { createInbox, foldInbox } from "../src/inbox/inbox.ts";
 
 let home: string;
 

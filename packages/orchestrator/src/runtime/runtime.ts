@@ -21,8 +21,8 @@ import {
 	loadSession,
 	type WebSearchBackend,
 } from "@hotpot/core";
-import { type ModelResolution, resolveModel } from "./models.ts";
-import type { AgentRole } from "./types.ts";
+import { type ModelResolution, resolveModel } from "../models/models.ts";
+import type { AgentRole } from "../types/types.ts";
 
 // worker/task 注册表工具装饰器：CLI 侧注入 policy 包装（如 approval=always 时
 // 给 bash/write/edit 包一层预审批）的唯一通道 —— 下层注册表由编排层内部装配，

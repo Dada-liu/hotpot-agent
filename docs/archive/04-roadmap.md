@@ -61,11 +61,11 @@
 |---|------|------|-----------|------|
 | 1 | todo 工具 | 全量替换语义的任务清单（dsh `tool-todo` 同款），长任务成功率收益最直接 | dsh | ✅ 已实现：`core/src/tools/todo.ts`、`core/src/session/todos.ts`；验收 `core/test/todo.test.ts`、`orchestrator/test/todo-flow.test.ts` |
 | 2 | steer / queue 完善 | M2 已有队列 API，本步完成 web 端交互（排队展示、steer 注入、中断） | dsh/pi | ✅ 已实现：`GET /api/sessions/:id/inbox`、web 队列条（`web/src/components/ChatView.tsx`）；验收 `orchestrator/test/inbox.test.ts`、`server/test/api.test.ts`、`web/test/reducer.test.ts` |
-| 3 | hooks | 生命周期钩子链：session_start、pre/post tool、turn_end（审批 waterfall 的公开版）；兼容 Claude Code 钩子配置格式可选 | dsh | ✅ 已实现：`core/src/hooks.ts`（Claude Code 格式）；验收 `core/test/hooks.test.ts`、`core/test/loop.test.ts`、`orchestrator/test/hooks.test.ts` |
-| 4 | skill 支持 | SKILL.md + frontmatter；启动只注入 name+description+路径，模型按需 read 加载（渐进式，省 token） | pi | ✅ 已实现：`core/src/skills.ts` + read 追踪；验收 `core/test/skills.test.ts`、`orchestrator/test/skills.test.ts` |
-| 5 | prompt templates | `prompts/*.md` 变成 `/命令`，支持参数占位；自定义命令入口 | pi | ✅ 已实现：`core/src/prompt-templates.ts`、CLI 展开、server 统一展开、web `/` 补全；验收 `core/test/prompt-templates.test.ts`、`server/test/api.test.ts`、`cli/test/cli.test.ts` |
+| 3 | hooks | 生命周期钩子链：session_start、pre/post tool、turn_end（审批 waterfall 的公开版）；兼容 Claude Code 钩子配置格式可选 | dsh | ✅ 已实现：`core/src/hooks/hooks.ts`（Claude Code 格式）；验收 `core/test/hooks.test.ts`、`core/test/loop.test.ts`、`orchestrator/test/hooks.test.ts` |
+| 4 | skill 支持 | SKILL.md + frontmatter；启动只注入 name+description+路径，模型按需 read 加载（渐进式，省 token） | pi | ✅ 已实现：`core/src/skills/skills.ts` + read 追踪；验收 `core/test/skills.test.ts`、`orchestrator/test/skills.test.ts` |
+| 5 | prompt templates | `prompts/*.md` 变成 `/命令`，支持参数占位；自定义命令入口 | pi | ✅ 已实现：`core/src/prompt-templates/prompt-templates.ts`、CLI 展开、server 统一展开、web `/` 补全；验收 `core/test/prompt-templates.test.ts`、`server/test/api.test.ts`、`cli/test/cli.test.ts` |
 | 6 | web_search / web_fetch 工具 | 自媒体运营 bench 需要联网能力；搜索后端可换 | dsh | ✅ 已实现：`core/src/tools/web-fetch.ts`、`core/src/tools/web-search.ts`；验收 `core/test/web-fetch.test.ts`、`core/test/web-search.test.ts` |
-| 7 | MCP 支持 | stdio + streamable HTTP client；工具桥接为 `mcp__<server>__<tool>` | pi/dsh 一致 | ✅ 已实现：`orchestrator/src/mcp.ts` + `json-schema-to-zod.ts`；验收 `orchestrator/test/mcp.test.ts`、`json-schema-to-zod.test.ts`；真实 server 冒烟步骤见 `orchestrator/README.md` |
+| 7 | MCP 支持 | stdio + streamable HTTP client；工具桥接为 `mcp__<server>__<tool>` | pi/dsh 一致 | ✅ 已实现：`orchestrator/src/mcp/mcp.ts` + `orchestrator/src/json-schema-to-zod/json-schema-to-zod.ts`；验收 `orchestrator/test/mcp.test.ts`、`json-schema-to-zod.test.ts`；真实 server 冒烟步骤见 `orchestrator/README.md` |
 | 8 | 上下文自动压缩 | compaction 作为会话事件（记录保留点 + 摘要），恢复时跳过被压缩段（pi 手法）；M1 遗留项 | pi/dsh | ⏳ 未开始 |
 | 9 | 用户记忆 | 跨会话记忆，启动时注入摘要 section，写记忆走独立工具 | — | ⏳ 未开始 |
 | 10 | 向量数据库 | 服务记忆与代码检索，独立 packages/memory | — | ⏳ 未开始 |

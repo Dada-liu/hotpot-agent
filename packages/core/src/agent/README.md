@@ -1,5 +1,7 @@
 # src/agent/
 
+`index.ts` 是本特性的对外出口；内部文件之间按具体路径导入。
+
 turn/step 循环（M1 核心）：turn = 一次用户意图的完整处理，step = 一次 `streamChat` + 该消息全部 tool call 的执行。
 
 - `types.ts` — 公开契约。`LoopConfig` 收拢 `runTurn` 的全部入参（session/agentId/adapter/model/apiKey/baseUrl/registry/approval/cwd/system）；`system` 缺省时用 `buildSystemPrompt` + `registerDefaultSections` 组装（注册非幂等，有模块级守卫）。`AgentEvent` 是产出给 UI 的事件：`text` / `tool_call` / `tool_result` / `done` / `error`。

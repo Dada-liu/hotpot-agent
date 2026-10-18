@@ -10,7 +10,7 @@ import {
 	expandTemplate,
 	isSlashInput,
 	resolveSlashCommand,
-} from "../src/prompt-templates.ts";
+} from "../src/prompt-templates/prompt-templates.ts";
 
 let root: string;
 

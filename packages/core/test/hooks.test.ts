@@ -5,8 +5,8 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { HooksConfig } from "../src/config.ts";
-import { createHookChain } from "../src/hooks.ts";
+import type { HooksConfig } from "../src/config/config.ts";
+import { createHookChain } from "../src/hooks/hooks.ts";
 import type { SessionEvent } from "../src/session/events.ts";
 import { createSession, loadSession } from "../src/session/store.ts";
 

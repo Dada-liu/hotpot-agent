@@ -7,7 +7,7 @@
 import { randomUUID } from "node:crypto";
 import type { ModelTier, ToolContext, ToolDefinition } from "@hotpot/core";
 import { z } from "zod";
-import type { OrchestrationRuntime } from "../runtime.ts";
+import type { OrchestrationRuntime } from "../runtime/runtime.ts";
 import type { TurnState } from "./delegate.ts";
 import { runWorkerInline } from "./run-worker.ts";
 

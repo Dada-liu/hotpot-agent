@@ -25,13 +25,16 @@ import {
 	type Settings,
 } from "@hotpot/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { createInbox, type Inbox } from "../src/inbox.ts";
-import { runMainTurn } from "../src/main-turn.ts";
-import { type PlanDecision, runPlanPhase } from "../src/plan.ts";
-import { createRuntime, type OrchestrationRuntime } from "../src/runtime.ts";
+import { createInbox, type Inbox } from "../src/inbox/inbox.ts";
+import { runMainTurn } from "../src/main-turn/main-turn.ts";
+import { type PlanDecision, runPlanPhase } from "../src/plan/plan.ts";
+import {
+	createRuntime,
+	type OrchestrationRuntime,
+} from "../src/runtime/runtime.ts";
 import type { TurnState } from "../src/tools/delegate.ts";
 import { createSpawnWorkersTool } from "../src/tools/spawn-workers.ts";
-import type { OrchestrationEvent } from "../src/types.ts";
+import type { OrchestrationEvent } from "../src/types/types.ts";
 
 let home: string;
 let proj: string;

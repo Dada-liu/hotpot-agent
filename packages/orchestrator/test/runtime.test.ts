@@ -13,8 +13,8 @@ import {
 	type WebSearchBackend,
 } from "@hotpot/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { resolveModel } from "../src/models.ts";
-import { createRuntime } from "../src/runtime.ts";
+import { resolveModel } from "../src/models/models.ts";
+import { createRuntime } from "../src/runtime/runtime.ts";
 
 let home: string;
 

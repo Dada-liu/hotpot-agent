@@ -2,7 +2,7 @@
 
 import type { FinishReason, LlmAdapter, LlmError, ModelInfo } from "@hotpot/ai";
 import type { ApprovalChain } from "../approval/chain.ts";
-import type { HookChain } from "../hooks.ts";
+import type { HookChain } from "../hooks/hooks.ts";
 import type { ModelTier } from "../session/events.ts";
 import type { Session } from "../session/store.ts";
 import type { ToolRegistry } from "../tools/registry.ts";

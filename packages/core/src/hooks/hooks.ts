@@ -11,9 +11,9 @@
 
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import type { HooksConfig, Settings } from "./config.ts";
-import type { HookEvent } from "./session/events.ts";
-import type { Session } from "./session/store.ts";
+import type { HooksConfig, Settings } from "../config/config.ts";
+import type { HookEvent } from "../session/events.ts";
+import type { Session } from "../session/store.ts";
 
 export interface HookRunResult {
 	// 仅 pre_tool 可能为 true（任一匹配命令非零退出）

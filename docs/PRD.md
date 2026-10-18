@@ -19,7 +19,8 @@
 
 1. **md 即代码**：每个文件夹带 `README.md`（做了什么）和 `AGENTS.md`（怎么改）。当前层只概述子文件夹，细节下沉。
 2. 符合软件工程要求：模块化、可测试、类型严格（no `any`）、版本控制。
-3. README/代码注释用简体中文；LLM prompt 和 AGENTS.md 用英文（附中文注释或中文备份）。
+3. **特性目录化**：`packages/core` 与 `packages/orchestrator` 的 `src/` 下每个特性独立成子文件夹；子文件夹以 `index.ts` 作为对外出口，并各自携带 `README.md` / `AGENTS.md`；`src/` 根目录只保留包入口 `index.ts` 与 ambient 声明，不散放特性文件。
+4. README/代码注释用简体中文；LLM prompt 和 AGENTS.md 用英文（附中文注释或中文备份）。
 
 ## 3. 架构决议
 

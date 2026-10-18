@@ -16,14 +16,17 @@ import {
 	type ModelTier,
 	runTurn,
 } from "@hotpot/core";
-import type { Inbox } from "./inbox.ts";
-import { type PlanDecision, runPlanPhase } from "./plan.ts";
-import { buildRoleSystemPrompt, EXECUTION_INSTRUCTIONS } from "./prompts.ts";
-import { createRoleRegistry } from "./registries.ts";
-import type { OrchestrationRuntime } from "./runtime.ts";
-import { createDelegateTool, type TurnState } from "./tools/delegate.ts";
-import { createSpawnWorkersTool } from "./tools/spawn-workers.ts";
-import type { OrchestrationEvent } from "./types.ts";
+import type { Inbox } from "../inbox/inbox.ts";
+import { type PlanDecision, runPlanPhase } from "../plan/plan.ts";
+import {
+	buildRoleSystemPrompt,
+	EXECUTION_INSTRUCTIONS,
+} from "../prompts/prompts.ts";
+import { createRoleRegistry } from "../registries/registries.ts";
+import type { OrchestrationRuntime } from "../runtime/runtime.ts";
+import { createDelegateTool, type TurnState } from "../tools/delegate.ts";
+import { createSpawnWorkersTool } from "../tools/spawn-workers.ts";
+import type { OrchestrationEvent } from "../types/types.ts";
 
 // 主agent 的 agentId 固定为 "main"：spawn 的 parentAgentId、derive 的消息过滤都以此为准
 const MAIN_AGENT_ID = "main";

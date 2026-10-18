@@ -27,9 +27,12 @@ import {
 	todoTool,
 	writeTool,
 } from "@hotpot/core";
-import type { OrchestrationRuntime, WorkerToolDecorator } from "./runtime.ts";
-import { createSpawnTasksTool } from "./tools/spawn-tasks.ts";
-import type { AgentRole } from "./types.ts";
+import type {
+	OrchestrationRuntime,
+	WorkerToolDecorator,
+} from "../runtime/runtime.ts";
+import { createSpawnTasksTool } from "../tools/spawn-tasks.ts";
+import type { AgentRole } from "../types/types.ts";
 
 // feature 派生的基础外工具（worker/task 追加；main 永远只有元工具，不进这里）。
 // 开关一律经 featureEnabled（`?? true` 缺省全开）；todo（Task 2）、web_fetch（Task 3）、

@@ -13,9 +13,9 @@ import {
 } from "@hotpot/core";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
-import { buildRoleSystemPrompt } from "../src/prompts.ts";
-import { createRoleRegistry } from "../src/registries.ts";
-import type { OrchestrationRuntime } from "../src/runtime.ts";
+import { buildRoleSystemPrompt } from "../src/prompts/prompts.ts";
+import { createRoleRegistry } from "../src/registries/registries.ts";
+import type { OrchestrationRuntime } from "../src/runtime/runtime.ts";
 
 // 元工具桩：Task 7 才提供真实 delegate/spawn_workers/spawn_tasks，这里只钉名字集合
 function stubMetaTool(name: string): ToolDefinition<unknown> {

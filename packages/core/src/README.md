@@ -2,13 +2,19 @@
 
 `@hotpot/core` 的源码目录。本包是 agent 内核，不依赖任何 UI；会话 JSONL 事件日志是唯一事实源，UI 状态全部由 `deriveMessages` 推导。
 
-- `session/`：append-only JSONL 事件日志（`SessionEvent` 类型、`loadSession`/`createSession`/`resumeSession`、`deriveMessages` 转换历史；加载跳过末尾损坏行）。
-- `prompt/`：系统提示词 section 注册表（按 order 拼接，prompt 文案全英文；`registerDefaultSections` 非幂等，有模块级守卫）。
-- `tools/`：工具框架（`ToolDefinition`/`ToolRegistry`，zod 校验擦除层）与 bash、read、write、edit 四个基础工具；高危命令与覆盖写走审批。
-- `approval/`：审批 waterfall `ApprovalChain`，顺序询问，全部 next 时默认 deny（fail-closed）。
+`src/` 按特性分目录，每个目录以 `index.ts` 作为对外出口；根目录只保留包入口与 ambient 声明。
+
 - `agent/`：turn/step 两级循环 `runTurn`；含 max_tokens 截断防御、finish=error 不执行工具、abort 补落 tool_result 等语义。
-- `config.ts`：`loadSettings({ home, cwd })` 双层加载——用户级 `<home>/settings.json` 必填（zod 校验，apiKey 支持 `$ENV` 引用，home 解析复用 `session/store.ts` 的 `resolveHome`）；项目级自 cwd 向上查找 `.hotpot/settings.json`（可选，只覆盖非凭证白名单字段）。
-- `index.ts`：包入口，仅 re-export，不写逻辑。
+- `approval/`：审批 waterfall `ApprovalChain`，顺序询问，全部 next 时默认 deny（fail-closed）；`audit.ts` 负责 asked/decided 落盘。
+- `config/`：`loadSettings({ home, cwd })` 双层加载——用户级 `<home>/settings.json` 必填（zod 校验，apiKey 支持 `$ENV` 引用，home 解析复用 `session/store.ts` 的 `resolveHome`）；项目级自 cwd 向上查找 `.hotpot/settings.json`（可选，只覆盖非凭证白名单字段）。
+- `frontmatter/`：最小 frontmatter 解析，skill 与 prompt templates 共用。
+- `hooks/`：生命周期钩子链（Claude Code 配置格式）。
+- `prompt/`：系统提示词 section 注册表（按 order 拼接，prompt 文案全英文；`registerDefaultSections` 非幂等，有模块级守卫）。
+- `prompt-templates/`：`prompts/*.md` → `/命令`，支持参数占位。
+- `session/`：append-only JSONL 事件日志（`SessionEvent` 类型、`loadSession`/`createSession`/`resumeSession`、`deriveMessages` 转换历史；加载跳过末尾损坏行）。
+- `skills/`：递归扫描 `SKILL.md`，产出 name/description/path 清单。
+- `tools/`：工具框架（`ToolDefinition`/`ToolRegistry`，zod 校验擦除层）与 bash、read、write、edit、todo、web 工具；高危命令与覆盖写走审批。
+- `index.ts`：包入口，仅 re-export 各特性目录的 `index.ts`，不写逻辑。
 - `node-builtins.d.ts`：node builtins 的最小 ambient 声明（依赖白名单不允许 `@types/node`），用到新 API 时在此补充。各模块声明明细见下文「Node 内置模块声明」。
 
 ## Node 内置模块声明（`node-builtins.d.ts`）
@@ -30,10 +36,10 @@
 
 ### `node:fs`（同步文件读写）
 
-`config.ts` 的 settings.json 同步加载。
+`config/config.ts` 的 settings.json 同步加载。
 
-- `existsSync(path)`：判断存在；`config.ts` 向上逐级探测项目级配置，`tools/write.ts` 判断目标是否已存在。
-- `readFileSync(path, "utf8")`：同步读文件；`config.ts` 读 settings.json。
+- `existsSync(path)`：判断存在；`config/config.ts` 向上逐级探测项目级配置，`tools/write.ts` 判断目标是否已存在。
+- `readFileSync(path, "utf8")`：同步读文件；`config/config.ts` 读 settings.json。
 
 ### `node:child_process`（子进程）
 
@@ -50,9 +56,9 @@
 
 ### `node:path`（路径处理）
 
-- `join(...parts)`：拼接路径；`session/store.ts`、`config.ts` 及测试。
-- `resolve(...parts)`：解析为绝对路径；`config.ts` 与 read/edit/write 工具把入参规整为绝对路径。
-- `dirname(path)`：取父目录；`config.ts` 向上逐级查找、`tools/write.ts` 取目标父目录。
+- `join(...parts)`：拼接路径；`session/store.ts`、`config/config.ts` 及测试。
+- `resolve(...parts)`：解析为绝对路径；`config/config.ts` 与 read/edit/write 工具把入参规整为绝对路径。
+- `dirname(path)`：取父目录；`config/config.ts` 向上逐级查找、`tools/write.ts` 取目标父目录。
 
 ### `node:crypto`
 
@@ -60,6 +66,6 @@
 
 ### `process`（进程全局）
 
-- `env`：环境变量；`session/store.ts` 读 `HOTPOT_HOME`、`config.ts` 做 apiKey 的 `$ENV` 插值。
+- `env`：环境变量；`session/store.ts` 读 `HOTPOT_HOME`、`config/config.ts` 做 apiKey 的 `$ENV` 插值。
 - `platform`：操作系统平台；`agent/loop.ts` 写进系统提示词的运行环境信息。
-- `cwd()`：当前工作目录；`config.ts` 未显式传 `cwd` 时作为项目级配置查找起点。
+- `cwd()`：当前工作目录；`config/config.ts` 未显式传 `cwd` 时作为项目级配置查找起点。

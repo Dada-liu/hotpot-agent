@@ -8,7 +8,7 @@
 
 import { readdir, readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { parseFrontmatter } from "./frontmatter.ts";
+import { parseFrontmatter } from "../frontmatter/frontmatter.ts";
 
 export interface PromptTemplate {
 	name: string;
