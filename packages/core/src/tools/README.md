@@ -10,3 +10,12 @@
 - `edit.ts` — `editTool`。精确字符串替换（非正则），替换经函数式 replacer 写回：`new_string` 里的 `$$`、`$&` 等 `$` 模式逐字节保留，不做 JS replacement 模式展开。utf8 往返写回，未触及部分原样保留（CRLF 文件可精确匹配且不丢 `\r`）。`old_string` 出现 0 次 → isError 并建议先 read；出现多次且未传 `replace_all` → isError 并给出出现次数；`replace_all: true` 替换全部。`isConcurrencySafe: false`。
 - `todo.ts` — `todoTool`（M4 Feature ①）。任务清单管理，入参为全量列表、整体替换（空数组 = 清空）；execute 校验后 append `todo/set` 事件落盘（`agentId` 取 `ctx.agentId`），返回渲染后的 `- [status] content` 清单文本供模型自检进度。只读写会话日志，`isConcurrencySafe: true`。
 - `web-fetch.ts` — `createWebFetchTool(deps?: { fetchImpl?: typeof fetch })`（M4 Feature ⑥a）。GET 抓取 http/https URL 返回文本正文；仅文本类 Content-Type（`text/*`、含 json/xml 的类型、javascript、svg），HTML 额外轻量剥离（script/style 标签及内容、其余尖括号标签、压缩空白），application/pdf、image/* 等非文本类型返回 isError 说明。默认 30s 超时（内部 `AbortSignal.timeout` 与 `ctx.signal` 经 `AbortSignal.any` 组合中断 fetch）、512KB 字节上限（超出即停读流）与 100000 字符上限（`maxChars` 可覆盖），截断均带标注。只读网络资源，`isConcurrencySafe: true`。
+- `web-search.ts` — `createWebSearchTool(backend)`（M4 Feature ⑥b）。联网搜索，入参 `{ query, count? }`（count 默认 5、上限 10），结果渲染为编号列表（`序号. title\nurl\nsnippet`），空结果返回提示文本（非错误）；默认 30s 超时（信号组合同 web_fetch），只读网络资源，`isConcurrencySafe: true`。
+
+## web_search 后端可换
+
+后端契约 `WebSearchBackend`：`search(query, count, signal): Promise<{ title, url, snippet }[]>`，工具只依赖该接口，后端实现可替换：
+
+- `createDuckDuckGoBackend(deps?: { fetchImpl? })`：缺省后端，无需 key。POST `html.duckduckgo.com/html/`（form 参数 `q`），正则解析结果块（`.result` 内 `a.result__a` 的 href/title + `.result__snippet` 文本），`href` 可能是 `/l/?uddg=` 重定向包装，取 `uddg=` 参数解码出原始 URL。
+- `createCustomBackend({ baseUrl, apiKey?, headers?, fetchImpl? })`：接自建搜索 API。GET `{baseUrl}?q={query}&count={count}`；`apiKey` 存在时以 `Authorization: Bearer` 发送，`headers` 为附加自定义头（同名键被 Authorization 覆盖）；响应 JSON 形状必须是 `{ results: [{ title, url, snippet }] }`，HTTP 非 2xx 或形状不符抛错，由工具层统一 isError 化。
+- `createWebSearchBackendFromConfig(settings.webSearch, deps?)`：settings 配置→后端的唯一解析口（assembly 层经它装配 runtime），`backend` 缺省/ `"duckduckgo"` 走 DuckDuckGo，`"custom"` 必须提供 `baseUrl`；`features.webSearch` 开关在注册层判读，关闭则不注册工具。

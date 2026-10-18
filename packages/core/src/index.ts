@@ -17,4 +17,5 @@ export * from "./tools/registry.ts";
 export * from "./tools/todo.ts";
 export * from "./tools/tool.ts";
 export * from "./tools/web-fetch.ts";
+export * from "./tools/web-search.ts";
 export * from "./tools/write.ts";
