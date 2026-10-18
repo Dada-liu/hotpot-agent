@@ -9,6 +9,7 @@
 	"dependencies": {
 		"@hotpot/ai": "workspace:*",
 		"@hotpot/core": "workspace:*",
-		"@hotpot/orchestrator": "workspace:*"
+		"@hotpot/orchestrator": "workspace:*",
+		"@hotpot/telemetry": "workspace:*"
 	}
 }

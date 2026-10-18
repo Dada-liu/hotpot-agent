@@ -46,6 +46,15 @@ declare module "node:fs/promises" {
 declare module "node:fs" {
 	export function existsSync(path: string): boolean;
 	export function readFileSync(path: string, encoding: "utf8"): string;
+	export function writeFileSync(
+		path: string,
+		data: string,
+		encoding?: "utf8",
+	): void;
+	export function mkdirSync(
+		path: string,
+		options?: { recursive?: boolean },
+	): string | undefined;
 }
 
 declare module "node:child_process" {
@@ -117,6 +126,7 @@ declare const process: {
 	argv: string[];
 	env: Record<string, string | undefined>;
 	platform: string;
+	version: string;
 	cwd(): string;
 	exitCode: number;
 	kill(pid: number, signal?: string): boolean;

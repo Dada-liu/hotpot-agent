@@ -108,6 +108,7 @@ declare module "node:crypto" {
 declare const process: {
 	env: Record<string, string | undefined>;
 	platform: string;
+	version: string;
 	cwd(): string;
 	kill(pid: number, signal?: string): boolean;
 };

@@ -218,6 +218,8 @@ export function sessionStartEvent(opts: {
 	resumed: boolean;
 	appVersion: string;
 	features?: Settings["features"];
+	os?: string;
+	nodeVersion?: string;
 }): SessionStartEvent {
 	return {
 		eventId: randomUUID(),
@@ -227,6 +229,10 @@ export function sessionStartEvent(opts: {
 		resumed: opts.resumed,
 		appVersion: opts.appVersion,
 		...(opts.features === undefined ? {} : { features: opts.features }),
+		...(opts.os === undefined ? {} : { os: opts.os }),
+		...(opts.nodeVersion === undefined
+			? {}
+			: { nodeVersion: opts.nodeVersion }),
 	};
 }
 

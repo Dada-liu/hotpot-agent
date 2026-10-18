@@ -41,6 +41,12 @@ import {
 	runMainTurn,
 	type WorkerToolDecorator,
 } from "@hotpot/orchestrator";
+import {
+	APP_VERSION,
+	createTelemetryRuntime,
+	sessionEndEvent,
+	sessionStartEvent,
+} from "@hotpot/telemetry";
 import { createTerminalApproval } from "./approval-ui.ts";
 import { createTerminalPlanApproval } from "./plan-approval.ts";
 
@@ -68,6 +74,8 @@ export interface RunChatOptions {
 	output: ChatOutput;
 	// 告警通道（如未知模型兜底）；缺省写 output
 	warn?: (text: string) => void;
+	// 测试注入点：遥测上报用的 fetch，缺省走全局 fetch
+	telemetryFetch?: typeof fetch;
 }
 
 type ApprovalPolicy = "ask-on-dangerous" | "always" | "never";
@@ -168,6 +176,8 @@ export async function runChat(opts: RunChatOptions): Promise<void> {
 	const { input, output } = opts;
 	const warn = opts.warn ?? ((text: string) => output.write(`${text}\n`));
 	const settings = opts.settings;
+	// 会话时长从进程进入 REPL 前算起，包含模型解析与装配耗时
+	const sessionStartedAt = Date.now();
 	const tier = opts.tier ?? settings.mainAgentTier ?? "high";
 	const ref = settings.models[tier];
 
@@ -193,6 +203,30 @@ export async function runChat(opts: RunChatOptions): Promise<void> {
 		`会话: ${session.filePath}（tier=${tier}, model=${model.id}）\n`,
 	);
 	output.write("输入消息开始对话；/exit 退出，Ctrl-C 中断当前回合\n");
+
+	// M5 遥测旁路：未启用或 endpoint 不可用时为 null，后续上报点全部跳过。
+	// enqueue 只入队，flush 异步执行且吞掉网络失败，不会阻塞或打断对话。
+	const telemetry = createTelemetryRuntime(settings, {
+		home: opts.home,
+		appVersion: APP_VERSION,
+		fetchImpl: opts.telemetryFetch,
+	});
+	if (telemetry !== null) {
+		telemetry.client.enqueue(
+			sessionStartEvent({
+				sessionId: session.id,
+				// --session 走 resumeSession，其余是新建会话
+				resumed: opts.sessionPath !== undefined,
+				appVersion: APP_VERSION,
+				features: settings.features,
+				os: process.platform,
+				nodeVersion: process.version,
+			}),
+		);
+	}
+	// session_end 的累计值：turn 数含 followup 补发，errors 按 turn_end 的 outcome 统计
+	let telemetryTurns = 0;
+	let telemetryErrors = 0;
 
 	// M4 Feature⑦ MCP：开关（features.mcp，缺省开）打开且配置了 server 才连接。
 	// 单 server 失败由 connectMcpServers 内部告警跳过，不阻塞启动；连接成功逐个
@@ -339,11 +373,23 @@ export async function runChat(opts: RunChatOptions): Promise<void> {
 		}
 	});
 
-	// 单回合：user_msg 落盘由 runMainTurn 以 main 身份负责，这里只迭代事件流并渲染
+	// 单回合：user_msg 落盘由 runMainTurn 以 main 身份负责，这里只迭代事件流并渲染。
+	// 遥测按 turn 一个采集器：start 入队、逐事件 observe、finally 折算出明细并立即 flush
 	const runOneTurn = async (content: string): Promise<void> => {
 		const ac = new AbortController();
 		currentTurn = ac;
+		const collector =
+			telemetry === null
+				? null
+				: telemetry.createCollector(session, {
+						turnId: randomUUID(),
+						features: settings.features,
+					});
+		let planRejected = false;
 		try {
+			if (telemetry !== null && collector !== null) {
+				telemetry.client.enqueue(collector.start());
+			}
 			for await (const event of runMainTurn({
 				runtime,
 				userMessage: content,
@@ -353,6 +399,11 @@ export async function runChat(opts: RunChatOptions): Promise<void> {
 				inbox,
 			})) {
 				renderEvent(event, output);
+				// 计划被用户拒绝属于主动中止，采集器据此判 aborted
+				if (event.type === "plan" && event.phase === "denied") {
+					planRejected = true;
+				}
+				collector?.observe(event);
 			}
 		} catch (err) {
 			// runTurn 自身兜底 LLM/工具错误；这里防的是会话文件读失败等意外，回合出错不退出 REPL
@@ -361,6 +412,28 @@ export async function runChat(opts: RunChatOptions): Promise<void> {
 			);
 		} finally {
 			currentTurn = null;
+			if (telemetry !== null && collector !== null) {
+				try {
+					const events = await collector.finish({
+						aborted: ac.signal.aborted,
+						planRejected,
+					});
+					for (const event of events) {
+						telemetry.client.enqueue(event);
+					}
+					telemetryTurns += 1;
+					if (
+						events.some(
+							(event) => event.type === "turn_end" && event.outcome === "error",
+						)
+					) {
+						telemetryErrors += 1;
+					}
+				} catch {
+					// 采集失败只丢本 turn 的遥测，不影响回合结果与后续对话
+				}
+				void telemetry.client.flush();
+			}
 		}
 	};
 
@@ -429,6 +502,18 @@ export async function runChat(opts: RunChatOptions): Promise<void> {
 		input.setInterruptHandler(null);
 		// MCP 连接统一关闭：stdio 子进程与 HTTP 会话都在这里收尾，关闭失败不阻塞退出
 		await closeMcpConnections(mcpConnections);
+		if (telemetry !== null) {
+			telemetry.client.enqueue(
+				sessionEndEvent({
+					sessionId: session.id,
+					startedAt: sessionStartedAt,
+					turns: telemetryTurns,
+					errors: telemetryErrors,
+				}),
+			);
+			// close 会等队列里的残余批次（含 session_end）发完；失败由客户端内部吞掉
+			await telemetry.client.close();
+		}
 	}
 	output.write("再见\n");
 }

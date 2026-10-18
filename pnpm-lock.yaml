@@ -34,6 +34,9 @@ importers:
       '@hotpot/orchestrator':
         specifier: workspace:*
         version: link:../orchestrator
+      '@hotpot/telemetry':
+        specifier: workspace:*
+        version: link:../telemetry
 
   packages/core:
     dependencies:

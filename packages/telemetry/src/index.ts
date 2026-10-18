@@ -4,4 +4,5 @@ export * from "./collector.ts";
 export * from "./defaults.ts";
 export * from "./events.ts";
 export * from "./install-id.ts";
+export * from "./runtime.ts";
 export * from "./sanitize.ts";
