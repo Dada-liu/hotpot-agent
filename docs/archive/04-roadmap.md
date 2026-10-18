@@ -80,9 +80,9 @@
 
 ## M5 配套体系
 
-M5 拆成两条独立工作流：工具侧遥测客户端（M5.1，本仓库，已完成）与遥测后台 / benchmarks（独立工作流，另行推进）。
+M5 拆成两条独立工作流：工具侧遥测客户端（M5.1，本仓库，已完成）与遥测后台 / benchmarks。benchmarks runner 已在本仓库完成（M5.3/M5.4）；遥测后台仍在仓库外独立推进。
 
-原 M5 范围中的「测试补齐：集成测试覆盖主要 agent 场景（mock LLM 录制回放）」没有取消：沿用「测试随功能走」的持续补测策略，随每个里程碑补充，不单独堆到 M5 收尾；当前全量为 52 个测试文件 / 492 条用例。
+原 M5 范围中的「测试补齐：集成测试覆盖主要 agent 场景（mock LLM 录制回放）」没有取消：沿用「测试随功能走」的持续补测策略，随每个里程碑补充，不单独堆到 M5 收尾；当前全量为 63 个测试文件 / 537 条用例。
 
 ### M5.1 遥测客户端（已完成）
 
@@ -100,18 +100,33 @@ M5 拆成两条独立工作流：工具侧遥测客户端（M5.1，本仓库，�
 - `packages/server/test/telemetry.test.ts`（4 条）：`turn_end` 含 worker 用量、`close(id)` 上报 `session_end`、`attachById` 上报 `session_start(resumed: true)`、禁用与未配置 endpoint 不发请求
 - 全量 `pnpm typecheck`、`pnpm test`、`pnpm exec biome check .` 通过
 
+### M5.3 / M5.4 benchmark runner 与官方评测（实现已完成，验收记录见下）
+
+范围（已实现）：
+
+- `packages/benchmarks`：`WorkspaceProvider`（M5 为普通 checkout + 每题独立 worktree）、无交互 agent runner（临时 HOME、allow-all 审批落盘、plan 自动批准、超时 abort）、实例 JSONL 导出/确定性选择、predictions、官方 harness 编排（local / remote + tmux/nohup）、report、benchmark 遥测
+- `packages/benchmarks/src/custom/`：三个离线种子任务（金融日收益率、slugify、自媒体内容计划）
+- `pnpm bench swebench|custom` 一键入口；默认 Lite `test`、10 题、`--max-workers 1`、固定 seed
+- patch-only 基线：不装 repo 依赖、不跑 repo 测试；评分只来自官方 `swebench` harness
+- 文档：`packages/benchmarks/README.md`、`docs/benchmark-authoring.md`、`docs/archive/05-m5-telemetry-benchmarks.md`
+
+验收证据：
+
+- `packages/benchmarks/test/`：custom runner / 三题校验、workspace + patch 捕获（含 untracked、排除 node_modules/.hotpot）、allow-all 审批落盘、实例选择、predictions 格式、官方命令构造与 report 解析、报告聚合/脱敏、CLI 参数、benchmark 遥测
+- `pnpm bench --help` 与未知参数非 0 退出
+- 全量 `pnpm typecheck`、`pnpm test`、`pnpm exec biome check .` 通过
+
 ### 仍未开始（独立工作流）
 
 - M5.2 遥测后台：仓库外 `../hotpot-telemetry/`（ingest + SQLite + 聚合 API + 管理界面 + 邮件/webhook/飞书告警），部署在 `sell_system`，不打进 CLI/server 构建产物
-- M5.3 / M5.4 benchmark runner 与官方评测：`packages/benchmarks`、SWE-bench Lite 10 题、`swebench` harness + Docker
 
-两者与 M5.1 解耦：客户端只约定 ingest 的 HTTP 契约（`POST <endpoint>/api/v1/ingest`，`schemaVersion = 1`，`kind` 区分 `user`/`benchmark`）。
+遥测后台与 runner 解耦：客户端只约定 ingest 的 HTTP 契约（`POST <endpoint>/api/v1/ingest`，`schemaVersion = 1`，`kind` 区分 `user`/`benchmark`）。
 
 验收标准（保持原目标）：
 
-1. benchmark 一键运行，输出成功率与平均 token 成本报告（依赖 M5.3/M5.4）
-2. 遥测报表能回答「上周每个任务平均花了多少 token、成功率多少」（依赖 M5.2）
-3. 自建 bench 有从历史会话沉淀新题的流程文档（筛选 → 脱敏 → 题目化）（依赖 M5.3）
+1. benchmark 一键运行，输出成功率与平均 token 成本报告（runner 已完成；Lite 10 题真实验收记录待补）
+2. 遥测报表能回答「上周每个任务平均花了多少 token、成功率多少」（依赖 M5.2，未开始）
+3. 自建 bench 有从历史会话沉淀新题的流程文档（筛选 → 脱敏 → 题目化）（已完成：`docs/benchmark-authoring.md`）
 
 ## 依赖关系
 
