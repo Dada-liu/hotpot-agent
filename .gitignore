@@ -7,3 +7,6 @@ lib/
 .worktrees/
 
 /Users/
+# macOS
+.DS_Store
+**/.DS_Store
