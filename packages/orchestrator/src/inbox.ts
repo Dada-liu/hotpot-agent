@@ -26,6 +26,8 @@ export interface Inbox {
 	drainNextTurn(): Promise<InboxMessage[]>;
 	// 取出并清空 next-step（供 LoopConfig.pollInbox）
 	pollNextStep(): Promise<string[]>;
+	// 当前两队列快照（只读拷贝，供 web 展示；不改变队列、不落盘）
+	snapshot(): InboxState;
 }
 
 export interface InboxState {
@@ -110,6 +112,13 @@ export function createInbox(
 			state.nextStep = [];
 			// 不落盘，理由同 drainNextTurn
 			return drained.map((m) => m.content);
+		},
+		// 快照返回拷贝：调用方（REST/UI）不得改写内部队列
+		snapshot(): InboxState {
+			return {
+				nextTurn: [...state.nextTurn],
+				nextStep: [...state.nextStep],
+			};
 		},
 	};
 }

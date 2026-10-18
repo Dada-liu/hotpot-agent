@@ -8,7 +8,13 @@
 // - delta 只累加进当前流式段；assistant_msg 到达后流式段定格（以 content 为准）；
 //   turn(end) 与 log(error) 兜底清理（LLM 失败路径无 assistant_msg 定格）
 
-import type { ContentBlock, SessionEvent, WireEvent } from "../protocol.ts";
+import type {
+	ContentBlock,
+	InboxMessage,
+	InboxSnapshot,
+	SessionEvent,
+	WireEvent,
+} from "../protocol.ts";
 
 export type AgentStatus = "running" | "done" | "failed";
 
@@ -103,6 +109,8 @@ export interface ChatState {
 	// token 用量累计：log(assistant_msg) 时按 tier 分组累加
 	// （含历史重放，幂等去重保证不重复计；tier 缺省 "high"，与 core 一致）
 	usage: UsageTotals;
+	// steer/queue 两队列（inbox/spliced 折叠；REST 快照可覆盖修正消费后的残留）
+	inbox: InboxSnapshot;
 	// 已见过的 log 事件 id（幂等去重）
 	seenEventIds: string[];
 }
@@ -122,7 +130,37 @@ export function createInitialState(): ChatState {
 		turn: "idle",
 		panelOpen: false,
 		usage: { total: { input: 0, output: 0 }, byTier: {} },
+		inbox: { nextTurn: [], nextStep: [] },
 		seenEventIds: [],
+	};
+}
+
+// 按消息 id 去重（同快照内重复不重复展示，保留首次出现次序）
+function dedupeMessages(messages: InboxMessage[]): InboxMessage[] {
+	const seen = new Set<string>();
+	const out: InboxMessage[] = [];
+	for (const m of messages) {
+		if (seen.has(m.id)) {
+			continue;
+		}
+		seen.add(m.id);
+		out.push(m);
+	}
+	return out;
+}
+
+// REST 快照覆盖本地折叠状态：消费（drain/poll）不落事件，快照是唯一能纠正
+// 「已消费但仍显示」的路径。拷贝数组避免与调用方共享引用
+export function applyInboxSnapshot(
+	state: ChatState,
+	snapshot: InboxSnapshot,
+): ChatState {
+	return {
+		...state,
+		inbox: {
+			nextTurn: [...snapshot.nextTurn],
+			nextStep: [...snapshot.nextStep],
+		},
 	};
 }
 
@@ -369,8 +407,24 @@ function reduceLog(state: ChatState, event: SessionEvent): ChatState {
 					: state.pendingPlan;
 			return { ...state, transcript, pendingApproval, pendingPlan };
 		}
-		case "inbox/spliced":
-			// steer 队列事件与主对话渲染无关，忽略
+		case "inbox/spliced": {
+			// 每次变更动词落该队列的全量快照：整体替换并按 id 去重（last write wins）
+			const messages = dedupeMessages(event.messages);
+			return {
+				...state,
+				inbox:
+					event.queue === "next-turn"
+						? { ...state.inbox, nextTurn: messages }
+						: { ...state.inbox, nextStep: messages },
+			};
+		}
+		// M4 新增事件：与主对话渲染无关（todo/hook/skill/prompt/mcp 由遥测与审计消费），
+		// 幂等去重已在函数入口完成
+		case "todo/set":
+		case "hook/fired":
+		case "skill/loaded":
+		case "prompt/invoked":
+		case "mcp/attached":
 			return state;
 		case "error": {
 			const entry: TranscriptEntry = {

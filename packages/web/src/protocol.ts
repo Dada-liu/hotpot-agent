@@ -8,6 +8,17 @@ export type ContentBlock =
 	| { type: "text"; text: string }
 	| { type: "tool_call"; id: string; name: string; input: unknown };
 
+// steer/queue 队列消息（inbox/spliced 与 GET /inbox 共用形状）
+export interface InboxMessage {
+	id: string;
+	content: string;
+}
+
+export interface InboxSnapshot {
+	nextTurn: InboxMessage[];
+	nextStep: InboxMessage[];
+}
+
 // 会话事件（SessionEvent 联合的镜像子集）
 export type SessionEvent =
 	// meta 是文件首行，无 id/ts
@@ -76,7 +87,53 @@ export type SessionEvent =
 			ts: string;
 			agentId: string;
 			queue: "next-turn" | "next-step";
-			messages: { id: string; content: string }[];
+			messages: InboxMessage[];
+	  }
+	// M4 新增事件（与 core/src/session/events.ts 逐字段一致；UI 不渲染，按 id 去重即可）
+	| {
+			type: "todo/set";
+			id: string;
+			ts: string;
+			agentId: string;
+			todos: {
+				content: string;
+				status: "pending" | "in_progress" | "completed";
+			}[];
+	  }
+	| {
+			type: "hook/fired";
+			id: string;
+			ts: string;
+			agentId?: string;
+			hook: "session_start" | "pre_tool" | "post_tool" | "turn_end";
+			command: string;
+			exitCode: number;
+			durationMs: number;
+	  }
+	| {
+			type: "skill/loaded";
+			id: string;
+			ts: string;
+			agentId: string;
+			skill: string;
+			path: string;
+	  }
+	| {
+			type: "prompt/invoked";
+			id: string;
+			ts: string;
+			agentId: "main";
+			name: string;
+			args: string;
+			content: string;
+	  }
+	| {
+			type: "mcp/attached";
+			id: string;
+			ts: string;
+			server: string;
+			transport: "stdio" | "http";
+			tools: string[];
 	  }
 	| {
 			type: "error";

@@ -12,6 +12,8 @@ import {
 	answerPlan,
 	cancelTurn,
 	createSession,
+	getInbox,
+	type InboxSnapshot,
 	listPrompts,
 	listSessions,
 	type PromptInfo,
@@ -25,7 +27,12 @@ import { SessionList } from "./components/SessionList.tsx";
 import { type ConnectionState, connect } from "./events.ts";
 import { sessionNameFromPrompt } from "./lib/session-name.ts";
 import type { WireEvent } from "./protocol.ts";
-import { type ChatState, createInitialState, reduce } from "./state/reducer.ts";
+import {
+	applyInboxSnapshot,
+	type ChatState,
+	createInitialState,
+	reduce,
+} from "./state/reducer.ts";
 
 // 会话 id → 首轮提示词提取的显示名，持久化到 localStorage（服务端 SessionSummary 无 name 字段）
 const SESSION_NAMES_KEY = "hotpot.sessionNames";
@@ -50,12 +57,18 @@ function loadSessionNames(): Record<string, string> {
 	}
 }
 
-// reducer 动作：事件折叠或会话切换时重置
-type ChatAction = { type: "event"; event: WireEvent } | { type: "reset" };
+// reducer 动作：事件折叠、队列快照覆盖或会话切换时重置
+type ChatAction =
+	| { type: "event"; event: WireEvent }
+	| { type: "inbox"; snapshot: InboxSnapshot }
+	| { type: "reset" };
 
 function chatReducer(state: ChatState, action: ChatAction): ChatState {
 	if (action.type === "reset") {
 		return createInitialState();
+	}
+	if (action.type === "inbox") {
+		return applyInboxSnapshot(state, action.snapshot);
 	}
 	return reduce(state, action.event);
 }
@@ -90,6 +103,15 @@ export function App() {
 		}
 	}, []);
 
+	// 队列快照：消费（drain/poll）不落事件，回合结束/发送 steer 后拉一次快照修正展示
+	const refreshInbox = useCallback(async (id: string) => {
+		try {
+			dispatch({ type: "inbox", snapshot: await getInbox(id) });
+		} catch {
+			// 快照失败不影响对话；下次触发再试
+		}
+	}, []);
+
 	useEffect(() => {
 		void refreshSessions();
 	}, [refreshSessions]);
@@ -107,6 +129,8 @@ export function App() {
 			.catch(() => {
 				setPrompts([]);
 			});
+		// 队列初始快照（web 重连/切换会话后恢复展示）
+		void refreshInbox(currentId);
 		const conn = connect(
 			currentId,
 			(event) => {
@@ -119,7 +143,15 @@ export function App() {
 		return () => {
 			conn.close();
 		};
-	}, [currentId]);
+	}, [currentId, refreshInbox]);
+
+	// 回合结束（含 abort/失败）后刷新队列快照：step 边界消费不落事件，
+	// 只有快照能清掉已消费的队列条；运行中的 steer/inject 变更由 inbox/spliced 折叠
+	useEffect(() => {
+		if (currentId !== null && chat.turn === "idle") {
+			void refreshInbox(currentId);
+		}
+	}, [currentId, chat.turn, refreshInbox]);
 
 	const handleCreate = (): void => {
 		// Kimi 式延迟创建：直接清空对话区进入欢迎态，首条消息发送时才真正建会话
@@ -163,6 +195,7 @@ export function App() {
 			}
 			if (chat.turn === "running") {
 				await steerMessage(currentId, content);
+				void refreshInbox(currentId);
 			} else {
 				await sendMessage(currentId, content);
 				setSessions((ss) =>

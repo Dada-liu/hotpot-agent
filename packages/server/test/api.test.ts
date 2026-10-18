@@ -890,4 +890,34 @@ describe("HTTP API", () => {
 			content: "Commit task: fix lint\n",
 		});
 	}, 20000);
+
+	it("inbox 快照：空队列、POST steer 后 next-step 出现消息；未知会话 404", async () => {
+		const fx = await startApi(scriptedAdapter([]), "never");
+		const { id } = await createSession(fx, fx.proj);
+
+		const empty = (await (
+			await fetch(`${fx.base}/api/sessions/${id}/inbox`)
+		).json()) as { nextTurn: unknown[]; nextStep: unknown[] };
+		expect(empty).toEqual({ nextTurn: [], nextStep: [] });
+
+		// 空闲会话 steer：消息进入 next-step 并落盘快照，等待下一个回合消费
+		const steerRes = await postJson(`${fx.base}/api/sessions/${id}/steer`, {
+			content: "转向",
+		});
+		expect(steerRes.status).toBe(202);
+
+		const after = (await (
+			await fetch(`${fx.base}/api/sessions/${id}/inbox`)
+		).json()) as {
+			nextTurn: { id: string; content: string }[];
+			nextStep: { id: string; content: string }[];
+		};
+		expect(after.nextTurn).toEqual([]);
+		expect(after.nextStep.map((m) => m.content)).toEqual(["转向"]);
+		expect(typeof after.nextStep[0]?.id).toBe("string");
+
+		expect((await fetch(`${fx.base}/api/sessions/nope/inbox`)).status).toBe(
+			404,
+		);
+	}, 20000);
 });

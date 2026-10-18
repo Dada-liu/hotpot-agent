@@ -4,7 +4,11 @@
 
 import { describe, expect, it } from "vitest";
 import type { ContentBlock, SessionEvent, WireEvent } from "../src/protocol.ts";
-import { createInitialState, reduce } from "../src/state/reducer.ts";
+import {
+	applyInboxSnapshot,
+	createInitialState,
+	reduce,
+} from "../src/state/reducer.ts";
 
 // 造一个 log wire 事件的简写
 function log(seq: number, event: SessionEvent): WireEvent {
@@ -549,5 +553,118 @@ describe("reduce：usage 按 tier 累计", () => {
 			output: 50,
 			count: 1,
 		});
+	});
+});
+
+// M4 Feature②：steer/queue 队列折叠与快照覆盖
+describe("inbox 队列（M4）", () => {
+	function spliced(
+		id: string,
+		queue: "next-turn" | "next-step",
+		messages: { id: string; content: string }[],
+	): SessionEvent {
+		return { type: "inbox/spliced", id, ts, agentId: "main", queue, messages };
+	}
+
+	it("inbox/spliced 按队列整体替换并按消息 id 去重，两队列互不影响", () => {
+		let state = createInitialState();
+		state = reduce(
+			state,
+			log(1, spliced("e1", "next-step", [{ id: "m1", content: "a" }])),
+		);
+		state = reduce(
+			state,
+			log(
+				2,
+				spliced("e2", "next-step", [
+					{ id: "m1", content: "a" },
+					{ id: "m2", content: "b" },
+				]),
+			),
+		);
+		expect(state.inbox.nextStep.map((m) => m.id)).toEqual(["m1", "m2"]);
+
+		// last write wins：新快照里已被消费的 m1 消失
+		state = reduce(
+			state,
+			log(3, spliced("e3", "next-step", [{ id: "m2", content: "b" }])),
+		);
+		expect(state.inbox.nextStep.map((m) => m.id)).toEqual(["m2"]);
+
+		state = reduce(
+			state,
+			log(4, spliced("e4", "next-turn", [{ id: "n1", content: "later" }])),
+		);
+		expect(state.inbox.nextTurn.map((m) => m.id)).toEqual(["n1"]);
+		expect(state.inbox.nextStep.map((m) => m.id)).toEqual(["m2"]);
+	});
+
+	it("applyInboxSnapshot 覆盖两队列（消费后修正展示），且为拷贝语义", () => {
+		let state = createInitialState();
+		state = reduce(
+			state,
+			log(1, spliced("e1", "next-step", [{ id: "m1", content: "a" }])),
+		);
+		const snapshot = {
+			nextTurn: [{ id: "n1", content: "later" }],
+			nextStep: [],
+		};
+		state = applyInboxSnapshot(state, snapshot);
+		expect(state.inbox).toEqual(snapshot);
+		snapshot.nextTurn.push({ id: "n2", content: "外部改写" });
+		expect(state.inbox.nextTurn).toHaveLength(1);
+	});
+
+	it("M4 新增事件不进入主对话投影（幂等去重后原样返回）", () => {
+		let state = createInitialState();
+		const events: SessionEvent[] = [
+			{
+				type: "todo/set",
+				id: "t1",
+				ts,
+				agentId: "worker-1",
+				todos: [{ content: "x", status: "pending" }],
+			},
+			{
+				type: "hook/fired",
+				id: "h1",
+				ts,
+				hook: "pre_tool",
+				command: "exit 0",
+				exitCode: 0,
+				durationMs: 1,
+			},
+			{
+				type: "skill/loaded",
+				id: "s1",
+				ts,
+				agentId: "worker-1",
+				skill: "commit",
+				path: "/x/SKILL.md",
+			},
+			{
+				type: "prompt/invoked",
+				id: "p1",
+				ts,
+				agentId: "main",
+				name: "commit",
+				args: "",
+				content: "body",
+			},
+			{
+				type: "mcp/attached",
+				id: "m1",
+				ts,
+				server: "fs",
+				transport: "stdio",
+				tools: ["mcp__fs__read"],
+			},
+		];
+		for (const event of events) {
+			state = reduce(state, log(1, event));
+		}
+		expect(state.transcript).toEqual([]);
+		expect(state.inbox).toEqual({ nextTurn: [], nextStep: [] });
+		expect(state.seenEventIds).toHaveLength(events.length);
 	});
 });

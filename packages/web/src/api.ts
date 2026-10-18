@@ -1,6 +1,10 @@
 // REST client：与 server/src/app.ts 的路由契约一一对应。
 // 错误统一抛出带服务端 message 的 Error，由调用方（App）兜底展示。
 
+import type { InboxSnapshot } from "./protocol.ts";
+
+export type { InboxSnapshot } from "./protocol.ts";
+
 export interface SessionSummary {
 	id: string;
 	cwd: string;
@@ -119,4 +123,10 @@ export async function listPrompts(sessionId: string): Promise<PromptInfo[]> {
 		`/api/sessions/${encodeURIComponent(sessionId)}/prompts`,
 	)) as { prompts: PromptInfo[] };
 	return body.prompts;
+}
+
+export async function getInbox(sessionId: string): Promise<InboxSnapshot> {
+	return (await request(
+		`/api/sessions/${encodeURIComponent(sessionId)}/inbox`,
+	)) as InboxSnapshot;
 }

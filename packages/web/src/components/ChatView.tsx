@@ -21,7 +21,7 @@ import {
 	isProcessItem,
 	type TurnGroup,
 } from "../lib/turn-groups.ts";
-import type { ContentBlock } from "../protocol.ts";
+import type { ContentBlock, InboxSnapshot } from "../protocol.ts";
 import type { ChatState, TranscriptEntry } from "../state/reducer.ts";
 import { ApprovalPrompt } from "./ApprovalPrompt.tsx";
 import { MessageBubble } from "./MessageBubble.tsx";
@@ -333,6 +333,53 @@ function TurnView({
 	);
 }
 
+// steer/queue 队列条（M4 Feature②）：next-step（steer）在 step 边界消费，
+// next-turn（排队）在回合结束消费；空队列不渲染，可展开看消息正文
+function QueueBar({ inbox }: { inbox: InboxSnapshot }): ReactElement | null {
+	const [open, setOpen] = useState(false);
+	const total = inbox.nextStep.length + inbox.nextTurn.length;
+	if (total === 0) {
+		return null;
+	}
+	const items = [
+		...inbox.nextStep.map((m) => ({ ...m, queue: "steer" })),
+		...inbox.nextTurn.map((m) => ({ ...m, queue: "排队" })),
+	];
+	return (
+		<div className="mb-2 rounded-xl border border-border bg-secondary/40 px-3 py-2 text-xs">
+			<button
+				type="button"
+				className="flex w-full items-center gap-2 text-muted-foreground transition-colors hover:text-foreground"
+				onClick={() => {
+					setOpen((v) => !v);
+				}}
+			>
+				{open ? (
+					<ChevronDown className="size-3" />
+				) : (
+					<ChevronRight className="size-3" />
+				)}
+				{inbox.nextStep.length > 0 && (
+					<span>steer 队列 ({inbox.nextStep.length})</span>
+				)}
+				{inbox.nextTurn.length > 0 && (
+					<span>排队 ({inbox.nextTurn.length})</span>
+				)}
+			</button>
+			{open && (
+				<ul className="mt-2 flex flex-col gap-1">
+					{items.map((m) => (
+						<li key={m.id} className="truncate">
+							<span className="mr-2 text-muted-foreground">{m.queue}</span>
+							{m.content}
+						</li>
+					))}
+				</ul>
+			)}
+		</div>
+	);
+}
+
 interface ChatViewProps {
 	state: ChatState;
 	hasSession: boolean;
@@ -418,6 +465,7 @@ export function ChatView({
 			{hasSession && (
 				<div className="px-4 pb-10 pt-2">
 					<div className="mx-auto max-w-3xl">
+						<QueueBar inbox={state.inbox} />
 						<Composer
 							running={state.turn === "running"}
 							prompts={prompts}

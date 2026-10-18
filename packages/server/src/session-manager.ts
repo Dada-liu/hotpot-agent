@@ -127,6 +127,8 @@ export interface SessionManager {
 	send(id: string, content: string): Promise<void>;
 	// 当前会话可用的 prompt templates（GET 端点与 web 补全共用）
 	prompts(id: string): { name: string; description: string }[];
+	// steer/queue 两队列的只读快照（GET /inbox；web 队列条展示用）
+	inbox(id: string): InboxState;
 	steer(id: string, content: string): Promise<void>;
 	cancel(id: string): void;
 	answerToolApproval(
@@ -688,6 +690,10 @@ export function createSessionManager(
 				name: t.name,
 				description: t.description,
 			}));
+		},
+
+		inbox(id: string): InboxState {
+			return requireManaged(id).inbox.snapshot();
 		},
 
 		async steer(id: string, content: string): Promise<void> {

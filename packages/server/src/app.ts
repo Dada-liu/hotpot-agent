@@ -203,6 +203,13 @@ export function createApp(manager: SessionManager): Hono {
 		return c.json({ prompts: manager.prompts(rec.id) });
 	});
 
+	// M4 Feature②：steer/queue 两队列快照（web 队列条；队列变更同时经 inbox/spliced 落盘）
+	app.get("/api/sessions/:id/inbox", async (c) => {
+		const rec = await requireSession(c.req.param("id"));
+		if (rec === null) return c.json({ error: "会话不存在" }, 404);
+		return c.json(manager.inbox(rec.id));
+	});
+
 	app.post("/api/sessions/:id/steer", async (c) => {
 		const rec = await requireSession(c.req.param("id"));
 		if (rec === null) return c.json({ error: "会话不存在" }, 404);

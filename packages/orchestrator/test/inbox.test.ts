@@ -240,4 +240,25 @@ describe("createInbox 双队列语义", () => {
 		const inbox = createInbox(session, "main");
 		expect(() => inbox.cancel()).not.toThrow();
 	});
+
+	it("snapshot 返回两队列当前状态拷贝；drain/poll 后快照为空", async () => {
+		const session = await createSession("/tmp/proj", home);
+		const inbox = createInbox(session, "main");
+		await inbox.followup("later");
+		await inbox.steer("now");
+
+		const snap = inbox.snapshot();
+		expect(snap.nextTurn.map((m) => m.content)).toEqual(["later"]);
+		expect(snap.nextStep.map((m) => m.content)).toEqual(["now"]);
+
+		// 拷贝语义：调用方改写快照不影响内部队列
+		snap.nextTurn.push({ id: "fake", content: "外部注入" });
+		snap.nextStep.length = 0;
+		expect(inbox.snapshot().nextTurn.map((m) => m.content)).toEqual(["later"]);
+		expect(inbox.snapshot().nextStep.map((m) => m.content)).toEqual(["now"]);
+
+		await inbox.drainNextTurn();
+		await inbox.pollNextStep();
+		expect(inbox.snapshot()).toEqual({ nextTurn: [], nextStep: [] });
+	});
 });
