@@ -366,8 +366,8 @@ describe("M2 验收 1-5（runMainTurn 端到端串联）", () => {
 
 	it("验收 2：complex 任务先展示 plan，批准前零文件改动，批准后 worker 执行", async () => {
 		const approval = new ApprovalChain();
-		// 调用序：1=main delegate(complex)，2=main 起草前说明，3=main 起草 plan，
-		// 4=main spawn_workers，5=worker 写 auth.ts，6=worker 摘要收尾，7=main 最终回复
+		// 调用序：1=main delegate(complex)，2=main 在初始轮产出 plan，
+		// 3=main spawn_workers，4=worker 写 auth.ts，5=worker 摘要收尾，6=main 最终回复
 		const planV1 =
 			"PLAN v1: (1) add auth routes (2) add login page. Files: auth.ts, login.tsx.";
 		const { runtime } = await makeScriptedRuntime(
@@ -375,7 +375,6 @@ describe("M2 验收 1-5（runMainTurn 端到端串联）", () => {
 				delegateRound(
 					'{"difficulty":"complex","modelTier":"high","task":"给项目加用户认证"}',
 				),
-				textRound("我来起草实现计划。", { input: 100, output: 20 }),
 				textRound(planV1, { input: 200, output: 60 }),
 				spawnWorkersRound(
 					'{"workers":[{"task":"实现后端 auth 路由","modelTier":"high"}]}',

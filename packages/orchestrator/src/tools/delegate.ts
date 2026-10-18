@@ -2,7 +2,7 @@
 // 三个难度分支：trivial 只返回「直接回答」提示；simple 派一个 worker 并复用
 // run-worker 的内联执行跑完它的整个 turn（worker 事件不外传，M2 计划决定 #3），
 // 回收最后一条 assistant_msg 文本作为摘要回传；complex 只记录状态（phase 转 planning），
-// plan 流程由 plan.ts 的 runPlanPhase 接管。
+// main 随后在同一轮产出计划正文，plan 流程由 plan.ts 的 runPlanPhase 接管审批。
 // 重复调用由 TurnState.lastDelegate 守卫：首次判定后即视为已消费（含 trivial），
 // 再调用返回 isError。worker 不复用 main 的适配器：走 runtime.resolveModel(modelTier)
 // 解析 worker 自己的档位模型与凭证；spawn 的 parentAgentId 固定 "main"（包级约定）。
@@ -76,7 +76,12 @@ export function createDelegateTool(
 			}
 			if (args.difficulty === "complex") {
 				state.phase = "planning";
-				return { content: "难度为 complex：生成 plan 并等待审批。" };
+				return {
+					content:
+						"difficulty=complex: produce the full plan (steps, files involved, " +
+						"acceptance criteria) as your final message now. The approval step " +
+						"follows automatically; do not ask for confirmation in prose.",
+				};
 			}
 			state.phase = "executing";
 			const { agentId } = await runtime.spawn({

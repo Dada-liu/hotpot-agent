@@ -1,14 +1,17 @@
 // plan 审批流（complex 任务的 human-in-the-loop 修订循环，编排文档 §3）。
-// 每轮：起草 runTurn（user_msg 提示起草，批注轮携带批注内容）→ 取 main 最后一条
-// assistant_msg 文本为 plan → yield drafted → await onPlanApproval（缺省 fail-closed 拒绝）
-// → 按决定分流：
+// 计划正文优先复用初始轮（main 在 delegate 之后产出的最终消息）：只有计划缺失、
+// 或 plan 开始时 next-step 队列非空（需要让模型看到用户 steer）时才跑一轮内部起草；
+// 批注修订仍走起草轮。每轮：整理 plan → yield drafted（携带作为计划落盘的 assistant
+// 消息 id，供 UI 隐藏正文气泡）→ await onPlanApproval（缺省 fail-closed 拒绝）→ 分流：
 //   approve  → 落盘 asked/decided(approved)，state.planApproved/phase 翻转，yield approved，
-//              追加执行 kickoff user_msg 后返回（main-turn 接着跑执行 turn）
+//              追加执行 kickoff internal_msg 后返回（main-turn 接着跑执行 turn）
 //   annotate → revisions++；revisions > planMaxRevisions 时 yield revision_exhausted、
 //              落盘说明并结束（不再 asked —— 超限轮的 asked/decided 不落盘）；
-//              否则 decided(denied, note=批注) 落盘后带批注进入下一轮修订
-//   reject   → decided(denied, note=拒绝理由) 落盘，yield denied，追加拒绝提示，
+//              否则 asked/decided(denied, note=批注) 落盘后带批注进入下一轮修订
+//   reject   → asked/decided(denied, note=拒绝理由) 落盘，yield denied，追加拒绝提示，
 //              跑一轮收尾 runTurn（main 回复用户）后结束
+// 内部提示统一写 internal_msg（进入模型历史、UI 不渲染），plan 阶段注册表为空，
+// 避免模型把它当成新用户消息再次调用 delegate。
 // asked/decided 在拿到决定后落盘：asked payload {kind:"plan", plan}，
 // 超限场景 asked 总数 == planMaxRevisions（第 planMaxRevisions+1 次起草不再询问）。
 
@@ -19,17 +22,24 @@ import {
 	type ModelTier,
 	runTurn,
 } from "@hotpot/core";
-import { buildRoleSystemPrompt } from "./prompts.ts";
+import type { Inbox } from "./inbox.ts";
+import { buildRoleSystemPrompt, PLANNING_INSTRUCTIONS } from "./prompts.ts";
 import { createRoleRegistry } from "./registries.ts";
 import type { OrchestrationRuntime } from "./runtime.ts";
-import { createDelegateTool, type TurnState } from "./tools/delegate.ts";
-import { createSpawnWorkersTool } from "./tools/spawn-workers.ts";
+import type { TurnState } from "./tools/delegate.ts";
 import type { OrchestrationEvent } from "./types.ts";
 
 export type PlanDecision =
 	| { kind: "approve" }
 	| { kind: "reject"; note: string }
 	| { kind: "annotate"; note: string };
+
+export interface PlanPhaseOptions {
+	onPlanApproval?: (plan: string) => Promise<PlanDecision>;
+	// steer/queue 双队列：plan 起草/修订/拒绝收尾轮同样在 step 顶部消费 next-step；
+	// 队列非空时先跑一轮 reconcile 起草，保证 steer 在审批前进入模型上下文
+	inbox?: Inbox;
+}
 
 // 主agent 的 agentId 固定为 "main"：与 main-turn.ts 的 MAIN_AGENT_ID 是同一包级约定
 const MAIN_AGENT_ID = "main";
@@ -39,39 +49,89 @@ const DRAFT_PROMPT =
 	"Draft the implementation plan for the approved scope: steps, files involved, " +
 	"acceptance criteria. Output ONLY the plan.";
 
-// 读取 main 最后一条 assistant_msg，拼接其文本块作为本轮 plan 草稿
-async function readMainPlanText(
-	runtime: OrchestrationRuntime,
-): Promise<string> {
-	const { events } = await loadSession(runtime.session.filePath);
-	const messages = events.filter(
-		(e) => e.type === "assistant_msg" && e.agentId === MAIN_AGENT_ID,
+// 初始轮已产出计划、但用户在计划期间又发来 steer：让模型把 steer 纳入后重出最终版
+const RECONCILE_PROMPT =
+	"The user sent follow-up messages while you were planning. Take them into " +
+	"account, revise the plan if needed, and output ONLY the final plan.";
+
+// 批注修订提示：批注原文进入内部消息，驱动下一版计划
+function revisionPrompt(annotation: string): string {
+	return (
+		`The user annotated the previous plan: "${annotation}". Revise the plan ` +
+		"accordingly. Output ONLY the revised plan."
 	);
-	const last = messages[messages.length - 1];
-	if (last?.type !== "assistant_msg") return "";
-	return last.content
-		.filter((b) => b.type === "text")
-		.map((b) => b.text)
-		.join("");
+}
+
+// 计划被拒绝后的收尾提示：只回复用户，不执行任何操作
+const REJECTED_PROMPT =
+	"Plan rejected by user. Reply briefly without executing anything.";
+
+// 起草轮没有产出任何文本时的兜底提示：让 main 告知用户，而不是拿空计划去审批
+const EMPTY_PLAN_PROMPT =
+	"No plan text was produced. Stop and tell the user that you could not produce a plan.";
+
+interface PlanDraft {
+	id: string;
+	text: string;
+}
+
+// 读当前回合（最后一条 main user_msg 之后）最后一条带文本的 main assistant_msg。
+// internal_msg 不算用户输入，因此批注修订/steer 注入后仍能定位到最新草稿。
+async function readLastPlanDraft(
+	runtime: OrchestrationRuntime,
+): Promise<PlanDraft | null> {
+	const { events } = await loadSession(runtime.session.filePath);
+	let start = 0;
+	for (let i = events.length - 1; i >= 0; i--) {
+		const event = events[i];
+		if (event?.type === "user_msg" && event.agentId === MAIN_AGENT_ID) {
+			start = i + 1;
+			break;
+		}
+	}
+	for (let i = events.length - 1; i >= start; i--) {
+		const event = events[i];
+		if (event?.type !== "assistant_msg" || event.agentId !== MAIN_AGENT_ID) {
+			continue;
+		}
+		const text = event.content
+			.filter((b) => b.type === "text")
+			.map((b) => b.text)
+			.join("");
+		if (text.trim() !== "") {
+			return { id: event.id, text };
+		}
+	}
+	return null;
+}
+
+// 内部延续提示：进入模型历史但不进入 UI transcript
+async function appendInternal(
+	runtime: OrchestrationRuntime,
+	content: string,
+): Promise<void> {
+	await runtime.session.append({
+		type: "internal_msg",
+		id: randomUUID(),
+		ts: new Date().toISOString(),
+		agentId: MAIN_AGENT_ID,
+		content,
+	});
 }
 
 export async function* runPlanPhase(
 	runtime: OrchestrationRuntime,
 	state: TurnState,
 	signal: AbortSignal,
-	onPlanApproval?: (plan: string) => Promise<PlanDecision>,
+	options: PlanPhaseOptions = {},
 ): AsyncIterable<OrchestrationEvent> {
-	// 起草/收尾轮与执行轮同款注册表：main 只挂 delegate + spawn_workers 元工具。
-	// 起草期 planApproved 仍为 false，spawn_workers 被守卫挡住，不会提前执行
-	const delegateTool = createDelegateTool(runtime, state);
-	const spawnWorkersTool = createSpawnWorkersTool(runtime, state);
-	const registry = createRoleRegistry(runtime, MAIN_AGENT_ID, [
-		delegateTool,
-		spawnWorkersTool,
-	]);
+	// plan 阶段不挂任何工具：起草/修订只用模型能力，delegate/spawn_workers 都不可用
+	const registry = createRoleRegistry(runtime, MAIN_AGENT_ID, []);
 	// 起草轮沿用 delegate 判定的档位（complex 固定 high），缺省回退 high
 	const tier: ModelTier = state.lastDelegate?.modelTier ?? "high";
 	const resolved = runtime.resolveModel(tier);
+	const inbox = options.inbox;
+	const pollInbox = inbox ? () => inbox.pollNextStep() : undefined;
 	const cfg: LoopConfig = {
 		session: runtime.session,
 		agentId: MAIN_AGENT_ID,
@@ -82,38 +142,70 @@ export async function* runPlanPhase(
 		registry,
 		approval: runtime.approval,
 		cwd: runtime.cwd,
-		system: buildRoleSystemPrompt(MAIN_AGENT_ID, {
-			cwd: runtime.cwd,
-			os: process.platform,
-			date: new Date().toISOString().slice(0, 10),
-			tools: registry.declarations(),
-		}),
+		system: buildRoleSystemPrompt(
+			MAIN_AGENT_ID,
+			{
+				cwd: runtime.cwd,
+				os: process.platform,
+				date: new Date().toISOString().slice(0, 10),
+				tools: registry.declarations(),
+			},
+			{ instructions: PLANNING_INSTRUCTIONS },
+		),
 		tier,
+		pollInbox,
 	};
 
-	let annotation: string | undefined;
-	while (true) {
-		const draftingPrompt =
-			annotation === undefined
-				? DRAFT_PROMPT
-				: `The user annotated the previous plan: "${annotation}". Revise the plan ` +
-					"accordingly. Output ONLY the revised plan.";
-		await runtime.session.append({
-			type: "user_msg",
-			id: randomUUID(),
-			ts: new Date().toISOString(),
-			agentId: MAIN_AGENT_ID,
-			content: draftingPrompt,
-		});
-		for await (const event of runTurn(cfg, signal)) {
-			yield event;
-		}
-		if (signal.aborted) return;
+	let draft = await readLastPlanDraft(runtime);
+	// 所有作为计划草稿落盘的 assistant 消息 id：web 用它们隐藏正文气泡
+	const messageIds: string[] = draft === null ? [] : [draft.id];
+	// 初始轮已有计划时直接进入审批；队列里有 steer 则先 reconcile 一轮
+	let needsDraft =
+		draft === null || (options.inbox?.snapshot().nextStep.length ?? 0) > 0;
+	let revisionNote: string | undefined;
 
-		const plan = await readMainPlanText(runtime);
-		yield { type: "plan", phase: "drafted", plan };
-		const decision: PlanDecision = onPlanApproval
-			? await onPlanApproval(plan)
+	while (true) {
+		if (needsDraft) {
+			const prompt =
+				revisionNote !== undefined
+					? revisionPrompt(revisionNote)
+					: draft === null
+						? DRAFT_PROMPT
+						: RECONCILE_PROMPT;
+			await appendInternal(runtime, prompt);
+			revisionNote = undefined;
+			for await (const event of runTurn(cfg, signal)) {
+				yield event;
+			}
+			if (signal.aborted) return;
+
+			const next = await readLastPlanDraft(runtime);
+			if (next !== null) {
+				draft = next;
+				if (!messageIds.includes(next.id)) {
+					messageIds.push(next.id);
+				}
+			}
+			needsDraft = false;
+		}
+
+		if (draft === null) {
+			await appendInternal(runtime, EMPTY_PLAN_PROMPT);
+			for await (const event of runTurn(cfg, signal)) {
+				yield event;
+			}
+			return;
+		}
+
+		const plan = draft.text;
+		yield {
+			type: "plan",
+			phase: "drafted",
+			plan,
+			messageIds: [...messageIds],
+		};
+		const decision: PlanDecision = options.onPlanApproval
+			? await options.onPlanApproval(plan)
 			: { kind: "reject", note: "no approval handler" };
 
 		if (decision.kind === "annotate") {
@@ -121,16 +213,12 @@ export async function* runPlanPhase(
 			if (state.revisions > runtime.planMaxRevisions) {
 				// 修订耗尽：第 planMaxRevisions+1 次批注直接结束，不再 asked/起草
 				yield { type: "plan", phase: "revision_exhausted" };
-				await runtime.session.append({
-					type: "user_msg",
-					id: randomUUID(),
-					ts: new Date().toISOString(),
-					agentId: MAIN_AGENT_ID,
-					content:
-						`Plan revision limit reached (${String(runtime.planMaxRevisions)} ` +
+				await appendInternal(
+					runtime,
+					`Plan revision limit reached (${String(runtime.planMaxRevisions)} ` +
 						"revisions allowed). The plan is not approved; stop planning and " +
 						"tell the user.",
-				});
+				);
 				return;
 			}
 		}
@@ -155,13 +243,10 @@ export async function* runPlanPhase(
 			state.planApproved = true;
 			state.phase = "executing";
 			yield { type: "plan", phase: "approved" };
-			await runtime.session.append({
-				type: "user_msg",
-				id: randomUUID(),
-				ts: new Date().toISOString(),
-				agentId: MAIN_AGENT_ID,
-				content: "Plan approved. Break the work down and call spawn_workers.",
-			});
+			await appendInternal(
+				runtime,
+				"Plan approved. Break the work down and call spawn_workers.",
+			);
 			return;
 		}
 
@@ -175,18 +260,13 @@ export async function* runPlanPhase(
 			note: decision.note,
 		});
 		if (decision.kind === "annotate") {
-			annotation = decision.note;
+			revisionNote = decision.note;
+			needsDraft = true;
 			continue;
 		}
 
 		yield { type: "plan", phase: "denied" };
-		await runtime.session.append({
-			type: "user_msg",
-			id: randomUUID(),
-			ts: new Date().toISOString(),
-			agentId: MAIN_AGENT_ID,
-			content: "Plan rejected by user.",
-		});
+		await appendInternal(runtime, REJECTED_PROMPT);
 		// 收尾轮：main 基于「计划被拒」回复用户，回合随之结束
 		for await (const event of runTurn(cfg, signal)) {
 			yield event;

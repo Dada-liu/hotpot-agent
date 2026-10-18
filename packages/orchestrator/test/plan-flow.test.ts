@@ -9,6 +9,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+	type ChatRequest,
 	type ContentBlock,
 	type LlmAdapter,
 	type StreamEvent,
@@ -24,6 +25,7 @@ import {
 	type Settings,
 } from "@hotpot/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createInbox, type Inbox } from "../src/inbox.ts";
 import { runMainTurn } from "../src/main-turn.ts";
 import { type PlanDecision, runPlanPhase } from "../src/plan.ts";
 import { createRuntime, type OrchestrationRuntime } from "../src/runtime.ts";
@@ -57,7 +59,12 @@ async function makeRuntime(
 	script: StreamEvent[][],
 	approval: ApprovalChain,
 	planMaxRevisions?: number,
-): Promise<{ runtime: OrchestrationRuntime; usages: Usage[] }> {
+	onCall?: (callIndex: number) => Promise<void> | void,
+): Promise<{
+	runtime: OrchestrationRuntime;
+	usages: Usage[];
+	requests: ChatRequest[];
+}> {
 	const session = await createSession(proj, home);
 	const base = createRuntime({
 		session,
@@ -68,10 +75,16 @@ async function makeRuntime(
 	});
 	const inner = scriptedAdapter(script);
 	const usages: Usage[] = [];
+	const requests: ChatRequest[] = [];
+	let calls = 0;
 	const adapter: LlmAdapter = {
 		api: inner.api,
 		streamChat(req, signal) {
+			calls += 1;
+			requests.push(req);
+			const callIndex = calls;
 			return (async function* (): AsyncGenerator<StreamEvent> {
+				await onCall?.(callIndex);
 				for await (const ev of inner.streamChat(req, signal)) {
 					if (ev.type === "usage") usages.push(ev.usage);
 					yield ev;
@@ -85,7 +98,7 @@ async function makeRuntime(
 			return { ...base.resolveModel(tier), adapter };
 		},
 	};
-	return { runtime, usages };
+	return { runtime, usages, requests };
 }
 
 async function collect(
@@ -153,15 +166,14 @@ describe("plan 审批流（complex）", () => {
 			approvalAsks += 1;
 			return Promise.resolve("next");
 		});
-		// 调用序：1=main delegate(complex)，2=main 收尾，3=main 起草 plan，
-		// 4=main spawn_workers，5=worker 写 auth.ts（新文件，不触发审批），
-		// 6=worker 摘要收尾，7=main 最终回复
-		const { runtime } = await makeRuntime(
+		// 调用序：1=main delegate(complex)，2=main 在初始轮产出 plan（plan 阶段直接复用，
+		// 不再多跑一轮起草），3=main spawn_workers，4=worker 写 auth.ts（新文件，不触发审批），
+		// 5=worker 摘要收尾，6=main 最终回复
+		const { runtime, usages } = await makeRuntime(
 			[
 				delegateRound(
 					'{"difficulty":"complex","modelTier":"high","task":"给项目加用户认证"}',
 				),
-				textRound("我来起草实现计划。", { input: 100, output: 20 }),
 				textRound(planText(1), { input: 200, output: 60 }),
 				spawnWorkersRound(
 					'{"workers":[{"task":"实现后端 auth 路由","modelTier":"high"}]}',
@@ -196,13 +208,19 @@ describe("plan 审批流（complex）", () => {
 		// 审批回调拿到的是 main 起草的 plan 文本
 		expect(seenPlans).toEqual([planText(1)]);
 
-		// 编排事件：drafted 带 plan 文本，随后 approved
+		// 编排事件：drafted 带 plan 文本与计划正文消息 id，随后 approved
 		const drafted = events.find((e) => e.type === "plan");
-		expect(drafted).toEqual({
+		expect(drafted).toMatchObject({
 			type: "plan",
 			phase: "drafted",
 			plan: planText(1),
 		});
+		if (drafted?.type !== "plan") throw new Error("drafted event missing");
+		expect(drafted.messageIds).toHaveLength(1);
+
+		// 初始轮计划被复用：不再产生第二次起草调用（delegate + plan + spawn + write +
+		// worker 摘要 + main 收尾 = 6 次 streamChat）
+		expect(usages).toHaveLength(6);
 		const approvedIdx = events.findIndex(
 			(e) => e.type === "plan" && e.phase === "approved",
 		);
@@ -223,6 +241,17 @@ describe("plan 审批流（complex）", () => {
 		expect(spawnResult.output.content).toContain("auth.ts");
 
 		const { events: fileEvents } = await loadSession(runtime.session.filePath);
+
+		// messageIds 精确指向初始轮产出计划正文的那条 main assistant_msg
+		const planAssistant = fileEvents.find(
+			(e): e is Extract<SessionEvent, { type: "assistant_msg" }> =>
+				e.type === "assistant_msg" &&
+				e.agentId === "main" &&
+				e.content.some(
+					(b) => b.type === "text" && b.text.includes(planText(1)),
+				),
+		);
+		expect(drafted.messageIds).toEqual([planAssistant?.id]);
 
 		// 会话日志：asked 带 plan payload，decision=approved
 		const asked = fileEvents.filter(
@@ -278,23 +307,98 @@ describe("plan 审批流（complex）", () => {
 		expect(workerMsgs.length).toBeGreaterThan(0);
 		expect(workerMsgs[workerMsgs.length - 1]?.model).toBe("claude-sonnet-4-5");
 
-		// 批准后才有执行：起草提示、批准 kickoff 落盘；plan 审批不走 ApprovalChain
+		// 批准后才有执行：初始计划不再触发额外起草；批准 kickoff 是 internal_msg
 		const userMsgs = fileEvents.filter(
 			(e): e is Extract<SessionEvent, { type: "user_msg" }> =>
 				e.type === "user_msg" && e.agentId === "main",
 		);
 		expect(
 			userMsgs.some((m) => m.content.includes("Draft the implementation plan")),
-		).toBe(true);
+		).toBe(false);
+		const internalMsgs = fileEvents.filter(
+			(e): e is Extract<SessionEvent, { type: "internal_msg" }> =>
+				e.type === "internal_msg" && e.agentId === "main",
+		);
 		expect(
-			userMsgs.some((m) =>
+			internalMsgs.some((m) =>
 				m.content.includes(
 					"Plan approved. Break the work down and call spawn_workers.",
 				),
 			),
 		).toBe(true);
+		// 初始轮已有计划且队列为空：没有额外起草提示
+		expect(
+			internalMsgs.some((m) =>
+				m.content.includes("Draft the implementation plan"),
+			),
+		).toBe(false);
 		expect(approvalAsks).toBe(0);
 		expect(events.at(-1)).toEqual({ type: "done", stopReason: "stop" });
+	});
+
+	it("plan 期间 steer：队列非空时先 reconcile，steer 在审批前进入模型历史", async () => {
+		const approval = new ApprovalChain();
+		let inbox: Inbox | null = null;
+		// 调用序：1=delegate，2=初始 plan（此时用户 steer），3=reconcile 起草，
+		// 4=拒绝后的收尾回复
+		const { runtime, requests } = await makeRuntime(
+			[
+				delegateRound(
+					'{"difficulty":"complex","modelTier":"high","task":"给项目加用户认证"}',
+				),
+				textRound(planText(1), { input: 200, output: 60 }),
+				textRound(planText(2), { input: 220, output: 60 }),
+				textRound("好的，不做任何实现。", { input: 100, output: 20 }),
+			],
+			approval,
+			undefined,
+			async (callIndex) => {
+				if (callIndex === 2) {
+					if (inbox === null) throw new Error("inbox missing");
+					await inbox.steer("改用 React 实现");
+				}
+			},
+		);
+		inbox = createInbox(runtime.session, "main");
+		const plans: string[] = [];
+		const events = await collect(
+			runMainTurn({
+				runtime,
+				userMessage: "给项目加用户认证",
+				signal: new AbortController().signal,
+				mainTier: "high",
+				inbox,
+				onPlanApproval: (plan) => {
+					plans.push(plan);
+					return Promise.resolve<PlanDecision>({
+						kind: "reject",
+						note: "先不做了",
+					});
+				},
+			}),
+		);
+
+		// 初始计划 v1 被 steer 触发 reconcile，最终审批的是 v2
+		expect(plans).toEqual([planText(2)]);
+		const drafted = events.find((e) => e.type === "plan");
+		if (drafted?.type !== "plan") throw new Error("drafted event missing");
+		expect(drafted.messageIds).toHaveLength(2);
+		// 第 3 次请求（reconcile 起草）的模型历史包含 steer
+		expect(JSON.stringify(requests[2]?.messages)).toContain("改用 React 实现");
+		// plan 阶段不挂 delegate：请求里只有空工具列表
+		expect(requests[2]?.tools).toEqual([]);
+
+		const { events: fileEvents } = await loadSession(runtime.session.filePath);
+		expect(
+			fileEvents.some(
+				(e) =>
+					e.type === "user_msg" &&
+					e.agentId === "main" &&
+					e.content === "改用 React 实现",
+			),
+		).toBe(true);
+		// 队列已被消费
+		expect(inbox.snapshot().nextStep).toHaveLength(0);
 	});
 
 	it("批注路径：annotate 两次后 approve，revisions === 2，起草请求携带批注，decided 带 note", async () => {
@@ -316,11 +420,13 @@ describe("plan 审批流（complex）", () => {
 			{ kind: "approve" },
 		];
 		const events = await collect(
-			runPlanPhase(runtime, state, new AbortController().signal, (plan) => {
-				notes.push(plan);
-				const decision = decisions.shift();
-				if (!decision) throw new Error("unexpected approval callback");
-				return Promise.resolve(decision);
+			runPlanPhase(runtime, state, new AbortController().signal, {
+				onPlanApproval: (plan) => {
+					notes.push(plan);
+					const decision = decisions.shift();
+					if (!decision) throw new Error("unexpected approval callback");
+					return Promise.resolve(decision);
+				},
 			}),
 		);
 
@@ -370,11 +476,11 @@ describe("plan 审批流（complex）", () => {
 		expect(decided[0]?.note).toBe("加测试");
 		expect(decided[1]?.note).toBe("再改");
 
-		// 起草请求（main 的 user_msg）携带批注内容，驱动修订版 plan；
-		// 「Plan approved.」kickoff 也是 main 的 user_msg，按起草提示措辞区分
+		// 起草请求（main 的 internal_msg）携带批注内容，驱动修订版 plan；
+		// 内部提示不再污染 user_msg，UI 不会出现伪造的用户消息
 		const draftingMsgs = fileEvents.filter(
-			(e): e is Extract<SessionEvent, { type: "user_msg" }> =>
-				e.type === "user_msg" &&
+			(e): e is Extract<SessionEvent, { type: "internal_msg" }> =>
+				e.type === "internal_msg" &&
 				e.agentId === "main" &&
 				e.content.includes("Output ONLY"),
 		);
@@ -398,9 +504,13 @@ describe("plan 审批流（complex）", () => {
 		);
 		const state = planningState();
 		const events = await collect(
-			runPlanPhase(runtime, state, new AbortController().signal, () =>
-				Promise.resolve<PlanDecision>({ kind: "annotate", note: "还不够" }),
-			),
+			runPlanPhase(runtime, state, new AbortController().signal, {
+				onPlanApproval: () =>
+					Promise.resolve<PlanDecision>({
+						kind: "annotate",
+						note: "还不够",
+					}),
+			}),
 		);
 
 		// 第 4 次起草照常发生（drafted v4），其批注触发超限后 revision_exhausted
@@ -425,11 +535,11 @@ describe("plan 审批流（complex）", () => {
 		expect(
 			fileEvents.filter((e) => e.type === "approval/decided"),
 		).toHaveLength(3);
-		// 超限说明已落盘给 main，结束本轮 plan 流程
+		// 超限说明以 internal_msg 落盘给 main，结束本轮 plan 流程
 		expect(
 			fileEvents.some(
 				(e) =>
-					e.type === "user_msg" &&
+					e.type === "internal_msg" &&
 					e.agentId === "main" &&
 					e.content.includes("revision limit"),
 			),
@@ -438,13 +548,13 @@ describe("plan 审批流（complex）", () => {
 
 	it("拒绝路径：reject 后无 spawn_workers 执行、无 worker agent_spawn", async () => {
 		const approval = new ApprovalChain();
-		// 调用序：1=main delegate(complex)，2=main 收尾，3=main 起草 plan，4=main 收尾回复用户
+		// 调用序：1=main delegate(complex)，2=main 在初始轮产出 plan，
+		// 3=main 收到拒绝提示后收尾回复用户
 		const { runtime } = await makeRuntime(
 			[
 				delegateRound(
 					'{"difficulty":"complex","modelTier":"high","task":"给项目加用户认证"}',
 				),
-				textRound("我来起草实现计划。", { input: 100, output: 20 }),
 				textRound(planText(1), { input: 200, output: 60 }),
 				textRound("好的，计划被拒绝，不做任何实现。", {
 					input: 100,
@@ -494,9 +604,9 @@ describe("plan 审批流（complex）", () => {
 		expect(
 			fileEvents.some(
 				(e) =>
-					e.type === "user_msg" &&
+					e.type === "internal_msg" &&
 					e.agentId === "main" &&
-					e.content === "Plan rejected by user.",
+					e.content.includes("Plan rejected by user."),
 			),
 		).toBe(true);
 	});

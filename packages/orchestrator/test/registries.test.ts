@@ -131,9 +131,9 @@ describe("buildRoleSystemPrompt 角色指令", () => {
 		// §2 边界示例：≤3 文件 → simple；拿不准 → complex
 		expect(prompt).toContain("at most 3 files");
 		expect(prompt).toContain("When in doubt");
-		// trivial 直接答、complex 先给 plan 等用户批准
+		// trivial 直接答、complex 在初始轮产出 plan，由系统发起审批
 		expect(prompt).toMatch(/[Aa]nswer directly/);
-		expect(prompt).toMatch(/approval before/);
+		expect(prompt).toMatch(/shows it to the user for approval/);
 		// main 不操作文件：工具清单来自 ctx.tools（delegate/spawn_workers），不列文件四件套
 		expect(prompt).toContain("delegate");
 		expect(prompt).not.toContain("- bash:");

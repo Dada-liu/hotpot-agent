@@ -23,4 +23,6 @@ export type OrchestrationEvent =
 			type: "plan";
 			phase: "drafted" | "approved" | "denied" | "revision_exhausted";
 			plan?: string;
+			// 作为计划草稿落盘的 main assistant_msg id：UI 隐藏正文气泡，只保留计划卡片
+			messageIds?: string[];
 	  };

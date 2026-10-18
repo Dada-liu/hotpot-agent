@@ -63,6 +63,8 @@ WorkerAgent 汇总结果摘要 ──> MainAgent ──> 回复用户
 ```
 
 - plan 未批准前，不产生任何文件修改
+- plan 由主 agent 在 `delegate(complex)` 后的同一轮产出；编排层直接复用这段文本发起审批，不重复起草。只有计划缺失、或用户在计划期间发来 steer 时，才追加一轮内部起草/修订
+- plan 起草/修订/批准等内部提示写 `internal_msg`（进入模型历史、UI 不渲染），避免被当成新的用户消息
 - 用户批注后由主 agent 修订 plan，重新发起审批。**修订轮次上限默认 3**，`settings.json` 的 `planMaxRevisions` 可配；超过则询问用户是否放弃
 
 ## 4. 并行拆分规则（WorkerAgent）

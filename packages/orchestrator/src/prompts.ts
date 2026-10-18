@@ -29,12 +29,12 @@ import type { AgentRole } from "./types.ts";
 // 主 agent 固定 high 档，按难度同步决定 worker 档位（simple 可降档省钱，complex 给 high）。
 const MAIN_INSTRUCTIONS = `You are the main agent — the single entry point of the conversation in a three-layer orchestration system.
 
-First action on every user message: assess the task difficulty (state it via your delegation tool, not in a separate round-trip).
+First action on every user message: assess the task difficulty (state it via your delegation tool, not in a separate round-trip). Follow-up/steer messages injected while a turn is running belong to the same task; do not re-assess difficulty or call delegate again for them.
 
 Difficulty levels:
 - trivial: pure Q&A, no tools needed. Answer directly in plain text.
 - simple: tools needed, but the boundary is clear. Skip plan review and dispatch exactly one worker agent.
-- complex: multi-module, multi-step, or uncertain. Produce a plan (steps, files involved, acceptance criteria) and wait for user approval before any execution.
+- complex: multi-module, multi-step, or uncertain. After calling delegate, produce the full plan (steps, files involved, acceptance criteria) as your final message in this same turn. The system then shows it to the user for approval; do not claim it is approved and do not ask for confirmation in prose.
 
 Difficulty rules:
 - If the files involved are predictable and at most 3 files, classify as simple.
@@ -49,6 +49,21 @@ Model tier routing:
 - Task agents inherit their worker's tier; you never route them directly.
 
 You do not operate on files yourself — orchestrate via your tools. When execution finishes, collect the worker summaries and reply to the user with a concise result.`;
+
+// plan 阶段指令：只起草/修订计划，不执行、不调工具。该阶段注册表为空，
+// 避免模型把内部延续提示当成新的用户任务再次调用 delegate
+export const PLANNING_INSTRUCTIONS = `You are the main agent in the planning phase of a complex task.
+
+- Do not execute the task and do not call any tools.
+- When asked to draft or revise a plan, output ONLY the plan text: steps, files involved, and acceptance criteria.
+- When asked to reply to the user about a rejected plan, answer briefly without executing anything.`;
+
+// 执行阶段指令：计划已批准，只通过 spawn_workers 派发；不再挂 delegate
+export const EXECUTION_INSTRUCTIONS = `You are the main agent in the execution phase. The user approved the plan.
+
+- Break the approved plan into self-contained worker tasks and call spawn_workers once per execution phase.
+- Do not operate on files yourself and do not re-assess task difficulty.
+- When the workers finish, reply to the user with a concise result summary.`;
 
 // worker 指令：把派发任务执行到底；过大时可按 §4 三条件（无写冲突 / 无顺序依赖 / 各自独立完整）
 // 拆给 spawn_tasks，并保留 §4 正反例（8 文件审查可拆、写函数+写测试因签名依赖须串行）；
@@ -87,12 +102,16 @@ const ROLE_INSTRUCTIONS: Record<AgentRole, string> = {
 	task: TASK_INSTRUCTIONS,
 };
 
-// 角色指令段：order 取 rules(2000) 与 env(3000) 之间的 2500，段名带角色便于排查
-function roleInstructionSection(role: AgentRole): PromptSection {
+// 角色指令段：order 取 rules(2000) 与 env(3000) 之间的 2500，段名带角色便于排查。
+// instructions 覆盖用于同一角色的不同阶段（main 的 plan / 执行阶段）
+function roleInstructionSection(
+	role: AgentRole,
+	instructions: string,
+): PromptSection {
 	return {
 		name: `role-instructions-${role}`,
 		order: (SECTION_ORDER.RULES + SECTION_ORDER.ENV) / 2,
-		text: ROLE_INSTRUCTIONS[role],
+		text: instructions,
 	};
 }
 
@@ -123,11 +142,12 @@ function todosSection(todos: TodoItem[]): PromptSection {
 }
 
 // 基础四段 + 角色指令段，全部本地组装，不走全局注册表；
-// opts.skills/opts.todos 为可选动态段数据源（缺省/空数组不出段，默认行为与 M2 一致）
+// opts.skills/opts.todos 为可选动态段数据源（缺省/空数组不出段，默认行为与 M2 一致）；
+// opts.instructions 覆盖角色指令段（main 的 plan / 执行阶段使用）
 export function buildRoleSystemPrompt(
 	role: AgentRole,
 	ctx: PromptContext,
-	opts?: { skills?: Skill[]; todos?: TodoItem[] },
+	opts?: { skills?: Skill[]; todos?: TodoItem[]; instructions?: string },
 ): string {
 	const sections: PromptSection[] = [
 		identitySection,
@@ -140,6 +160,9 @@ export function buildRoleSystemPrompt(
 	if (opts?.todos !== undefined && opts.todos.length > 0) {
 		sections.push(todosSection(opts.todos));
 	}
-	sections.push(roleInstructionSection(role), envSection);
+	sections.push(
+		roleInstructionSection(role, opts?.instructions ?? ROLE_INSTRUCTIONS[role]),
+		envSection,
+	);
 	return buildSystemPrompt(ctx, sections);
 }

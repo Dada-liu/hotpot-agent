@@ -1,11 +1,11 @@
 // runMainTurn：一次用户消息的主流入口（main agent）。
 // 流程：以 "main" 身份落盘 user_msg → main 角色注册表（delegate 元工具）跑 core runTurn
 // → 透传全部事件。complex 流（Task 8）：delegate 判定 complex 后进入 runPlanPhase
-// 修订/审批循环；批准后用挂 delegate+spawn_workers 的注册表跑执行 turn 并透传事件；
-// 拒绝/修订耗尽时 plan 阶段已收尾，回合直接结束。
+// 修订/审批循环（初始轮产出的计划直接复用）；批准后换用只挂 spawn_workers 的注册表
+// 跑执行 turn 并透传事件；拒绝/修订耗尽时 plan 阶段已收尾，回合直接结束。
 // onPlanApproval 缺省时 plan 阶段 fail-closed（拒绝并收尾），见 plan.ts。
 // 传入 inbox 时，core runTurn 的每个 step 顶部经 pollInbox 拉取 next-step 消息
-// （steer/inject 注入），起草轮与执行轮同样生效；缺省不轮询。
+// （steer/inject 注入），plan 起草/修订轮与执行轮同样生效；缺省不轮询。
 // worker/task 的 spawn 经包装 runtime.spawn 记录进本回合待产队列，主循环先 drain
 // 再透传 —— agent_spawn 流事件先于对应 tool_result 到达、与调用序一致。
 
@@ -18,7 +18,7 @@ import {
 } from "@hotpot/core";
 import type { Inbox } from "./inbox.ts";
 import { type PlanDecision, runPlanPhase } from "./plan.ts";
-import { buildRoleSystemPrompt } from "./prompts.ts";
+import { buildRoleSystemPrompt, EXECUTION_INSTRUCTIONS } from "./prompts.ts";
 import { createRoleRegistry } from "./registries.ts";
 import type { OrchestrationRuntime } from "./runtime.ts";
 import { createDelegateTool, type TurnState } from "./tools/delegate.ts";
@@ -140,16 +140,19 @@ export async function* runMainTurn(opts: {
 		return;
 	}
 
-	// complex 流：plan 修订/审批循环（拒绝与修订耗尽都在其中收尾并结束回合）
-	yield* runPlanPhase(turnRuntime, state, signal, opts.onPlanApproval);
+	// complex 流：plan 修订/审批循环（拒绝与修订耗尽都在其中收尾并结束回合）。
+	// inbox 透传：起草/修订轮与执行轮都在 step 顶部消费 next-step
+	yield* runPlanPhase(turnRuntime, state, signal, {
+		onPlanApproval: opts.onPlanApproval,
+		inbox,
+	});
 	if (!state.planApproved || signal.aborted) {
 		await endTurn();
 		return;
 	}
 
-	// 执行阶段：plan 已获批，main 的注册表加上 spawn_workers（system 随声明重建）
+	// 执行阶段：plan 已获批，只挂 spawn_workers；delegate 不再可用，避免重复判定
 	const execRegistry = createRoleRegistry(turnRuntime, MAIN_AGENT_ID, [
-		delegateTool,
 		spawnWorkersTool,
 	]);
 	const execResolved = runtime.resolveModel(mainTier);
@@ -171,7 +174,7 @@ export async function* runMainTurn(opts: {
 				date: new Date().toISOString().slice(0, 10),
 				tools: execRegistry.declarations(),
 			},
-			{ skills },
+			{ skills, instructions: EXECUTION_INSTRUCTIONS },
 		),
 		tier: mainTier,
 		pollInbox,
