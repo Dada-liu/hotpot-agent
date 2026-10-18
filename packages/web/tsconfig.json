@@ -5,7 +5,11 @@
 		"jsx": "react-jsx",
 		"lib": ["es2023", "dom", "dom.iterable"],
 		"module": "esnext",
-		"moduleResolution": "bundler"
+		"moduleResolution": "bundler",
+		// 与 vite.config.ts 的 resolve.alias 同步：shadcn/ui 组件用 @/ 引用 src/
+		"paths": {
+			"@/*": ["./src/*"]
+		}
 	},
 	"include": ["src", "test"]
 }
