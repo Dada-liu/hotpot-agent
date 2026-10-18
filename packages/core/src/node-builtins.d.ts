@@ -14,9 +14,12 @@ interface HotpotDirent {
 	isFile(): boolean;
 }
 
-// 子进程 stdout/stderr 的可读流（只用到 data 事件；chunk 运行时是 Buffer，结构上有 toString）
+// 子进程 stdout/stderr 的可读流（data 事件；chunk 运行时是 Buffer，结构上有 toString）。
+// 后台作业可能长期持有管道：工具结算时 removeAllListeners + destroy 释放读端。
 interface HotpotChildStream {
 	on(event: "data", listener: (chunk: { toString(): string }) => void): void;
+	removeAllListeners(): void;
+	destroy(): void;
 }
 
 declare module "node:fs/promises" {
@@ -47,11 +50,19 @@ declare module "node:fs" {
 
 declare module "node:child_process" {
 	export interface HotpotChildProcess {
+		pid?: number;
 		stdin: { write(data: string): unknown; end(): void } | null;
 		stdout: HotpotChildStream | null;
 		stderr: HotpotChildStream | null;
 		kill(signal?: string): boolean;
+		// detached 子进程结算后解除引用：不让残留的后台作业拖住事件循环
+		unref(): void;
 		on(event: "error", listener: (err: Error) => void): void;
+		// exit：直接 shell 退出即触发（不等待后台作业关闭继承的 stdio）
+		on(
+			event: "exit",
+			listener: (code: number | null, signal: string | null) => void,
+		): void;
 		// close 在进程退出且 stdio 流全部关闭后触发，用它结算可避免丢失末尾输出
 		on(
 			event: "close",
@@ -61,7 +72,12 @@ declare module "node:child_process" {
 	export function spawn(
 		command: string,
 		args: string[],
-		options?: { cwd?: string; env?: Record<string, string | undefined> },
+		options?: {
+			cwd?: string;
+			env?: Record<string, string | undefined>;
+			detached?: boolean;
+			stdio?: ("ignore" | "pipe" | "inherit")[];
+		},
 	): HotpotChildProcess;
 }
 
@@ -85,4 +101,6 @@ declare const process: {
 	env: Record<string, string | undefined>;
 	platform: string;
 	cwd(): string;
+	// 负 pid 表示进程组：detached 子进程的超时/中断用它清理后台作业
+	kill(pid: number, signal?: string): boolean;
 };

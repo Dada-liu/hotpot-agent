@@ -122,6 +122,33 @@ describe("bashTool.execute", () => {
 		expect(out.content).toContain("abort");
 	});
 
+	it("后台命令不阻塞返回：sleep 3 & 在 1s 内完成", async () => {
+		const { ctx } = makeCtx();
+		const start = Date.now();
+		const out = await bashTool.execute(
+			{ command: "sleep 3 & echo started" },
+			ctx,
+		);
+
+		expect(Date.now() - start).toBeLessThan(1000);
+		expect(out.isError).toBeFalsy();
+		expect(out.content).toContain("started");
+	});
+
+	it("超时杀死整个进程组：后台 sleep 不拖住返回", async () => {
+		const { ctx } = makeCtx();
+		const start = Date.now();
+		const out = await bashTool.execute(
+			{ command: "sleep 5 & wait", timeoutMs: 200 },
+			ctx,
+		);
+
+		// 只杀直接子 shell 时，后台 sleep 仍持有 stdout 管道，close 会拖到 5s
+		expect(Date.now() - start).toBeLessThan(2000);
+		expect(out.isError).toBe(true);
+		expect(out.content).toContain("timeout");
+	});
+
 	it("超长输出：stdout 截断到尾部 30000 字符并在头部标注", async () => {
 		const { ctx } = makeCtx();
 		const out = await bashTool.execute(
@@ -204,6 +231,24 @@ describe("DANGEROUS_COMMAND_PATTERNS", () => {
 		for (const c of safe) {
 			expect(isDangerousCommand(c), c).toBe(false);
 		}
+	});
+
+	it("stderr/stdout 重定向到常见伪设备不触发审批", () => {
+		// 实际故障：worker 的 `ps ... 2>/dev/null` 被当成写设备，导致 turn 停在审批
+		const safe = [
+			"ls -la 2>/dev/null",
+			"echo hi > /dev/null",
+			"echo hi &>/dev/null",
+			"echo hi >/dev/stdout",
+			"echo hi 2>/dev/stderr",
+			"echo hi > /dev/zero",
+		];
+		for (const c of safe) {
+			expect(isDangerousCommand(c), c).toBe(false);
+		}
+		// 真正的块设备写入仍然拦截
+		expect(isDangerousCommand("echo x > /dev/sda")).toBe(true);
+		expect(isDangerousCommand("echo x >/dev/disk2")).toBe(true);
 	});
 
 	it("正则表集中导出为常量，便于后续扩充", () => {

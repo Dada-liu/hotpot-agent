@@ -18,6 +18,8 @@ interface HotpotDirent {
 // 子进程 stdout/stderr 的可读流（只用到 data 事件；chunk 运行时是 Buffer，结构上有 toString）
 interface HotpotChildStream {
 	on(event: "data", listener: (chunk: { toString(): string }) => void): void;
+	removeAllListeners(): void;
+	destroy(): void;
 }
 
 declare module "node:fs/promises" {
@@ -48,11 +50,17 @@ declare module "node:fs" {
 
 declare module "node:child_process" {
 	export interface HotpotChildProcess {
+		pid?: number;
 		stdin: { write(data: string): unknown; end(): void } | null;
 		stdout: HotpotChildStream | null;
 		stderr: HotpotChildStream | null;
 		kill(signal?: string): boolean;
+		unref(): void;
 		on(event: "error", listener: (err: Error) => void): void;
+		on(
+			event: "exit",
+			listener: (code: number | null, signal: string | null) => void,
+		): void;
 		// close 在进程退出且 stdio 流全部关闭后触发，用它结算可避免丢失末尾输出
 		on(
 			event: "close",
@@ -62,7 +70,12 @@ declare module "node:child_process" {
 	export function spawn(
 		command: string,
 		args: string[],
-		options?: { cwd?: string; env?: Record<string, string | undefined> },
+		options?: {
+			cwd?: string;
+			env?: Record<string, string | undefined>;
+			detached?: boolean;
+			stdio?: ("ignore" | "pipe" | "inherit")[];
+		},
 	): HotpotChildProcess;
 }
 
@@ -106,6 +119,7 @@ declare const process: {
 	platform: string;
 	cwd(): string;
 	exitCode: number;
+	kill(pid: number, signal?: string): boolean;
 	stdin: unknown;
 	stdout: HotpotWritable;
 	stderr: HotpotWritable;
