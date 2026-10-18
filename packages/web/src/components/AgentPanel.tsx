@@ -11,6 +11,9 @@ interface AgentPanelProps {
 	agents: AgentNode[];
 	usage: UsageTotals;
 	turn: "idle" | "running";
+	// main agent 档位徽标：由 App 传入（web 创建会话时选择值）；
+	// 非 web 创建的会话无从得知，App 侧回退 "high"
+	mainTier: string;
 	open: boolean;
 	sessionName: string;
 	onToggle: () => void;
@@ -123,6 +126,7 @@ export function AgentPanel({
 	agents,
 	usage,
 	turn,
+	mainTier,
 	open,
 	sessionName,
 	onToggle,
@@ -153,7 +157,7 @@ export function AgentPanel({
 					<div className="agent-row-body">
 						<div className="agent-row-title">main agent</div>
 						<div className="agent-row-meta">
-							<span className="badge">high</span>
+							<span className="badge">{mainTier}</span>
 							<StatusBadge status={turn === "running" ? "running" : "done"} />
 						</div>
 					</div>

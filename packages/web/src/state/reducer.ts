@@ -5,7 +5,8 @@
 // - agent 树由 spawn / log(agent_spawn) 登记；log(error) 或父级 tool_result
 //   内容含 "[FAILED] <agentId>" 标记 failed；turn(end) 把仍 running 的翻为 done
 // - log 事件按 event.id 去重（tailer 重放/断线补发会重复投递）
-// - delta 只累加进当前流式段；assistant_msg 到达后流式段定格（以 content 为准）
+// - delta 只累加进当前流式段；assistant_msg 到达后流式段定格（以 content 为准）；
+//   turn(end) 与 log(error) 兜底清理（LLM 失败路径无 assistant_msg 定格）
 
 import type { ContentBlock, SessionEvent, WireEvent } from "../protocol.ts";
 
@@ -165,12 +166,14 @@ export function reduce(state: ChatState, event: WireEvent): ChatState {
 			if (event.phase === "start") {
 				return { ...state, turn: "running" };
 			}
-			// 回合结束：仍 running 的翻为 done（failed 不回退），并兜底清掉 pending
+			// 回合结束：仍 running 的翻为 done（failed 不回退），兜底清掉 pending
+			// 与流式段（LLM 失败时无 assistant_msg 定格，turn(end) 是最后收敛点）
 			return {
 				...state,
 				turn: "idle",
 				pendingApproval: null,
 				pendingPlan: null,
+				streaming: null,
 				agents: state.agents.map((a) =>
 					a.status === "running" ? { ...a, status: "done" as const } : a,
 				),
@@ -381,6 +384,9 @@ function reduceLog(state: ChatState, event: SessionEvent): ChatState {
 			return {
 				...state,
 				transcript: [...state.transcript, entry],
+				// 该 agent 的流式段随失败清理（其余 agent 的流式段不受影响）
+				streaming:
+					state.streaming?.agentId === event.agentId ? null : state.streaming,
 				agents: touchAgent(state.agents, event.agentId, event.ts, (a) => ({
 					...a,
 					status: "failed",

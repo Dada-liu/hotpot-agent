@@ -363,6 +363,73 @@ describe("reduce：delta 折叠与定格", () => {
 			state.transcript.some((t) => t.kind === "assistant" && t.id === "a-1"),
 		).toBe(true);
 	});
+
+	it("turn(end) 清理流式段（LLM 失败等无 assistant_msg 定格的路径）", () => {
+		let state = createInitialState();
+		state = reduce(state, { seq: 1, kind: "turn", phase: "start" });
+		state = reduce(state, {
+			seq: 2,
+			kind: "delta",
+			agentId: "main",
+			text: "半截回答",
+		});
+		expect(state.streaming).toEqual({ agentId: "main", text: "半截回答" });
+
+		// 回合以 error 收尾（无 assistant_msg）：turn(end) 必须清掉残留流式段
+		state = reduce(state, { seq: 3, kind: "turn", phase: "end" });
+		expect(state.streaming).toBeNull();
+	});
+
+	it("log(error) 只清理出错 agent 自己的流式段", () => {
+		let state = createInitialState();
+		state = reduce(state, { seq: 1, kind: "turn", phase: "start" });
+		state = reduce(state, {
+			seq: 2,
+			kind: "delta",
+			agentId: "main",
+			text: "main 回答中",
+		});
+
+		// worker 失败：main 的流式段保留
+		state = reduce(state, {
+			seq: 3,
+			kind: "spawn",
+			agentId: "worker-1",
+			role: "worker",
+			tier: "medium",
+			task: "干活",
+			parentAgentId: "main",
+		});
+		state = reduce(
+			state,
+			log(4, {
+				type: "error",
+				id: "err-1",
+				ts,
+				agentId: "worker-1",
+				code: "LLM_ERROR",
+				message: "模型调用失败",
+			}),
+		);
+		expect(state.streaming).toEqual({ agentId: "main", text: "main 回答中" });
+		expect(state.agents.find((a) => a.agentId === "worker-1")?.status).toBe(
+			"failed",
+		);
+
+		// main 自己失败：流式段清除
+		state = reduce(
+			state,
+			log(5, {
+				type: "error",
+				id: "err-2",
+				ts,
+				agentId: "main",
+				code: "LLM_ERROR",
+				message: "模型调用失败",
+			}),
+		);
+		expect(state.streaming).toBeNull();
+	});
 });
 
 describe("reduce：approval 登记与清除", () => {
