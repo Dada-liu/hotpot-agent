@@ -82,7 +82,7 @@
 
 M5 拆成两条独立工作流：工具侧遥测客户端（M5.1，本仓库，已完成）与遥测后台 / benchmarks。benchmarks runner 已在本仓库完成（M5.3/M5.4）；遥测后台仍在仓库外独立推进。
 
-原 M5 范围中的「测试补齐：集成测试覆盖主要 agent 场景（mock LLM 录制回放）」没有取消：沿用「测试随功能走」的持续补测策略，随每个里程碑补充，不单独堆到 M5 收尾；当前全量为 63 个测试文件 / 537 条用例。
+原 M5 范围中的「测试补齐：集成测试覆盖主要 agent 场景（mock LLM 录制回放）」没有取消：沿用「测试随功能走」的持续补测策略，随每个里程碑补充，不单独堆到 M5 收尾；当前全量为 64 个测试文件 / 539 条用例。
 
 ### M5.1 遥测客户端（已完成）
 
@@ -113,6 +113,7 @@ M5 拆成两条独立工作流：工具侧遥测客户端（M5.1，本仓库，�
 验收证据：
 
 - `packages/benchmarks/test/`：custom runner / 三题校验、workspace + patch 捕获（含 untracked、排除 node_modules/.hotpot）、allow-all 审批落盘、实例选择、predictions 格式、官方命令构造与 report 解析、报告聚合/脱敏、CLI 参数、benchmark 遥测
+- `packages/ai/src/testing/record-replay.ts` + `packages/ai/test/record-replay.test.ts`（2 条）：JSONL 录制/回放与回放耗尽报错
 - `pnpm bench --help` 与未知参数非 0 退出
 - 全量 `pnpm typecheck`、`pnpm test`、`pnpm exec biome check .` 通过
 

@@ -3,5 +3,6 @@ export * from "./api/anthropic-messages.ts";
 export * from "./api/openai-completions.ts";
 export * from "./models.ts";
 export * from "./sse.ts";
+export * from "./testing/record-replay.ts";
 export * from "./testing/scripted-adapter.ts";
 export * from "./types.ts";

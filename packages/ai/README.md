@@ -18,7 +18,7 @@ LLM 协议适配层：api×provider 二维适配，对上屏蔽各家 API 差异
 ```
 
 - 模型目录 `models.ts`：`MODELS` / `findModel`，真实 contextWindow / maxTokens / 定价常量。
-- 测试支撑 `testing/scripted-adapter.ts`：录制-回放适配器；网络 I/O 只经可注入的 `FetchLike` 进出，测试不打真实端点。
+- 测试支撑 `testing/`：`scriptedAdapter`（脚本化事件序列）与 `createRecordingAdapter` / `createReplayAdapter`（JSONL 录制回放）；网络 I/O 只经可注入的 `FetchLike` 进出，测试不打真实端点。
 
 职责（M1 计划）：
 

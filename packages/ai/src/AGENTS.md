@@ -5,6 +5,6 @@
 - `index.ts` re-exports only; no logic.
 - `sse.ts` is the shared SSE parser for all protocol adapters; keep its signature `parseSseStream(body: ReadableStream<Uint8Array>): AsyncIterable<string>` — it yields each `data:` payload, buffers across chunk boundaries, and terminates on `[DONE]`.
 - `api/` holds one adapter per protocol; each exports a `create*Adapter(fetchImpl?: FetchLike): LlmAdapter` factory.
-- `testing/` ships test-support utilities reused by downstream packages: `scriptedAdapter(script: StreamEvent[][])` replays one script element per `streamChat` call, in call order.
+- `testing/` ships test-support utilities reused by downstream packages: `scriptedAdapter(script: StreamEvent[][])` replays one script element per `streamChat` call, in call order; `createRecordingAdapter(inner, file)` / `createReplayAdapter(file)` record and replay `{ request, events }` JSONL lines. Recordings are local fixtures; never commit real user prompts or replies.
 - Erasable TypeScript only, `.ts` extension on relative imports, no `any`, no inline imports; comments in Simplified Chinese.
 - Run `pnpm test`, `pnpm exec biome check` and `pnpm exec tsc -p packages/ai/tsconfig.json --noEmit` from the repo root before committing.
