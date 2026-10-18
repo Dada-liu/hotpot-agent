@@ -161,15 +161,22 @@ export function createTelemetryCollector(
 	): Promise<TelemetryEvent[]> {
 		const events = await loadTurnEvents(opts.session.filePath, startTs);
 		const finishedAt = now();
-		const fold = foldTurn(
-			events,
-			{
-				turnId: opts.turnId,
-				features: opts.features,
-				emittedAt: new Date(finishedAt).toISOString(),
-			},
-			observedSpawnCounts,
-		);
+		let fold: FoldResult;
+		try {
+			fold = foldTurn(
+				events,
+				{
+					turnId: opts.turnId,
+					features: opts.features,
+					emittedAt: new Date(finishedAt).toISOString(),
+				},
+				observedSpawnCounts,
+			);
+		} catch {
+			// 日志是外部文件，可能有 JSON 合法但形状不符的记录：折叠失败时丢弃本 turn
+			// 的明细，只保留 turn_end 结算事件，绝不让遥测异常冒泡到调用方的 finally
+			fold = emptyFold();
+		}
 
 		const outcome = resolveOutcome({
 			aborted: finishOpts.aborted === true,
@@ -435,8 +442,9 @@ function foldTurn(
 	};
 }
 
-// outcome 优先级：aborted > error > success。工具 isError 不算 turn 失败（agent 可恢复）；
-// done(tool_calls) 是中间态，只有 done(stop) 才是正常出口，其余未知出口不判错。
+// outcome 优先级：aborted > error > success。工具 isError 不算 turn 失败（agent 可恢复）。
+// success 必须显式观察到 done(stop)：done(tool_calls) 只是中间态，未观察到 done
+// （编排器异常退出等）按「回合意外结束」判 error，与设计文档 §5.4 一致。
 function resolveOutcome(input: {
 	aborted: boolean;
 	planRejected: boolean;
@@ -460,7 +468,23 @@ function resolveOutcome(input: {
 	) {
 		return "error";
 	}
-	return "success";
+	return input.stopReason === "stop" ? "success" : "error";
+}
+
+// 折叠异常时的最小安全结果：不发任何明细，只让 turn_end 以零值结算
+function emptyFold(): FoldResult {
+	return {
+		events: [],
+		inputTokens: 0,
+		outputTokens: 0,
+		mainSteps: 0,
+		assistantMessages: 0,
+		workerCount: 0,
+		taskCount: 0,
+		errorCount: 0,
+		byTier: {},
+		byModel: {},
+	};
 }
 
 function normalizeRole(role: string | undefined): AgentRole | undefined {

@@ -1,7 +1,7 @@
 // Turn 采集器测试：用临时 home 造真实会话 JSONL，验证折叠结果、outcome 判定与隐私边界。
 // 固定 now 到 2026-01-01T00:00:00Z，让会话日志里的确定性时间戳落在 turn 窗口内。
 
-import { mkdtemp, rm } from "node:fs/promises";
+import { appendFile, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -430,6 +430,44 @@ describe("createTelemetryCollector", () => {
 		expect(serialized).not.toContain("secret");
 		expect(serialized).not.toContain("/Users");
 	});
+
+	it("does not reject finish when the session log contains a malformed record", async () => {
+		const session = await createTurnSession([
+			{
+				type: "assistant_msg",
+				id: "a1",
+				ts: "2026-01-01T00:00:01.000Z",
+				agentId: "main",
+				content: [],
+				usage: { input: 3, output: 1 },
+				model: "m",
+				tier: "high",
+			},
+		]);
+		// JSON 合法但形状不符（缺 usage/content 等）：loadSession 原样返回，折叠必须兜底
+		await appendFile(
+			session.filePath,
+			`${JSON.stringify({
+				type: "assistant_msg",
+				id: "bad",
+				ts: "2026-01-01T00:00:02.000Z",
+				agentId: "main",
+			})}\n`,
+		);
+
+		const collector = createCollector(session);
+		collector.start();
+		collector.observe({ type: "done", stopReason: "stop" });
+
+		// 遥测是旁路：折叠异常不能冒泡到调用方的 finally
+		const emitted = await collector.finish();
+		const [turnEnd] = eventsOfType(emitted, "turn_end");
+		expect(turnEnd.outcome).toBe("success");
+		// 折叠失败时丢弃整轮明细，只保留零值 turn_end，避免上报半成品
+		expect(eventsOfType(emitted, "llm_call")).toHaveLength(0);
+		expect(eventsOfType(emitted, "turn_end")).toHaveLength(1);
+		expect(turnEnd.inputTokens).toBe(0);
+	});
 });
 
 describe("turn outcome", () => {
@@ -439,6 +477,21 @@ describe("turn outcome", () => {
 		});
 		expect(turnEnd.outcome).toBe("success");
 		expect(turnEnd.planUsed).toBe(false);
+	});
+
+	it("reports error when no terminal done event was observed", async () => {
+		// 编排器异常退出时迭代器可能直接结束，没有 done：按「回合意外结束」判 error
+		const { turnEnd } = await foldOutcome({
+			observed: [{ type: "text" }],
+		});
+		expect(turnEnd.outcome).toBe("error");
+	});
+
+	it("reports error when main ends with the intermediate done(tool_calls)", async () => {
+		const { turnEnd } = await foldOutcome({
+			observed: [{ type: "done", stopReason: "tool_calls" }],
+		});
+		expect(turnEnd.outcome).toBe("error");
 	});
 
 	it("reports error when any agent in the turn logs an error", async () => {
