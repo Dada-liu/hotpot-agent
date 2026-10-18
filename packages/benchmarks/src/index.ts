@@ -9,4 +9,5 @@ export * from "./swebench/evaluate.ts";
 export * from "./swebench/instances.ts";
 export * from "./swebench/predictions.ts";
 export * from "./swebench/workspace.ts";
+export * from "./telemetry.ts";
 export * from "./workspace.ts";

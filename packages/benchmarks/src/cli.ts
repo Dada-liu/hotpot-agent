@@ -34,6 +34,7 @@ import {
 	CheckoutWorkspaceProvider,
 	capturePatch,
 } from "./swebench/workspace.ts";
+import { reportBenchmarkRun } from "./telemetry.ts";
 
 const BENCH_PROMPT_SUFFIX =
 	"\n\nYou are running in an offline benchmark. Only modify files in the repository to fix the issue. Do not install dependencies, do not run the repository test suite, and do not commit. Leave your changes in the working tree.";
@@ -171,6 +172,11 @@ async function runSwebenchSuite(command: SwebenchCommand): Promise<number> {
 		split: command.split,
 	});
 	const paths = await writeReport(report, outputDir);
+	await reportTelemetry(settings, report, {
+		benchmark: "swebench",
+		dataset: command.dataset,
+		split: command.split,
+	});
 	printSummary(report, paths);
 	return 0;
 }
@@ -230,8 +236,32 @@ async function runCustomSuite(command: CustomCommand): Promise<number> {
 
 	const report = buildReport(results, undefined, { suite: "custom" });
 	const paths = await writeReport(report, outputDir);
+	await reportTelemetry(settings, report, {
+		benchmark: "custom",
+		dataset: "custom",
+		split: "offline",
+	});
 	printSummary(report, paths);
 	return 0;
+}
+
+async function reportTelemetry(
+	settings: ReturnType<typeof loadSettings>,
+	report: ReturnType<typeof buildReport>,
+	meta: { benchmark: string; dataset: string; split: string },
+): Promise<void> {
+	for (const instance of report.instances) {
+		try {
+			await reportBenchmarkRun(settings, {
+				...instance,
+				benchmark: meta.benchmark,
+				dataset: meta.dataset,
+				split: meta.split,
+			});
+		} catch {
+			// 遥测是旁路：单条失败不影响报告与退出码
+		}
+	}
 }
 
 function printSummary(
