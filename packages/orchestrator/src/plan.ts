@@ -65,7 +65,7 @@ export async function* runPlanPhase(
 	// 起草期 planApproved 仍为 false，spawn_workers 被守卫挡住，不会提前执行
 	const delegateTool = createDelegateTool(runtime, state);
 	const spawnWorkersTool = createSpawnWorkersTool(runtime, state);
-	const registry = createRoleRegistry(MAIN_AGENT_ID, [
+	const registry = createRoleRegistry(runtime, MAIN_AGENT_ID, [
 		delegateTool,
 		spawnWorkersTool,
 	]);

@@ -512,7 +512,13 @@ describe("plan 审批流（complex）", () => {
 		const tool = createSpawnWorkersTool(runtime, state);
 		const out = await tool.execute(
 			{ workers: [{ task: "实现 auth 路由", modelTier: "low" }] },
-			{ cwd: proj, signal: new AbortController().signal, approval },
+			{
+				cwd: proj,
+				signal: new AbortController().signal,
+				approval,
+				agentId: "main",
+				session: runtime.session,
+			},
 		);
 		expect(out.isError).toBe(true);
 		const { events: fileEvents } = await loadSession(runtime.session.filePath);
@@ -542,7 +548,13 @@ describe("plan 审批流（complex）", () => {
 					{ task: "实现登录页", context: "用 React", modelTier: "medium" },
 				],
 			},
-			{ cwd: proj, signal: new AbortController().signal, approval },
+			{
+				cwd: proj,
+				signal: new AbortController().signal,
+				approval,
+				agentId: "main",
+				session: runtime.session,
+			},
 		);
 		expect(out.isError ?? false).toBe(false);
 		// 聚合摘要：两个 worker 各一段

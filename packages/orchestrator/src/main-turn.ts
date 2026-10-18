@@ -74,7 +74,9 @@ export async function* runMainTurn(opts: {
 	};
 	const delegateTool = createDelegateTool(turnRuntime, state);
 	const spawnWorkersTool = createSpawnWorkersTool(turnRuntime, state);
-	const registry = createRoleRegistry(MAIN_AGENT_ID, [delegateTool]);
+	const registry = createRoleRegistry(turnRuntime, MAIN_AGENT_ID, [
+		delegateTool,
+	]);
 	await runtime.session.append({
 		type: "user_msg",
 		id: randomUUID(),
@@ -118,7 +120,7 @@ export async function* runMainTurn(opts: {
 	}
 
 	// 执行阶段：plan 已获批，main 的注册表加上 spawn_workers（system 随声明重建）
-	const execRegistry = createRoleRegistry(MAIN_AGENT_ID, [
+	const execRegistry = createRoleRegistry(turnRuntime, MAIN_AGENT_ID, [
 		delegateTool,
 		spawnWorkersTool,
 	]);

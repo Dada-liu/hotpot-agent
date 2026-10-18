@@ -20,10 +20,35 @@ import type { AgentRole } from "./types.ts";
 
 // worker/task 注册表工具装饰器：CLI 侧注入 policy 包装（如 approval=always 时
 // 给 bash/write/edit 包一层预审批）的唯一通道 —— 下层注册表由编排层内部装配，
-// 调用方只能经 runtime 闭包把包装带进来；缺省原样返回（无装饰）
+// 调用方只能经 runtime 闭包把包装带进来；缺省原样返回（无装饰）。
+// 语义钉死（M4 Review Focus）：只包四件套基础工具，feature 派生的外工具不包
 export type WorkerToolDecorator = (
 	tool: ToolDefinition<unknown>,
 ) => ToolDefinition<unknown>;
+
+// M4 webSearchBackend 占位接口：Task 4 在 core 落成 WebSearchBackend 与
+// duckduckgo/custom 两种实现后迁移到 core（本签名即最终形状，Task 4 无需改动本文件）。
+// 结果项结构按 Task 4 契约定型
+export interface WebSearchResult {
+	title: string;
+	url: string;
+	snippet: string;
+}
+export interface WebSearchBackend {
+	search(
+		query: string,
+		count: number,
+		signal: AbortSignal,
+	): Promise<WebSearchResult[]>;
+}
+
+// M4 skill 清单占位类型：Task 6 在 core 落成 Skill（结构与本接口一致）后改为从
+// @hotpot/core 导入，本接口随之删除
+export interface SkillSummary {
+	name: string;
+	description: string;
+	path: string;
+}
 
 export interface OrchestrationRuntime {
 	readonly session: Session;
@@ -32,6 +57,15 @@ export interface OrchestrationRuntime {
 	readonly maxParallelTasks: number;
 	readonly planMaxRevisions: number;
 	readonly decorateWorkerTool?: WorkerToolDecorator;
+	// —— M4 可选透传（createRuntime 缺省空；Task 2-6 逐步消费）——
+	// features：功能开关（读取侧一律经 core 的 featureEnabled `?? true`）
+	readonly features?: Settings["features"];
+	// skills：扫描到的 skill 清单（Task 6 注入 prompt + read 追踪）
+	readonly skills?: SkillSummary[];
+	// mcpTools：MCP 桥接工具（Task 5 连接后注入；features.mcp 关闭则不并入注册表）
+	readonly mcpTools?: readonly ToolDefinition<unknown>[];
+	// webSearchBackend：web_search 工具后端（Task 4 依 settings.webSearch 解析）
+	readonly webSearchBackend?: WebSearchBackend;
 	resolveModel(tier: ModelTier): ModelResolution;
 	spawn(opts: {
 		role: AgentRole;
@@ -49,6 +83,10 @@ export function createRuntime(opts: {
 	maxParallelTasks?: number;
 	planMaxRevisions?: number;
 	decorateWorkerTool?: WorkerToolDecorator;
+	features?: Settings["features"];
+	skills?: SkillSummary[];
+	mcpTools?: readonly ToolDefinition<unknown>[];
+	webSearchBackend?: WebSearchBackend;
 }): OrchestrationRuntime {
 	// 每个 role 一条计数链：同一 runtime 内单调递增，编号不复用
 	const counters = new Map<AgentRole, number>();
@@ -98,6 +136,10 @@ export function createRuntime(opts: {
 		maxParallelTasks: opts.maxParallelTasks ?? 10,
 		planMaxRevisions: opts.planMaxRevisions ?? 3,
 		decorateWorkerTool: opts.decorateWorkerTool,
+		features: opts.features,
+		skills: opts.skills,
+		mcpTools: opts.mcpTools,
+		webSearchBackend: opts.webSearchBackend,
 
 		resolveModel(tier: ModelTier): ModelResolution {
 			return resolveModel(opts.models[tier]);

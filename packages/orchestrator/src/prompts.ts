@@ -3,6 +3,9 @@
 // 因此这里不触碰全局注册表 —— 本地组好段列表后调用 buildSystemPrompt(ctx, sections)，
 // 同一进程内连续构建 main/worker/task 三种 prompt 互不污染（core 为此给 buildSystemPrompt
 // 增加了可选 sections 入参）。角色指令段插在 rules(2000) 与 env(3000) 之间的 2500。
+// M4 动态段（可选 opts，缺省完全不出现、默认行为不变）：
+// skills 段 order 1400（Task 6 数据源：discoverSkills 扫描结果）、
+// todos 段 order 1500（Task 2 数据源：foldTodos fold 结果）；空列表不出段。
 // 文案内容对齐 docs/archive/03-agent-orchestration.md：
 // main —— §1 职责 + §2 难度判定/模型路由（含边界示例）；worker —— §1 职责 + §4 并行拆分三条件
 // 与正反例 + §5 摘要回传；task —— §1 职责 + §5 摘要回传。LLM 面向文案全英文。
@@ -15,8 +18,10 @@ import {
 	type PromptSection,
 	rulesSection,
 	SECTION_ORDER,
+	type TodoItem,
 	toolsSection,
 } from "@hotpot/core";
+import type { SkillSummary } from "./runtime.ts";
 import type { AgentRole } from "./types.ts";
 
 // 主 agent 指令：难度三分类（trivial/simple/complex），trivial 直接答、simple 派单个 worker、
@@ -91,16 +96,50 @@ function roleInstructionSection(role: AgentRole): PromptSection {
 	};
 }
 
-// 基础四段 + 角色指令段，全部本地组装，不走全局注册表
+// skills 动态段（M4 Task 6）：仅当扫描到 skill 时出段。清单只给 name/description/path，
+// 模型用 read 工具按 path 加载正文（渐进式）；段插在 role-instructions 之前（1400）
+function skillsSection(skills: SkillSummary[]): PromptSection {
+	const list = skills
+		.map((s) => `- ${s.name} — ${s.description} (${s.path})`)
+		.join("\n");
+	return {
+		name: "skills",
+		order: SECTION_ORDER.RULES - 600,
+		text:
+			`Available skills (progressive disclosure — read the file to load):\n${list}\n` +
+			"When a task matches a skill, read its file first and follow its instructions.",
+	};
+}
+
+// todos 动态段（M4 Task 2）：仅当该 agent 有未完成清单时出段，列全量任务与状态，
+// 模型靠 todo 工具返回的清单文本自检进度；order 1500 与 skills(1400) 相邻错开
+function todosSection(todos: TodoItem[]): PromptSection {
+	const list = todos.map((t) => `- [${t.status}] ${t.content}`).join("\n");
+	return {
+		name: "todos",
+		order: SECTION_ORDER.RULES - 500,
+		text: `Task list (update it with the todo tool as you make progress):\n${list}`,
+	};
+}
+
+// 基础四段 + 角色指令段，全部本地组装，不走全局注册表；
+// opts.skills/opts.todos 为可选动态段数据源（缺省/空数组不出段，默认行为与 M2 一致）
 export function buildRoleSystemPrompt(
 	role: AgentRole,
 	ctx: PromptContext,
+	opts?: { skills?: SkillSummary[]; todos?: TodoItem[] },
 ): string {
-	return buildSystemPrompt(ctx, [
+	const sections: PromptSection[] = [
 		identitySection,
 		toolsSection,
 		rulesSection,
-		roleInstructionSection(role),
-		envSection,
-	]);
+	];
+	if (opts?.skills !== undefined && opts.skills.length > 0) {
+		sections.push(skillsSection(opts.skills));
+	}
+	if (opts?.todos !== undefined && opts.todos.length > 0) {
+		sections.push(todosSection(opts.todos));
+	}
+	sections.push(roleInstructionSection(role), envSection);
+	return buildSystemPrompt(ctx, sections);
 }

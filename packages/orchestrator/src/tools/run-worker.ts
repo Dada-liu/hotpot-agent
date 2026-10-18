@@ -58,7 +58,7 @@ export async function runAgentInline(
 		role === "worker"
 			? createWorkerRegistry(runtime, { agentId, tier })
 			: // task 角色同样应用 decorateWorkerTool：policy 包装对下层 agent 一视同仁
-				createRoleRegistry(role, [], runtime.decorateWorkerTool);
+				createRoleRegistry(runtime, role, []);
 	const resolved = runtime.resolveModel(tier);
 	const cfg: LoopConfig = {
 		session: runtime.session,
