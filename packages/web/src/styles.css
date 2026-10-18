@@ -22,8 +22,8 @@
 	/* 失败/危险收敛到橙系深档，保持三色纪律 */
 	--destructive: #d94800;
 	--destructive-foreground: #ffffff;
-	--border: #f0f0f2;
-	--input: #e6e6ea;
+	--border: #f5f5f7;
+	--input: #ededef;
 	--ring: #ff5c00;
 	--brand: #ff5c00;
 	--brand-soft: #fff3ea;
@@ -66,6 +66,14 @@
 @layer base {
 	* {
 		box-sizing: border-box;
+	}
+
+	/* Tailwind v4 preflight 的默认边框色是 currentColor（近黑）；
+	 * 全局改用主题边框变量，所有裸 border 才会跟随 --border（shadcn v4 模板的标配规则） */
+	*,
+	::before,
+	::after {
+		border-color: var(--border);
 	}
 
 	html,
