@@ -149,7 +149,7 @@ WorkerAgent: 可并行则 spawn TaskAgent × N（上限可配，默认 10）
 
 ```text
 cli / server
-  └─ createTelemetryRuntime(settings)          # 关闭或 endpoint 不可用 → null
+  └─ createTelemetryRuntime(settings)          # 关闭、未配置或解析后地址不可用 → null
        ├─ collector.start()/observe()/finish() # 观察编排事件 + 从会话 JSONL 折叠
        │     · done/error/plan/agent_spawn 只判 outcome，不读内容
        │     · llm_call/tool_call/error/feature_usage 只取元数据
@@ -157,7 +157,8 @@ cli / server
        └─ client.enqueue()                     # 内存队列
             └─ 阈值(50)/定时(30s)/close flush
                  → POST <endpoint>/api/v1/ingest
-                      → ../hotpot-telemetry ingest → SQLite → 聚合/告警
+                      └─ 后台部分（M5.2，未开始，独立工作流）：
+                         ../hotpot-telemetry ingest → SQLite → 聚合/告警
 ```
 
 边界与保证：
@@ -165,7 +166,7 @@ cli / server
 - **无用户内容**：不上报 prompt/回复文本、工具入参/输出、文件内容、文件路径、命令、URL 查询参数、用户名、仓库名。错误只上报机器码与脱敏后的消息；脱敏失败时丢弃原文。
 - **不阻塞、不失败**：`enqueue` 同步返回；`flush` 串行执行并吞掉所有网络/序列化异常；会话日志缺失或损坏时按空日志折叠；server 读取 settings 失败只退化为「遥测关闭」。
 - **仅用户级配置**：`telemetry.endpoint`/`token` 不接受项目级覆盖，避免恶意仓库把上报数据与凭证导向别处。
-- 后台服务在仓库外（`../hotpot-telemetry/`），不进入 CLI/server 的构建产物。
+- 后台服务在仓库外（`../hotpot-telemetry/`），M5.2 尚未开始；客户端只约定 ingest 的 HTTP 契约（`POST <endpoint>/api/v1/ingest`，`schemaVersion = 1`）。后台不进入 CLI/server 的构建产物。
 
 ## 5. 会话存储：append-only JSONL 事件日志
 
@@ -246,9 +247,9 @@ cli / server
 | skillsDirs | [] | 仅用户级 | 额外 skill 扫描目录（相对 cwd） |
 | promptsDirs | [] | 仅用户级 | 额外 prompt template 扫描目录（相对 cwd） |
 | telemetry.enabled | true | 仅用户级 | 匿名遥测开关（M5.1） |
-| telemetry.endpoint | 空（源码常量） | 仅用户级 | 上报地址；解析顺序 settings > `HOTPOT_TELEMETRY_ENDPOINT` > 源码常量，空/非 http(s) 视为未启用 |
+| telemetry.endpoint | 未设置（源码常量为空） | 仅用户级 | 上报地址；settings 中出现时必须是非空字符串（schema `min(1)`，空串是校验错误）；解析顺序 settings > `HOTPOT_TELEMETRY_ENDPOINT` > 源码常量，最终值为空或非 http(s) 时视为未启用 |
 | telemetry.token | 无 | 仅用户级 | ingest 的 Bearer token，支持整串 `$ENV` 引用；缺省时不带 Authorization 头 |
-| telemetry.flushIntervalMs | 30000 | 仅用户级 | 定时批量上报间隔（毫秒），0 关闭定时 flush |
+| telemetry.flushIntervalMs | 30000 | 仅用户级 | 定时批量上报间隔（毫秒），必须为正整数（schema 拒绝 0）；关闭定时 flush 需关闭遥测，或在代码层构造 client 时传 `flushIntervalMs: 0` / 注入自定义 scheduler |
 
 项目级可覆盖白名单：`mainAgentTier`、`maxParallelTasks`、`planMaxRevisions`、`approval.policy`；其余字段（含 models）一律忽略。凭证只从用户级读取，规避恶意仓库注入风险（M4 再考虑 pi 式 project trust 提示）。M4 新增字段（features/hooks/webSearch/mcpServers/skillsDirs/promptsDirs）一律仅用户级：hooks/mcpServers 涉及任意命令执行，项目级注入即 RCE；扫描目录与外发流量同理。M5 的 `telemetry` 同样仅用户级：endpoint/token 决定数据与凭证去向，项目级可写等于允许仓库劫持上报。
 

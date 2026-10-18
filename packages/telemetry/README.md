@@ -33,7 +33,7 @@ cli / server
                       → POST <endpoint>/api/v1/ingest
 ```
 
-server 侧整个 `createSessionManager` 共用一个 runtime；cli 侧一次 REPL 共用一个 runtime。`session_start` 在会话创建/恢复时入队，`session_end` 在进程退出或 `manager.close()` 时尽力发送（best-effort，不保证送达）。
+server 侧整个 `createSessionManager` 共用一个 runtime；cli 侧一次 REPL 共用一个 runtime。`session_start` 在会话创建/恢复时入队；server 在每个会话的 `close(id)` 时、cli 在进程退出时尽力发送 `session_end`（best-effort，不保证送达）。没有 manager 级 close。
 
 ## 事件白名单
 
@@ -62,7 +62,7 @@ schema v1 只允许以下字段（每个事件另有 `eventId`、`ts`）。所�
 
 实现上：
 
-- 采集器只读会话日志的元数据字段（事件类型、时间戳、`usage`、`model`、`tier`、`agentId`），不读 `content`、`input` 或工具输出。
+- 采集器只读会话日志的元数据字段（事件类型、时间戳、`usage`、`model`、`tier`、`agentId`）。`assistant_msg.content` 仅用于识别 tool_call 块里的工具名；消息文本、工具入参与工具输出一律不读取、不上报。
 - 错误信息只保留机器码与 `sanitizedMessage`；脱敏函数解析失败时丢弃原文返回空串，宁可少报也不透传。
 - 工具名、模型名、功能名属于固定枚举/标识，不是用户文本。
 
@@ -74,7 +74,7 @@ endpoint 解析顺序（`src/runtime.ts`）：
 2. 环境变量 `HOTPOT_TELEMETRY_ENDPOINT`
 3. `src/defaults.ts` 的 `DEFAULT_TELEMETRY_ENDPOINT`（仓库内默认为空）
 
-空串、非绝对 URL、非 `http(s)` 协议一律视为「未配置」，`createTelemetryRuntime` 返回 `null`。这样不会让配置错误变成后台对不可达地址的无限重试。启用后客户端向 `<endpoint>/api/v1/ingest` POST JSON。
+`settings.telemetry.endpoint` 只要出现就必须是非空字符串（schema `min(1)`；空串是配置校验错误，不会走到运行时）。运行时对最终取值（settings > 环境变量 > 源码常量）做校验：空串、非绝对 URL、非 `http(s)` 协议都视为「未配置」，`createTelemetryRuntime` 返回 `null`。settings 未设置时由 `HOTPOT_TELEMETRY_ENDPOINT` 或源码常量提供地址；二者都为空则遥测不启用。这样不会让配置错误变成后台对不可达地址的无限重试。启用后客户端向 `<endpoint>/api/v1/ingest` POST JSON。
 
 token 来自 `settings.telemetry.token`，可以是字面值，也可以是整串 `$ENV` 引用（如 `"$HOTPOT_TELEMETRY_TOKEN"`）。引用不存在或为空时不算错误：照常上报，只是不带 `Authorization` 头；有 token 时发送 `Authorization: Bearer <token>`。
 
@@ -82,7 +82,7 @@ token 来自 `settings.telemetry.token`，可以是字面值，也可以是整�
 
 - `settings.telemetry.enabled: false` → runtime 为 `null`，全部 no-op。
 - 缺省为开启；但 endpoint 未配置时同样不启用。
-- `settings.telemetry.flushIntervalMs` 默认 `30000`；设为 `0` 可关闭定时 flush，仅保留阈值与 `close()` 触发。
+- `settings.telemetry.flushIntervalMs` 必须是正整数，默认 `30000`；schema 拒绝 `0`。要关闭定时 flush，只能关闭遥测，或在代码层直接构造 client 并传入 `flushIntervalMs: 0` / 注入自定义 `schedule`（`interval` 不注册定时器）；不能通过 settings 设 0。
 - `telemetry` 只从用户级 `~/.hotpot/settings.json` 读取。项目级 `.hotpot/settings.json` 的 schema 不接受该字段，防止恶意仓库改写上报地址或凭证。
 
 ## 安装 ID
@@ -104,7 +104,7 @@ token 来自 `settings.telemetry.token`，可以是字面值，也可以是整�
 ## cli / server 接入点
 
 - `packages/cli/src/chat.ts`：REPL 启动时创建 runtime 并上报 `session_start`；每个 turn 创建 collector，`start` / `observe` / `finish` 后入队，turn 结束 flush；退出时上报 `session_end` 并 `close()`。
-- `packages/server/src/session-manager.ts`：`createSessionManager` 创建一个 manager 级 runtime；创建/恢复会话时上报 `session_start`，每个 `runOneTurn` 上报 turn 事件，`close(id)` / `close()` 时尽力上报 `session_end`。读取 settings 失败只退化为「遥测关闭」。
+- `packages/server/src/session-manager.ts`：`createSessionManager` 创建一个 manager 级 runtime；创建/恢复会话时上报 `session_start`，每个 `runOneTurn` 上报 turn 事件，每个会话的 `close(id)` 时尽力上报 `session_end`。没有 manager 级 close。读取 settings 失败只退化为「遥测关闭」。
 - 两个接入点都以 `createTelemetryRuntime` 返回 `null` 表示旁路未启用，后续代码不写额外分支；上报点自身也不在 turn 的失败路径上。
 
 ## 测试
@@ -116,4 +116,4 @@ token 来自 `settings.telemetry.token`，可以是字面值，也可以是整�
 - `test/client.test.ts`：批量投递、无 token 时不带 Authorization、失败重试、禁用/空 endpoint、队列溢出、请求超时、close 后忽略入队、定时器 unref。
 - `test/install-id.test.ts`：持久化、benchmark 独立 ID、损坏文件重建、只读 home 不抛错。
 - `test/collector.test.ts`：turn 折叠（含 worker/task 用量）、feature 计数、损坏日志、outcome 判定、会话生命周期事件。
-- `packages/cli/test/telemetry.test.ts`、`packages/server/test/telemetry.test.ts`：端到端 payload 不含对话文本；禁用、空 endpoint、非法 endpoint 时不发请求。
+- `packages/cli/test/telemetry.test.ts`、`packages/server/test/telemetry.test.ts`：端到端 payload 不含对话文本；`enabled=false`、未配置 endpoint（测试直接注入 settings 时传空串也按未配置处理）、非法 endpoint 时不发请求。

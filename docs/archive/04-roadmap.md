@@ -82,6 +82,8 @@
 
 M5 拆成两条独立工作流：工具侧遥测客户端（M5.1，本仓库，已完成）与遥测后台 / benchmarks（独立工作流，另行推进）。
 
+原 M5 范围中的「测试补齐：集成测试覆盖主要 agent 场景（mock LLM 录制回放）」没有取消：沿用「测试随功能走」的持续补测策略，随每个里程碑补充，不单独堆到 M5 收尾；当前全量为 52 个测试文件 / 492 条用例。
+
 ### M5.1 遥测客户端（已完成）
 
 范围（已实现）：
@@ -94,8 +96,8 @@ M5 拆成两条独立工作流：工具侧遥测客户端（M5.1，本仓库，�
 验收证据：
 
 - `packages/telemetry/test/`：schema 4 条、脱敏 6 条、客户端 9 条、安装 ID 7 条、采集器 18 条（turn 折叠、worker/task 用量、outcome 判定、feature 计数、损坏日志、会话生命周期）
-- `packages/cli/test/telemetry.test.ts`（4 条）：每个 turn 上报匿名批次且 payload 不含对话文本；`enabled=false`、空 endpoint、非法 endpoint 均不发请求
-- `packages/server/test/telemetry.test.ts`（4 条）：`turn_end` 含 worker 用量、`close` 上报 `session_end`、`attachById` 上报 `session_start(resumed: true)`、禁用与空 endpoint 不发请求
+- `packages/cli/test/telemetry.test.ts`（4 条）：每个 turn 上报匿名批次且 payload 不含对话文本；`enabled=false`、未配置 endpoint（测试直接注入 settings，绕过 schema）、非法 endpoint 均不发请求
+- `packages/server/test/telemetry.test.ts`（4 条）：`turn_end` 含 worker 用量、`close(id)` 上报 `session_end`、`attachById` 上报 `session_start(resumed: true)`、禁用与未配置 endpoint 不发请求
 - 全量 `pnpm typecheck`、`pnpm test`、`pnpm exec biome check .` 通过
 
 ### 仍未开始（独立工作流）
