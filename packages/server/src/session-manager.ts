@@ -540,7 +540,15 @@ export function createSessionManager(
 						});
 					}
 				} else if (event.type === "plan") {
-					m.emit({ kind: "plan", phase: event.phase, plan: event.plan });
+					// 边界同步：assistant_msg 先于 plan 事件到达，web 才能按 messageIds
+					// 隐藏计划正文气泡（否则后到的日志会重新渲染一遍）
+					await m.syncDurable();
+					m.emit({
+						kind: "plan",
+						phase: event.phase,
+						plan: event.plan,
+						messageIds: event.messageIds,
+					});
 				} else if (event.type === "done") {
 					stopReason = event.stopReason;
 				} else if (event.type === "error") {

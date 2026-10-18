@@ -23,6 +23,8 @@ export type WireEvent =
 			kind: "plan";
 			phase: "drafted" | "approved" | "denied" | "revision_exhausted";
 			plan?: string;
+			// 作为计划草稿落盘的 main assistant_msg id：web 隐藏正文气泡，只保留卡片
+			messageIds?: string[];
 	  }
 	| {
 			seq: number;

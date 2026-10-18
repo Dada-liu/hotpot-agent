@@ -626,7 +626,6 @@ describe("HTTP API", () => {
 				delegateRound(
 					'{"difficulty":"complex","modelTier":"high","task":"给项目加用户认证"}',
 				),
-				textRound("我来起草实现计划。", { input: 100, output: 20 }),
 				textRound(planV1, { input: 200, output: 60 }),
 				spawnWorkersRound(
 					'{"workers":[{"task":"实现后端 auth 路由","modelTier":"high"}]}',
