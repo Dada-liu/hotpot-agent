@@ -75,7 +75,7 @@ describe("createRoleRegistry 按角色装配工具集", () => {
 		expect(names(registry)).toEqual(["delegate", "spawn_workers"]);
 	});
 
-	it("worker = bash/read/write/edit + todo + spawn_tasks", () => {
+	it("worker = bash/read/write/edit + todo + web_fetch + spawn_tasks", () => {
 		const registry = createRoleRegistry(stubRuntime(), "worker", WORKER_META);
 		expect(names(registry)).toEqual([
 			"bash",
@@ -83,13 +83,21 @@ describe("createRoleRegistry 按角色装配工具集", () => {
 			"read",
 			"spawn_tasks",
 			"todo",
+			"web_fetch",
 			"write",
 		]);
 	});
 
-	it("task = 仅 bash/read/write/edit + todo，忽略 metaTools", () => {
+	it("task = 仅 bash/read/write/edit + todo + web_fetch，忽略 metaTools", () => {
 		const registry = createRoleRegistry(stubRuntime(), "task", WORKER_META);
-		expect(names(registry)).toEqual(["bash", "edit", "read", "todo", "write"]);
+		expect(names(registry)).toEqual([
+			"bash",
+			"edit",
+			"read",
+			"todo",
+			"web_fetch",
+			"write",
+		]);
 	});
 });
 
@@ -172,8 +180,8 @@ describe("buildRoleSystemPrompt 角色指令", () => {
 	});
 });
 
-// M4 矩阵：role × features × runtime 透传字段。feature 派生外工具现有 todo（Task 2）
-// 与 mcpTools（Task 5 样板），矩阵钉死规则：
+// M4 矩阵：role × features × runtime 透传字段。feature 派生外工具现有 todo（Task 2）、
+// web_fetch（Task 3）与 mcpTools（Task 5 样板），矩阵钉死规则：
 // - 外工具只进 worker/task，main 永远只有元工具
 // - 开关缺省（undefined）= 开（featureEnabled `?? true`）；显式 false 才不注册
 // - decorateWorkerTool 只包四件套，外工具与元工具均不装饰
@@ -186,6 +194,7 @@ describe("createRoleRegistry role×feature 矩阵", () => {
 		"read",
 		"spawn_tasks",
 		"todo",
+		"web_fetch",
 		"write",
 	];
 
@@ -202,11 +211,12 @@ describe("createRoleRegistry role×feature 矩阵", () => {
 			"read",
 			"spawn_tasks",
 			"todo",
+			"web_fetch",
 			"write",
 		]);
 	});
 
-	it("worker + features.mcp=false → 不注册 mcp 外工具，todo 缺省仍注册", () => {
+	it("worker + features.mcp=false → 不注册 mcp 外工具，todo/web_fetch 缺省仍注册", () => {
 		const registry = createRoleRegistry(
 			stubRuntime({ features: { mcp: false }, mcpTools: [mcpTool] }),
 			"worker",
@@ -215,7 +225,7 @@ describe("createRoleRegistry role×feature 矩阵", () => {
 		expect(names(registry)).toEqual(WORKER_WITH_TODO);
 	});
 
-	it("worker + features.todo=false → 不注册 todo，mcp 缺省仍注册", () => {
+	it("worker + features.todo=false → 不注册 todo，mcp 缺省仍注册，web_fetch 缺省仍注册", () => {
 		const registry = createRoleRegistry(
 			stubRuntime({ features: { todo: false }, mcpTools: [mcpTool] }),
 			"worker",
@@ -227,6 +237,23 @@ describe("createRoleRegistry role×feature 矩阵", () => {
 			"mcp__demo__tool",
 			"read",
 			"spawn_tasks",
+			"web_fetch",
+			"write",
+		]);
+	});
+
+	it("worker + features.webFetch=false → 不注册 web_fetch，todo 缺省仍注册", () => {
+		const registry = createRoleRegistry(
+			stubRuntime({ features: { webFetch: false } }),
+			"worker",
+			WORKER_META,
+		);
+		expect(names(registry)).toEqual([
+			"bash",
+			"edit",
+			"read",
+			"spawn_tasks",
+			"todo",
 			"write",
 		]);
 	});
@@ -273,17 +300,33 @@ describe("createRoleRegistry role×feature 矩阵", () => {
 			"mcp__demo__tool",
 			"read",
 			"todo",
+			"web_fetch",
 			"write",
 		]);
 	});
 
-	it("task + features.todo=false → task 也无 todo", () => {
+	it("task + features.todo=false → task 也无 todo，web_fetch 缺省仍注册", () => {
 		const registry = createRoleRegistry(
 			stubRuntime({ features: { todo: false } }),
 			"task",
 			WORKER_META,
 		);
-		expect(names(registry)).toEqual(BASE_FOUR);
+		expect(names(registry)).toEqual([
+			"bash",
+			"edit",
+			"read",
+			"web_fetch",
+			"write",
+		]);
+	});
+
+	it("task + features.webFetch=false → 不注册 web_fetch，todo 缺省仍注册", () => {
+		const registry = createRoleRegistry(
+			stubRuntime({ features: { webFetch: false } }),
+			"task",
+			WORKER_META,
+		);
+		expect(names(registry)).toEqual(["bash", "edit", "read", "todo", "write"]);
 	});
 
 	it("main + features 全开 + mcpTools 提供 → 仍只有元工具（外工具不进 main）", () => {
@@ -322,7 +365,7 @@ describe("createRoleRegistry role×feature 矩阵", () => {
 			"worker",
 			WORKER_META,
 		);
-		// 装饰器只被应用到四件套（todo 与 mcp 外工具、spawn_tasks 均不装饰）
+		// 装饰器只被应用到四件套（todo/web_fetch 与 mcp 外工具、spawn_tasks 均不装饰）
 		expect(decorated.sort()).toEqual(BASE_FOUR);
 		expect(names(registry)).toEqual([
 			"bash",
@@ -331,6 +374,7 @@ describe("createRoleRegistry role×feature 矩阵", () => {
 			"read",
 			"spawn_tasks",
 			"todo",
+			"web_fetch",
 			"write",
 		]);
 	});
