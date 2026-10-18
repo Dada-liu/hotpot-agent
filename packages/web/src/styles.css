@@ -23,6 +23,8 @@
 	--destructive: #d94800;
 	--destructive-foreground: #ffffff;
 	--border: #f5f5f7;
+	/* 一级控件（新建会话按钮、对话输入卡片）用更深的边框，避免浅灰贴近背景 */
+	--border-strong: #e3e3e6;
 	--input: #ededef;
 	--ring: #ff5c00;
 	--brand: #ff5c00;
@@ -48,6 +50,7 @@
 	--color-destructive: var(--destructive);
 	--color-destructive-foreground: var(--destructive-foreground);
 	--color-border: var(--border);
+	--color-border-strong: var(--border-strong);
 	--color-input: var(--input);
 	--color-ring: var(--ring);
 	--color-brand: var(--brand);

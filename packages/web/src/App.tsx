@@ -21,8 +21,32 @@ import { AgentPanel } from "./components/AgentPanel.tsx";
 import { ChatView } from "./components/ChatView.tsx";
 import { SessionList } from "./components/SessionList.tsx";
 import { type ConnectionState, connect } from "./events.ts";
+import { sessionNameFromPrompt } from "./lib/session-name.ts";
 import type { WireEvent } from "./protocol.ts";
 import { type ChatState, createInitialState, reduce } from "./state/reducer.ts";
+
+// 会话 id → 首轮提示词提取的显示名，持久化到 localStorage（服务端 SessionSummary 无 name 字段）
+const SESSION_NAMES_KEY = "hotpot.sessionNames";
+
+function loadSessionNames(): Record<string, string> {
+	try {
+		const raw = localStorage.getItem(SESSION_NAMES_KEY);
+		if (raw === null) {
+			return {};
+		}
+		const parsed: unknown = JSON.parse(raw);
+		if (typeof parsed !== "object" || parsed === null) {
+			return {};
+		}
+		return Object.fromEntries(
+			Object.entries(parsed as Record<string, unknown>).filter(
+				(entry): entry is [string, string] => typeof entry[1] === "string",
+			),
+		);
+	} catch {
+		return {};
+	}
+}
 
 // reducer 动作：事件折叠或会话切换时重置
 type ChatAction = { type: "event"; event: WireEvent } | { type: "reset" };
@@ -46,6 +70,9 @@ const MAIN_TIER_FALLBACK = "high";
 export function App() {
 	const [sessions, setSessions] = useState<SessionSummary[]>([]);
 	const [currentId, setCurrentId] = useState<string | null>(null);
+	// 点“新建会话”后进入待创建态：不立刻建会话，首条消息发送时才创建
+	const [pending, setPending] = useState(false);
+	const [names, setNames] = useState<Record<string, string>>(loadSessionNames);
 	const [chat, dispatch] = useReducer(
 		chatReducer,
 		undefined,
@@ -88,21 +115,12 @@ export function App() {
 		};
 	}, [currentId]);
 
-	const handleCreate = async (): Promise<void> => {
-		const input = window.prompt("新会话工作目录（留空使用服务端默认）", "");
-		if (input === null) {
-			return; // 用户取消
-		}
-		const cwd = input.trim();
-		try {
-			const id = await createSession(cwd === "" ? undefined : cwd);
-			await refreshSessions();
-			setError(null);
-			setCurrentId(id);
-			dispatch({ type: "reset" });
-		} catch (e) {
-			setError(errorMessage(e));
-		}
+	const handleCreate = (): void => {
+		// Kimi 式延迟创建：直接清空对话区进入欢迎态，首条消息发送时才真正建会话
+		setCurrentId(null);
+		setPending(true);
+		dispatch({ type: "reset" });
+		setError(null);
 	};
 
 	const handleSelect = (id: string): void => {
@@ -110,16 +128,33 @@ export function App() {
 			return;
 		}
 		setError(null);
+		setPending(false);
 		setCurrentId(id);
 		dispatch({ type: "reset" });
 	};
 
 	// 空闲发送 = 新 turn（POST messages）；运行中发送 = steer 注入（POST steer）
 	const handleSend = async (content: string): Promise<void> => {
-		if (currentId === null) {
-			return;
-		}
 		try {
+			// 待创建态：首条消息先到——创建会话、以提示词命名、加入列表并连接
+			// 无会话（初始欢迎态或点“新建会话”的待创建态）：首条消息先创建会话、以提示词命名、加入列表并连接
+			if (currentId === null) {
+				const id = await createSession();
+				setNames((prev) => {
+					const next = { ...prev, [id]: sessionNameFromPrompt(content) };
+					localStorage.setItem(SESSION_NAMES_KEY, JSON.stringify(next));
+					return next;
+				});
+				setCurrentId(id);
+				setPending(false);
+				await refreshSessions();
+				await sendMessage(id, content);
+				setSessions((ss) =>
+					ss.map((s) => (s.id === id ? { ...s, turn: "running" as const } : s)),
+				);
+				setError(null);
+				return;
+			}
 			if (chat.turn === "running") {
 				await steerMessage(currentId, content);
 			} else {
@@ -180,6 +215,7 @@ export function App() {
 	};
 
 	const current = sessions.find((s) => s.id === currentId) ?? null;
+	const currentName = current ? (names[current.id] ?? current.cwd) : "";
 
 	return (
 		<TooltipProvider>
@@ -187,10 +223,9 @@ export function App() {
 				<SessionList
 					sessions={sessions}
 					currentId={currentId}
+					nameFor={(s) => names[s.id] ?? s.cwd}
 					onSelect={handleSelect}
-					onCreate={() => {
-						void handleCreate();
-					}}
+					onCreate={handleCreate}
 				/>
 				<div className="flex min-w-0 flex-1 flex-col">
 					<header className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
@@ -198,7 +233,7 @@ export function App() {
 							className="min-w-0 flex-1 truncate text-sm text-muted-foreground"
 							title={current?.cwd}
 						>
-							{current ? current.cwd : "hotpot code"}
+							{current ? currentName : pending ? "新会话" : "hotpot code"}
 						</span>
 						<span
 							className={cn(
@@ -229,6 +264,7 @@ export function App() {
 					<ChatView
 						state={chat}
 						hasSession={currentId !== null}
+						welcome={currentId === null}
 						onSend={(content) => {
 							void handleSend(content);
 						}}

@@ -20,6 +20,7 @@ function formatTime(iso: string): string {
 interface SessionListProps {
 	sessions: SessionSummary[];
 	currentId: string | null;
+	nameFor: (s: SessionSummary) => string;
 	onSelect: (id: string) => void;
 	onCreate: () => void;
 }
@@ -27,6 +28,7 @@ interface SessionListProps {
 export function SessionList({
 	sessions,
 	currentId,
+	nameFor,
 	onSelect,
 	onCreate,
 }: SessionListProps): ReactElement {
@@ -43,7 +45,7 @@ export function SessionList({
 			<div className="px-3 pb-2 pt-3">
 				<Button
 					variant="outline"
-					className="w-full justify-start gap-2 rounded-xl border bg-background py-5 shadow-sm hover:bg-accent"
+					className="w-full justify-start gap-2 rounded-xl border-border-strong bg-background py-5 hover:bg-accent"
 					onClick={onCreate}
 				>
 					<Plus className="size-4" />
@@ -72,7 +74,7 @@ export function SessionList({
 									}}
 								>
 									<span className="block truncate text-sm" title={s.cwd}>
-										{truncate(s.cwd, 26)}
+										{truncate(nameFor(s), 26)}
 									</span>
 									<span
 										className={cn(
