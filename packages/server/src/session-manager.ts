@@ -66,6 +66,13 @@ import {
 	runMainTurn,
 	type WorkerToolDecorator,
 } from "@hotpot/orchestrator";
+import {
+	APP_VERSION,
+	createTelemetryRuntime,
+	sessionEndEvent,
+	sessionStartEvent,
+	type TelemetryRuntime,
+} from "@hotpot/telemetry";
 import { type ApprovalBridge, createApprovalBridge } from "./approvals.ts";
 import { createTailer, type Tailer } from "./tailer.ts";
 import { summarizeUsage, type UsageSummary } from "./usage.ts";
@@ -113,6 +120,8 @@ export interface SessionManagerOptions {
 	warn?: (text: string) => void;
 	// 测试注入点：MCP 连接层打桩（缺省走真实 SDK client），配 mcpServers 配置做 attach 用例
 	mcpCreateClient?: McpClientFactory;
+	// 测试注入点：遥测上报用的 fetch，缺省走全局 fetch
+	telemetryFetch?: typeof fetch;
 }
 
 export interface SessionManager {
@@ -162,6 +171,8 @@ interface ManagedSession {
 	cwd: string;
 	filePath: string;
 	createdAt: string;
+	// 采集器要读会话日志，保留原始 session 句柄（水位包装只影响 append）
+	session: Session;
 	tier: ModelTier;
 	hub: WireHub;
 	bridge: ApprovalBridge;
@@ -177,6 +188,10 @@ interface ManagedSession {
 	emit: (input: WireEventInput) => WireEvent;
 	syncDurable: () => Promise<void>;
 	holder: { currentAbort: AbortController | null; running: boolean };
+	// 遥测会话开始时间（create 取会话 createdAt，attach 取挂接时刻）与累计 turn/error 数
+	telemetryStartedAt: number;
+	telemetryTurns: number;
+	telemetryErrors: number;
 	// turn 串行链尾
 	turnTail: Promise<void>;
 	subscribers: Map<number, (e: WireEvent) => void>;
@@ -276,6 +291,40 @@ export function createSessionManager(
 	const warn = opts.warn ?? (() => {});
 	const managed = new Map<string, ManagedSession>();
 
+	// M5 遥测旁路：整个 manager 共用一个运行时（未启用或 endpoint 不可用时为 null）。
+	// 读配置失败也只退化为 null——遥测问题不能影响服务启动与会话装配
+	function loadTelemetryRuntime(): TelemetryRuntime | null {
+		try {
+			return createTelemetryRuntime(loadSettings({ home: opts.home }), {
+				home: opts.home,
+				appVersion: APP_VERSION,
+				fetchImpl: opts.telemetryFetch,
+			});
+		} catch {
+			return null;
+		}
+	}
+	const telemetry = loadTelemetryRuntime();
+
+	// session_start 在会话进入 managed 后上报；入队失败只丢这条事件，不影响会话
+	function emitSessionStart(m: ManagedSession, resumed: boolean): void {
+		if (telemetry === null) return;
+		try {
+			telemetry.client.enqueue(
+				sessionStartEvent({
+					sessionId: m.id,
+					resumed,
+					appVersion: APP_VERSION,
+					features: m.features,
+					os: process.platform,
+					nodeVersion: process.version,
+				}),
+			);
+		} catch {
+			// 遥测是旁路：任何异常都不向调用方冒泡
+		}
+	}
+
 	function requireManaged(id: string): ManagedSession {
 		const m = managed.get(id);
 		if (m === undefined) {
@@ -290,6 +339,8 @@ export function createSessionManager(
 		cwd: string;
 		settings: Settings;
 		createdAt: string;
+		// 遥测会话起点（毫秒）：create 用 meta.createdAt，attach 用挂接时刻
+		startedAt: number;
 		inboxSeed?: InboxState;
 	}): Promise<ManagedSession> {
 		const { settings, cwd } = init;
@@ -478,6 +529,7 @@ export function createSessionManager(
 			cwd,
 			filePath: init.session.filePath,
 			createdAt: init.createdAt,
+			session: init.session,
 			tier,
 			hub,
 			bridge,
@@ -490,6 +542,9 @@ export function createSessionManager(
 			emit: emitLocal,
 			syncDurable: watermark.syncDurable,
 			holder,
+			telemetryStartedAt: init.startedAt,
+			telemetryTurns: 0,
+			telemetryErrors: 0,
 			turnTail: Promise.resolve(),
 			subscribers,
 			nextSubscriberId: 1,
@@ -506,9 +561,21 @@ export function createSessionManager(
 		const ac = new AbortController();
 		m.holder.currentAbort = ac;
 		m.holder.running = true;
+		// 遥测：一个用户 turn 一个采集器；start 入队后才开始迭代事件流
+		const collector =
+			telemetry === null
+				? null
+				: telemetry.createCollector(m.session, {
+						turnId: randomUUID(),
+						features: m.features,
+					});
+		let planRejected = false;
 		let stopReason: string | undefined;
 		let error: string | undefined;
 		try {
+			if (telemetry !== null && collector !== null) {
+				telemetry.client.enqueue(collector.start());
+			}
 			for await (const event of runMainTurn({
 				runtime: m.runtime,
 				userMessage: content,
@@ -540,6 +607,10 @@ export function createSessionManager(
 						});
 					}
 				} else if (event.type === "plan") {
+					// 计划被用户拒绝属于主动中止，采集器据此判 aborted
+					if (event.phase === "denied") {
+						planRejected = true;
+					}
 					// 边界同步：assistant_msg 先于 plan 事件到达，web 才能按 messageIds
 					// 隐藏计划正文气泡（否则后到的日志会重新渲染一遍）
 					await m.syncDurable();
@@ -554,6 +625,8 @@ export function createSessionManager(
 				} else if (event.type === "error") {
 					error = `${event.error.code}: ${event.error.message}`;
 				}
+				// 遥测采集器观察每一个编排事件（只提取匿名指标，不持有内容）
+				collector?.observe(event);
 				// tool_call/tool_result/assistant_msg/user_msg 不转发：
 				// 它们由 runTurn 落盘、tailer 经 log 路径推送
 			}
@@ -562,6 +635,30 @@ export function createSessionManager(
 		} finally {
 			m.holder.currentAbort = null;
 			m.holder.running = false;
+			// 遥测收尾与 abort 复位在同一 finally：finish 折算本回合明细后入队并立即 flush。
+			// 采集/入队失败只丢本回合遥测，绝不向 turn 调用方抛错
+			if (telemetry !== null && collector !== null) {
+				try {
+					const events = await collector.finish({
+						aborted: ac.signal.aborted,
+						planRejected,
+					});
+					for (const event of events) {
+						telemetry.client.enqueue(event);
+					}
+					m.telemetryTurns += 1;
+					if (
+						events.some(
+							(event) => event.type === "turn_end" && event.outcome === "error",
+						)
+					) {
+						m.telemetryErrors += 1;
+					}
+				} catch {
+					// 折叠失败只影响遥测，不影响回合结果
+				}
+				void telemetry.client.flush();
+			}
 		}
 		// 收尾边界同步：log(assistant_msg) 等全部 durable 推齐后再发 turn(end)
 		await m.syncDurable();
@@ -646,13 +743,17 @@ export function createSessionManager(
 			if (meta.type !== "meta") {
 				throw new Error(`会话文件缺 meta 头: ${session.filePath}`);
 			}
+			// 遥测会话时长从会话创建时间算起；createdAt 不可解析时退回当前时刻
+			const createdAtMs = Date.parse(meta.createdAt);
 			const m = await assemble({
 				session,
 				cwd,
 				settings,
 				createdAt: meta.createdAt,
+				startedAt: Number.isFinite(createdAtMs) ? createdAtMs : Date.now(),
 			});
 			managed.set(m.id, m);
+			emitSessionStart(m, false);
 			return recordOf(m);
 		},
 
@@ -664,14 +765,17 @@ export function createSessionManager(
 			if (meta.type !== "meta") return null;
 			const session = await resumeSession(summary.filePath);
 			const settings = loadSettings({ cwd: meta.cwd, home: opts.home });
+			// 恢复的会话从挂接时刻算起：用旧 createdAt 会把离线时长计入 durationMs
 			const m = await assemble({
 				session,
 				cwd: meta.cwd,
 				settings,
 				createdAt: meta.createdAt,
+				startedAt: Date.now(),
 				inboxSeed: foldInbox(events),
 			});
 			managed.set(m.id, m);
+			emitSessionStart(m, true);
 			return recordOf(m);
 		},
 
@@ -836,6 +940,23 @@ export function createSessionManager(
 				}
 			}
 			m.tailer.stop();
+			// session_end 必须在 managed 摘除前入队：turns/errors 取本会话累计值。
+			// flush 不 await：关闭路径不能被网络重试拖住，失败由客户端内部吞掉
+			if (telemetry !== null) {
+				try {
+					telemetry.client.enqueue(
+						sessionEndEvent({
+							sessionId: m.id,
+							startedAt: m.telemetryStartedAt,
+							turns: m.telemetryTurns,
+							errors: m.telemetryErrors,
+						}),
+					);
+					void telemetry.client.flush();
+				} catch {
+					// 遥测是旁路：上报失败不影响会话关闭
+				}
+			}
 			// managed 同步摘除保持旧行为（close 不 await 时 get 立即为 null）；
 			// MCP 连接关闭是异步收尾，放最后不阻塞摘除
 			managed.delete(id);

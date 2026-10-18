@@ -78,6 +78,16 @@ declare module "node:fs" {
 		isFile(): boolean;
 	};
 	export function readFileSync(path: string, encoding: "utf8"): string;
+	// 遥测包（install-id）经 workspace 源码直引，这里补上它用到的同步写 API
+	export function writeFileSync(
+		path: string,
+		data: string,
+		encoding?: "utf8",
+	): void;
+	export function mkdirSync(
+		path: string,
+		options?: { recursive?: boolean },
+	): string | undefined;
 	export function watch(
 		path: string,
 		listener: (event: string, filename: string | null) => void,
@@ -216,6 +226,7 @@ declare module "node:http2" {
 declare const process: {
 	env: Record<string, string | undefined>;
 	platform: string;
+	version: string;
 	cwd(): string;
 	kill(pid: number, signal?: string): boolean;
 };

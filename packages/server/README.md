@@ -1,6 +1,6 @@
 # @hotpot/server
 
-M3 服务层：在 cli 与 orchestrator 之上提供 REST + SSE API，负责会话管理、事件推送与断线重连（重连时从 JSONL 日志按 offset 补发 missed 事件）。依赖方向 `server → orchestrator → core → ai`。
+M3 服务层：在 cli 与 orchestrator 之上提供 REST + SSE API，负责会话管理、事件推送与断线重连（重连时从 JSONL 日志按 offset 补发 missed 事件）。依赖方向 `server → orchestrator → core → ai`；遥测经 `@hotpot/telemetry` 旁路上报（`server → telemetry → core`）。
 
 ## 当前已实现
 
@@ -34,6 +34,14 @@ M3 服务层：在 cli 与 orchestrator 之上提供 REST + SSE API，负责会�
 - **usage 扩展**：`summarizeUsage(events, features)` 增加 `features` 段（todo/hooks/skills/promptTemplates/webSearch/webFetch/mcp 的开关 + 事件/工具调用计数），满足 M4 遥测验收；M5 报表直接消费。
 - **hooks 生命周期**：`session_start` 在装配完成时触发；pre/post tool 与 turn_end 由 core / orchestrator 的回合路径触发，server 只负责装配与关闭。
 
+## M5 增量
+
+- **遥测旁路**：`createSessionManager` 用用户级 settings 装配一次 `createTelemetryRuntime`（`telemetryFetch` 为测试注入缝）。运行时为 null（`telemetry.enabled === false`，或 endpoint 为空/非法）时所有上报点直接跳过。
+  - `create` 上报 `session_start`（`resumed: false`，时长为会话 `createdAt` 起算），`attachById` 上报 `session_start`（`resumed: true`，时长为挂接时刻起算）；
+  - `runOneTurn` 每回合一个采集器：入队 `turn_start`，逐事件 `observe`（`plan.phase === "denied"` 记为计划被拒），在复位 `currentAbort` 的同一 `finally` 中折算 `turn_end` 并入队、随后异步 `flush`；
+  - `close(id)` 在从 managed 摘除前上报该会话的 `session_end`（本会话累计 turn/error 数，flush 不 await，关闭路径不被网络重试拖住）；
+  - 采集与上报异常全部吞掉，永不阻塞或失败一个回合。
+
 ## 目录
 
 ```
@@ -53,4 +61,5 @@ test/
   session-manager.test.ts     事件顺序/spawn/审批/plan/串行/attach/usage 集成用例
   api.test.ts                 REST/SSE 集成用例（真实端口 + fetch + SSE 流式消费）
   static.test.ts              纯 API 模式/SPA 兜底/资产 MIME/public 直出用例
+  telemetry.test.ts           遥测上报（turn/session 事件、无对话文本、关闭旁路）用例
 ```

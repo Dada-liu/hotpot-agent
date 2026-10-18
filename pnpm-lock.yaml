@@ -76,6 +76,9 @@ importers:
       '@hotpot/orchestrator':
         specifier: workspace:*
         version: link:../orchestrator
+      '@hotpot/telemetry':
+        specifier: workspace:*
+        version: link:../telemetry
       hono:
         specifier: ^4.13.13
         version: 4.13.13
