@@ -36,7 +36,17 @@ function makeCtx(decision?: ApprovalDecision): {
 		});
 	}
 	return {
-		ctx: { cwd: dir, signal: new AbortController().signal, approval },
+		ctx: {
+			cwd: dir,
+			signal: new AbortController().signal,
+			approval,
+			agentId: "main",
+			session: {
+				id: "fs-test-session",
+				filePath: `${dir}/session.jsonl`,
+				append: async () => {},
+			},
+		},
 		requests,
 	};
 }

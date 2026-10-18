@@ -4,11 +4,18 @@ import { ApprovalChain, type ApprovalRequest } from "../src/approval/chain.ts";
 import { createToolRegistry } from "../src/tools/registry.ts";
 import type { ToolContext, ToolDefinition } from "../src/tools/tool.ts";
 
-// 固定 ctx，保证测试确定性；approval 用空链（默认 deny）即可
+// 固定 ctx，保证测试确定性；approval 用空链（默认 deny）即可；
+// session 用桩（append 不落盘），agentId 固定 "main"
 const CTX: ToolContext = {
 	cwd: "/tmp",
 	signal: new AbortController().signal,
 	approval: new ApprovalChain(),
+	agentId: "main",
+	session: {
+		id: "test-session",
+		filePath: "/tmp/test-session.jsonl",
+		append: async () => {},
+	},
 };
 
 const REQ: ApprovalRequest = {

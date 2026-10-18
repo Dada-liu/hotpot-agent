@@ -1,7 +1,11 @@
 // 会话事件类型（v1 定稿）：字段对齐 docs/archive/02-architecture.md 第 5 节
 // M1 只写入 meta/user_msg/assistant_msg/tool_call/tool_result/error；
 // M2 起 agent_spawn、approval/*、inbox/spliced 已由编排层（packages/orchestrator）产出。
+// M4 新增 todo/set、hook/fired、skill/loaded、prompt/invoked、mcp/attached 五个变体
+// （功能开关/钩子/skill/prompt 模板/MCP 挂载的落盘记录，均不进模型历史，
+// 与 inbox/spliced 同待遇——deriveMessages 不折叠，由各自 fold 纯函数重建状态）。
 // 文档第 5 节还列了 turn/start|turn/end 与 request_header，M1 暂不需要，未纳入本联合。
+// 契约纪律：只允许新增变体，既有变体字段不改（v1 定稿，未来真需要变更走 v2 迁移）。
 
 import type { ContentBlock, Usage } from "@hotpot/ai";
 
@@ -13,6 +17,16 @@ export type InboxQueue = "next-turn" | "next-step";
 
 // inbox/spliced 携带的排队消息；带 id 以便崩溃恢复后去重
 export type InboxMessage = { id: string; content: string };
+
+// M4 todo 工具的任务项：todo/set 携带全量列表快照（last-write-wins fold）
+export type TodoItem = {
+	content: string;
+	status: "pending" | "in_progress" | "completed";
+};
+
+// M4 钩子事件：配置键为 Claude Code 形状（SessionStart/PreToolUse/PostToolUse/Stop），
+// Stop 映射为 turn_end；HookEvent 供 hook/fired 事件与 Task 7 的 HookChain 共用
+export type HookEvent = "session_start" | "pre_tool" | "post_tool" | "turn_end";
 
 export type SessionEvent =
 	// meta 是文件首行，无 id/ts；formatVersion 恒为 1，真出现 v2 需求时再加迁移
@@ -92,6 +106,54 @@ export type SessionEvent =
 			agentId: string;
 			queue: InboxQueue;
 			messages: InboxMessage[];
+	  }
+	// —— M4 新增变体（start）：均不进模型历史，derive 不折叠 ——
+	// todo/set：todo 工具的全量列表快照（last-write-wins fold 重建当前清单）
+	| {
+			type: "todo/set";
+			id: string;
+			ts: string;
+			agentId: string;
+			todos: TodoItem[];
+	  }
+	// hook/fired：钩子命令执行记录；agentId 可选（session_start 等会话级钩子无归属 agent）
+	| {
+			type: "hook/fired";
+			id: string;
+			ts: string;
+			agentId?: string;
+			hook: HookEvent;
+			command: string;
+			exitCode: number;
+			durationMs: number;
+	  }
+	// skill/loaded：模型经 read 加载了某个 SKILL.md（skill 渐进式的加载落盘）
+	| {
+			type: "skill/loaded";
+			id: string;
+			ts: string;
+			agentId: string;
+			skill: string;
+			path: string;
+	  }
+	// prompt/invoked：/命令 模板展开记录；只有 main agent 发起，agentId 恒为 "main"
+	| {
+			type: "prompt/invoked";
+			id: string;
+			ts: string;
+			agentId: "main";
+			name: string;
+			args: string;
+			content: string;
+	  }
+	// mcp/attached：MCP server 挂载记录（会话级，无 agentId）；tools 为桥接后的工具名列表
+	| {
+			type: "mcp/attached";
+			id: string;
+			ts: string;
+			server: string;
+			transport: "stdio" | "http";
+			tools: string[];
 	  }
 	| {
 			type: "error";

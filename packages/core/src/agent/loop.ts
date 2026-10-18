@@ -93,6 +93,9 @@ async function executeCall(
 		return { content: `unknown tool: ${call.name}`, isError: true };
 	}
 	try {
+		// Task 7（hooks）挂点：PreToolUse 在 tool.execute 之前于此触发（exit≠0 直接产
+		// isError 结果、跳过执行），PostToolUse 在 finally 里触发——先于工具内建审批
+		// （高危命令仍要过人审，hook 不替代审批），阻断与执行共用本函数的兜底语义
 		return await tool.execute(call.input, ctx);
 	} catch (err) {
 		const message = err instanceof Error ? err.message : String(err);
@@ -362,7 +365,13 @@ export async function* runTurn(
 			return;
 		}
 
-		const ctx: ToolContext = { cwd: cfg.cwd, signal, approval: cfg.approval };
+		const ctx: ToolContext = {
+			cwd: cfg.cwd,
+			signal,
+			approval: cfg.approval,
+			agentId: cfg.agentId,
+			session: cfg.session,
+		};
 		const results = await executeCalls(cfg, calls, ctx);
 		for (const { call, output } of results) {
 			yield await persistToolResult(cfg, call, output);

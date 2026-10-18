@@ -39,7 +39,17 @@ function makeCtx(decision?: ApprovalDecision): {
 		});
 	}
 	return {
-		ctx: { cwd: dir, signal: new AbortController().signal, approval },
+		ctx: {
+			cwd: dir,
+			signal: new AbortController().signal,
+			approval,
+			agentId: "main",
+			session: {
+				id: "bash-test-session",
+				filePath: `${dir}/session.jsonl`,
+				append: async () => {},
+			},
+		},
 		requests,
 	};
 }
@@ -95,6 +105,12 @@ describe("bashTool.execute", () => {
 			cwd: dir,
 			signal: controller.signal,
 			approval: new ApprovalChain(),
+			agentId: "main",
+			session: {
+				id: "bash-test-session",
+				filePath: `${dir}/session.jsonl`,
+				append: async () => {},
+			},
 		};
 		const start = Date.now();
 		const promise = bashTool.execute({ command: "sleep 5" }, ctx);

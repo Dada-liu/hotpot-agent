@@ -19,6 +19,57 @@ const modelRefSchema = z.object({
 	baseUrl: z.string().min(1).optional(),
 });
 
+// M4 功能开关：全部 optional boolean，读取侧统一经 featureEnabled 的 `?? true` 缺省全开
+const featuresSchema = z.object({
+	todo: z.boolean().optional(),
+	hooks: z.boolean().optional(),
+	skills: z.boolean().optional(),
+	promptTemplates: z.boolean().optional(),
+	webSearch: z.boolean().optional(),
+	webFetch: z.boolean().optional(),
+	mcp: z.boolean().optional(),
+});
+
+// M4 hooks：Claude Code 配置形状（SessionStart/PreToolUse/PostToolUse/Stop，Stop 映射 turn_end）。
+// matcher 为工具名精确匹配或 "*"；hooks 列表只支持 command 类型
+const hookCommandSchema = z.object({
+	type: z.literal("command"),
+	command: z.string().min(1),
+});
+const hookMatcherSchema = z.object({
+	matcher: z.string(),
+	hooks: z.array(hookCommandSchema),
+});
+const hooksSchema = z.object({
+	SessionStart: z.array(hookMatcherSchema).optional(),
+	PreToolUse: z.array(hookMatcherSchema).optional(),
+	PostToolUse: z.array(hookMatcherSchema).optional(),
+	Stop: z.array(hookMatcherSchema).optional(),
+});
+
+// M4 webSearch 后端配置：duckduckgo（无 key）或 custom（baseUrl + 可选凭证/头）
+const webSearchSchema = z.object({
+	backend: z.enum(["duckduckgo", "custom"]),
+	apiKey: z.string().optional(),
+	baseUrl: z.string().optional(),
+	headers: z.record(z.string(), z.string()).optional(),
+});
+
+// M4 MCP server 配置：stdio（command 进程）或 streamable HTTP（url）二选一
+const mcpStdioServerSchema = z.object({
+	command: z.string().min(1),
+	args: z.array(z.string()).optional(),
+	env: z.record(z.string(), z.string()).optional(),
+});
+const mcpHttpServerSchema = z.object({
+	url: z.string().min(1),
+	headers: z.record(z.string(), z.string()).optional(),
+});
+const mcpServersSchema = z.record(
+	z.string(),
+	z.union([mcpStdioServerSchema, mcpHttpServerSchema]),
+);
+
 const settingsSchema = z.object({
 	models: z.object({
 		high: modelRefSchema,
@@ -33,9 +84,18 @@ const settingsSchema = z.object({
 			policy: z.enum(["ask-on-dangerous", "always", "never"]).optional(),
 		})
 		.optional(),
+	features: featuresSchema.optional(),
+	hooks: hooksSchema.optional(),
+	webSearch: webSearchSchema.optional(),
+	mcpServers: mcpServersSchema.optional(),
+	skillsDirs: z.array(z.string()).optional(),
+	promptsDirs: z.array(z.string()).optional(),
 });
 
-// 项目级收窄 schema：只含 4 个白名单字段；zod 默认 strip 静默丢弃 models 等未知字段
+// 项目级收窄 schema：只含 4 个白名单字段；zod 默认 strip 静默丢弃 models 等未知字段。
+// 安全理由（M4 定案）：M4 新增字段一律仅用户级 —— hooks/mcpServers 涉及任意命令执行，
+// 项目级注入即 RCE；skillsDirs/promptsDirs 决定磁盘扫描范围，features/webSearch 影响外发流量，
+// 均不允许恶意仓库经 .hotpot/settings.json 篡改
 const projectSettingsSchema = z.object({
 	mainAgentTier: z.enum(["high", "medium", "low"]).optional(),
 	maxParallelTasks: z.number().int().positive().optional(),
@@ -49,7 +109,20 @@ const projectSettingsSchema = z.object({
 
 export type ModelRef = z.infer<typeof modelRefSchema>;
 export type Settings = z.infer<typeof settingsSchema>;
+export type Features = z.infer<typeof featuresSchema>;
+export type HooksConfig = z.infer<typeof hooksSchema>;
+export type WebSearchConfig = z.infer<typeof webSearchSchema>;
+export type McpServersConfig = z.infer<typeof mcpServersSchema>;
 type ProjectSettings = z.infer<typeof projectSettingsSchema>;
+
+// 功能开关统一读取口：缺省全开（`?? true`）。关闭开关 = 不注册工具/不挂钩子/不扫描目录，
+// 注册表与装配层一律经这里判读，不直接裸读 settings.features?.x
+export function featureEnabled(
+	features: Settings["features"] | undefined,
+	key: keyof NonNullable<Settings["features"]>,
+): boolean {
+	return features?.[key] ?? true;
+}
 
 // apiKey 的 $ENV 引用要求整串匹配，避免误伤字面值里恰好含 $ 的 key
 const ENV_REF_PATTERN = /^\$([A-Za-z_][A-Za-z0-9_]*)$/;

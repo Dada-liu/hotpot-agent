@@ -184,12 +184,15 @@ describe("runTurn", () => {
 			{ type: "done", stopReason: "stop" },
 		]);
 
-		// ToolContext 由 runTurn 组装：cwd / signal / approval 全部来自 cfg 与入参
+		// ToolContext 由 runTurn 组装：cwd / signal / approval / agentId / session 全部来自 cfg 与入参
 		expect(spy).toHaveLength(1);
 		expect(spy[0]?.args).toEqual({ text: "hi" });
 		expect(spy[0]?.ctx.cwd).toBe("/tmp/project");
 		expect(spy[0]?.ctx.signal).toBe(ac.signal);
 		expect(spy[0]?.ctx.approval).toBe(cfg.approval);
+		// M4：agentId 标记工具归属，session 供工具落盘功能事件（todo/set 等）
+		expect(spy[0]?.ctx.agentId).toBe("main");
+		expect(spy[0]?.ctx.session).toBe(cfg.session);
 
 		const { events: fileEvents } = await loadSession(cfg.session.filePath);
 		expect(fileEvents.map((e) => e.type)).toEqual([
