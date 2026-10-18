@@ -2,7 +2,7 @@
 
 M3 服务层：在 cli 与 orchestrator 之上提供 REST + SSE API，负责会话管理、事件推送与断线重连（重连时从 JSONL 日志按 offset 补发 missed 事件）。依赖方向 `server → orchestrator → core → ai`。
 
-## 当前已实现（Task 2 + Task 3）
+## 当前已实现
 
 - **`createTailer` JSONL 日志 tailer**（`src/tailer.ts`）：事件总线的基础。
   - `start()` 先补读历史（`fromOffset`，缺省 0）整批回调，再进入跟随模式；
@@ -23,12 +23,16 @@ M3 服务层：在 cli 与 orchestrator 之上提供 REST + SSE API，负责会�
   - webDist（默认按 `import.meta.url` 定位 `<仓库根>/packages/web/dist`）：产物文件（`/assets/*` 等）按扩展名给 Content-Type；`/` 与任意非 `/api` 路径的 GET 回退 `index.html`（SPA 兜底）；
   - publicDir（默认 `<仓库根>/public`）：`/<文件名>` 原样直出；
   - 两个目录都不存在时不挂任何路由（纯 API 模式）；`/api` 前缀永不进静态路由，URL 路径规范化后拒绝逃逸根目录。
+- **REST + SSE 路由**（`src/app.ts`）：全部路由挂 `/api/sessions*`；`GET /:id` 与 `events`（SSE）等单会话路由经共享的 `requireSession` 解析——内存 managed 表未命中时降级 `attachById` 恢复磁盘会话（CLI 创建的会话同样可打开），attach 也未命中才 404。
+- **`hotpot-server` bin**（`src/bin.ts`）：装配 SessionManager + Hono app，经 `@hono/node-server` 监听（端口取 `HOTPOT_PORT`，缺省 4573）；启动时挂载静态托管，`HOTPOT_WEB_DIST`/`HOTPOT_PUBLIC_DIR` 可覆盖默认目录，目录不存在则纯 API 模式。
 
 ## 目录
 
 ```
 src/
   index.ts             包入口：re-export 全部公开模块
+  bin.ts               hotpot-server 启动入口（REST + SSE + 静态托管）
+  app.ts               HTTP 路由（REST + SSE，requireSession 共享解析）
   tailer.ts            JSONL 会话日志 tailer（createTailer）
   wire.ts              UI 事件协议（WireEvent）与 seq 总线（createWireHub）
   approvals.ts         审批桥（pending 表 + parked promise）
@@ -39,10 +43,6 @@ src/
 test/
   tailer.test.ts              补读/坏行/半行/stop/offset 续读用例
   session-manager.test.ts     事件顺序/spawn/审批/plan/串行/attach/usage 集成用例
+  api.test.ts                 REST/SSE 集成用例（真实端口 + fetch + SSE 流式消费）
   static.test.ts              纯 API 模式/SPA 兜底/资产 MIME/public 直出用例
 ```
-
-## 计划（后续任务）
-
-- web 前端（packages/web 尚不存在）：产出接入 static.ts 托管的 `packages/web/dist`；
-- `hotpot-server` bin（`src/bin.ts`）启动时挂载静态托管：`HOTPOT_WEB_DIST`/`HOTPOT_PUBLIC_DIR` 可覆盖默认目录。

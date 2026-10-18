@@ -40,16 +40,16 @@
 
 **目标**：浏览器完成全部操作。
 
-**状态：已完成（M3 收口提交 dceb705）。**
+**状态：已完成（M3 收口提交 78096b6）。**
 
 范围：
 - packages/server：REST + SSE、会话管理、断线重连从日志补发（已完成，测试见 `packages/server/test/api.test.ts`、`session-manager.test.ts`、`tailer.test.ts`）
 - packages/web：会话列表、流式对话、工具调用卡片、plan 审查面板、用量展示（已完成，测试见 `packages/web/test/`）
 
 验收标准：
-1. web 端走完 M1/M2 的全部验收场景（已完成（M3 收口提交 dceb705），测试依据：`packages/server/test/session-manager.test.ts` 与 `api.test.ts` 以 scriptedAdapter 回放 simple/complex/审批/并行子任务/steer/cancel 场景，`packages/web/test/` 覆盖 reducer 与 markdown，`packages/orchestrator/test/` 覆盖编排场景）
-2. 断网重连后 SSE 恢复，事件不丢（已完成（M3 收口提交 dceb705），测试依据：`packages/server/test/tailer.test.ts` 钉住字节偏移续读，`api.test.ts` 钉住 `Last-Event-ID` 重连补发不丢序）
-3. 审批操作在 web 端完成，CLI 与 web 可同时观察同一会话（已完成（M3 收口提交 dceb705），测试依据：`packages/server/test/session-manager.test.ts` 审批桥全流程，`tailer.test.ts` 全量推送 durable 事件）
+1. web 端走完 M1/M2 的全部验收场景（已完成（M3 收口提交 78096b6），测试依据：`packages/server/test/session-manager.test.ts` 与 `api.test.ts` 以 scriptedAdapter 回放 simple/complex/审批/并行子任务/steer/cancel 场景，`packages/web/test/` 覆盖 reducer 与 markdown，`packages/orchestrator/test/` 覆盖编排场景）
+2. 断网重连后 SSE 恢复，事件不丢（已完成（M3 收口提交 78096b6），测试依据：`packages/server/test/tailer.test.ts` 钉住字节偏移续读，`api.test.ts` 钉住 `Last-Event-ID` 重连补发不丢序）
+3. 审批操作在 web 端完成，CLI 与 web 可同时观察同一会话（已完成（M3 收口提交 78096b6），测试依据：`packages/server/test/session-manager.test.ts` 审批桥全流程，`tailer.test.ts` 全量推送 durable 事件）
 
 ## M4 扩展功能
 
