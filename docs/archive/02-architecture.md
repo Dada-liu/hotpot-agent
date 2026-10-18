@@ -107,6 +107,7 @@ WorkerAgent: 可并行则 spawn TaskAgent × N（上限可配，默认 10）
 {"type":"meta","sessionId":"...","createdAt":"...","cwd":"...","formatVersion":1}
 {"type":"turn/start|turn/end","id":"...","ts":"...","agentId":"main"}
 {"type":"user_msg","id":"...","ts":"...","content":"...","agentId":"main"}
+{"type":"internal_msg","id":"...","ts":"...","content":"...","agentId":"main"}
 {"type":"assistant_msg","id":"...","ts":"...","agentId":"main","content":[...],"usage":{"input":123,"output":45},"model":"...","tier":"high"}
 {"type":"request_header","id":"...","ts":"...","agentId":"...","configHash":"...","toolsHash":"..."}
 {"type":"tool_call","id":"...","ts":"...","agentId":"...","name":"bash","input":{...}}
@@ -122,6 +123,8 @@ WorkerAgent: 可并行则 spawn TaskAgent × N（上限可配，默认 10）
 {"type":"mcp/attached","id":"...","ts":"...","server":"fs","transport":"stdio","tools":["mcp__fs__read"]}
 {"type":"error","id":"...","ts":"...","agentId":"...","code":"...","message":"..."}
 ```
+
+`internal_msg` 是编排层内部延续提示（plan 起草/修订、批准 kickoff 等）：`deriveMessages` 按 user 角色折入模型历史，但它不是用户输入，UI 不渲染。
 
 要点：
 - 一个会话内所有 agent（含子 agent）写同一文件，`agentId` 区分

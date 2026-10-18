@@ -4,6 +4,8 @@
 // M4 新增 todo/set、hook/fired、skill/loaded、prompt/invoked、mcp/attached 五个变体
 // （功能开关/钩子/skill/prompt 模板/MCP 挂载的落盘记录，均不进模型历史，
 // 与 inbox/spliced 同待遇——deriveMessages 不折叠，由各自 fold 纯函数重建状态）。
+// internal_msg 为编排层内部延续提示（如 plan 起草/批准 kickoff）：deriveMessages 按
+// user 角色折入模型历史，但不属于用户输入，UI 不渲染（与 user_msg 区分）。
 // 文档第 5 节还列了 turn/start|turn/end 与 request_header，M1 暂不需要，未纳入本联合。
 // 契约纪律：只允许新增变体，既有变体字段不改（v1 定稿，未来真需要变更走 v2 迁移）。
 
@@ -39,6 +41,14 @@ export type SessionEvent =
 	  }
 	| {
 			type: "user_msg";
+			id: string;
+			ts: string;
+			agentId: string;
+			content: string;
+	  }
+	// 内部延续提示：由编排层写入、进入模型历史，但不是用户输入，UI 不展示
+	| {
+			type: "internal_msg";
 			id: string;
 			ts: string;
 			agentId: string;

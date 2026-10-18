@@ -260,6 +260,32 @@ describe("deriveMessages", () => {
 		expect(workerMessages[0]?.role).toBe("assistant");
 	});
 
+	it("internal_msg 按 user 角色折入模型历史，并按 agentId 过滤", async () => {
+		const session = await createSession("/Users/test/project", home);
+		await session.append({
+			type: "internal_msg",
+			id: nextId(),
+			ts: TS,
+			agentId: "main",
+			content: "内部起草提示",
+		});
+		await session.append({
+			type: "internal_msg",
+			id: nextId(),
+			ts: TS,
+			agentId: "worker-1",
+			content: "worker 内部提示",
+		});
+		const { events } = await loadSession(session.filePath);
+
+		expect(deriveMessages(events, "main")).toEqual([
+			{ role: "user", content: [{ type: "text", text: "内部起草提示" }] },
+		]);
+		expect(deriveMessages(events, "worker-1")).toEqual([
+			{ role: "user", content: [{ type: "text", text: "worker 内部提示" }] },
+		]);
+	});
+
 	it("连续的 tool_result 事件合并为一条 user 消息", async () => {
 		const events: SessionEvent[] = [
 			{

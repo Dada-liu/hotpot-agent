@@ -1,6 +1,7 @@
 // deriveMessages：把事件日志转换成 ai 包的 Message[]，供每次 LLM 请求前重建历史
 // 规则：
 // - user_msg → role:"user"（text 块）
+// - internal_msg → 同 user_msg 折入模型历史（编排层内部延续提示，UI 不展示）
 // - assistant_msg → role:"assistant"（content 即 ContentBlock[]）
 // - tool_result → role:"user" 消息承载 tool_result 块；连续的 tool_result 合并为一条
 //   （Anthropic 要求同一轮的全部 tool_result 放在一条 user 消息里）
@@ -17,7 +18,10 @@ export function deriveMessages(
 ): Message[] {
 	const messages: Message[] = [];
 	for (const event of events) {
-		if (event.type === "user_msg" && event.agentId === agentId) {
+		if (
+			(event.type === "user_msg" || event.type === "internal_msg") &&
+			event.agentId === agentId
+		) {
 			messages.push({
 				role: "user",
 				content: [{ type: "text", text: event.content }],
