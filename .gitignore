@@ -5,6 +5,8 @@ lib/
 !packages/web/src/lib/
 .superpowers/
 .worktrees/
+# 用户/agent 在 temp/ 下生成的独立项目，不纳入本仓库校验与提交
+temp/
 
 /Users/
 # macOS

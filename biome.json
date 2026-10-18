@@ -6,7 +6,8 @@
 			"!**/node_modules",
 			"!**/dist",
 			"!.worktrees",
-			"!.superpowers"
+			"!.superpowers",
+			"!temp"
 		]
 	},
 	"linter": {
