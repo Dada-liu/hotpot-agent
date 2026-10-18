@@ -76,7 +76,7 @@ declare module "node:os" {
 }
 
 declare module "node:path" {
-	export function basename(path: string): string;
+	export function basename(path: string, suffix?: string): string;
 	export function join(...parts: string[]): string;
 	export function resolve(...parts: string[]): string;
 	export function dirname(path: string): string;

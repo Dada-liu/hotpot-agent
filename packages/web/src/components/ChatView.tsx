@@ -14,6 +14,7 @@ import {
 } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import type { PromptInfo } from "../api.ts";
 import {
 	findFinalAnswer,
 	groupTranscript,
@@ -97,17 +98,27 @@ function TranscriptItem({
 	}
 }
 
-// 输入卡片：welcome 态与对话底部共用；空闲发送 = 新 turn，运行中发送 = steer + 停止钮
+// 输入卡片：welcome 态与对话底部共用；空闲发送 = 新 turn，运行中发送 = steer + 停止钮。
+// M4 Feature⑤：draft 以 `/` 开头时列出可用的 prompt templates（点击补全为 `/name `）
 function Composer({
 	running,
+	prompts,
 	onSend,
 	onCancel,
 }: {
 	running: boolean;
+	prompts: PromptInfo[];
 	onSend: (content: string) => void;
 	onCancel: () => void;
 }): ReactElement {
 	const [draft, setDraft] = useState("");
+
+	// 只补全命令名本身（输入空格后进入参数阶段，不再弹层）
+	const slash = /^\/([A-Za-z0-9_-]*)$/.exec(draft);
+	const suggestions =
+		slash === null
+			? []
+			: prompts.filter((p) => p.name.startsWith(slash[1] ?? ""));
 
 	const submit = (): void => {
 		const content = draft.trim();
@@ -134,6 +145,27 @@ function Composer({
 				submit();
 			}}
 		>
+			{suggestions.length > 0 && (
+				<div className="absolute bottom-full left-0 z-10 mb-2 w-full overflow-hidden rounded-xl border border-border-strong bg-background shadow-lg">
+					{suggestions.map((p) => (
+						<button
+							key={p.name}
+							type="button"
+							className="flex w-full flex-col items-start gap-0.5 px-4 py-2 text-left transition-colors hover:bg-secondary"
+							onClick={() => {
+								setDraft(`/${p.name} `);
+							}}
+						>
+							<span className="font-mono text-sm">/{p.name}</span>
+							{p.description !== "" && (
+								<span className="text-xs text-muted-foreground">
+									{p.description}
+								</span>
+							)}
+						</button>
+					))}
+				</div>
+			)}
 			{running && (
 				<span className="absolute -top-3 left-4 rounded-full bg-brand px-2.5 py-0.5 text-[11px] font-medium text-white shadow-sm">
 					steer 注入
@@ -305,6 +337,7 @@ interface ChatViewProps {
 	state: ChatState;
 	hasSession: boolean;
 	welcome: boolean;
+	prompts: PromptInfo[];
 	onSend: (content: string) => void;
 	onCancel: () => void;
 	onApproval: (decision: "allow" | "deny") => void;
@@ -318,6 +351,7 @@ export function ChatView({
 	state,
 	hasSession,
 	welcome,
+	prompts,
 	onSend,
 	onCancel,
 	onApproval,
@@ -349,7 +383,12 @@ export function ChatView({
 					</span>
 				</div>
 				<div className="w-full max-w-2xl">
-					<Composer running={false} onSend={onSend} onCancel={onCancel} />
+					<Composer
+						running={false}
+						prompts={prompts}
+						onSend={onSend}
+						onCancel={onCancel}
+					/>
 				</div>
 			</main>
 		);
@@ -381,6 +420,7 @@ export function ChatView({
 					<div className="mx-auto max-w-3xl">
 						<Composer
 							running={state.turn === "running"}
+							prompts={prompts}
 							onSend={onSend}
 							onCancel={onCancel}
 						/>

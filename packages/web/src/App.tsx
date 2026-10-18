@@ -12,7 +12,9 @@ import {
 	answerPlan,
 	cancelTurn,
 	createSession,
+	listPrompts,
 	listSessions,
+	type PromptInfo,
 	type SessionSummary,
 	sendMessage,
 	steerMessage,
@@ -75,6 +77,8 @@ export function App() {
 	);
 	const [connState, setConnState] = useState<ConnectionState | "idle">("idle");
 	const [error, setError] = useState<string | null>(null);
+	// M4 Feature⑤：当前会话可用的 prompt templates（`/` 补全）
+	const [prompts, setPrompts] = useState<PromptInfo[]>([]);
 	// 面板收起是本地偏好：reducer 的 panelOpen 只负责首个 spawn 时自动展开
 	const [panelCollapsed, setPanelCollapsed] = useState(false);
 
@@ -94,8 +98,15 @@ export function App() {
 	useEffect(() => {
 		if (currentId === null) {
 			setConnState("idle");
+			setPrompts([]);
 			return;
 		}
+		// 拉取 `/` 补全用的模板清单；失败不阻塞对话（补全为空即可）
+		void listPrompts(currentId)
+			.then(setPrompts)
+			.catch(() => {
+				setPrompts([]);
+			});
 		const conn = connect(
 			currentId,
 			(event) => {
@@ -264,6 +275,7 @@ export function App() {
 						state={chat}
 						hasSession={currentId !== null}
 						welcome={currentId === null}
+						prompts={prompts}
 						onSend={(content) => {
 							void handleSend(content);
 						}}

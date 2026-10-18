@@ -12,6 +12,7 @@
 import { type Context, Hono } from "hono";
 import { z } from "zod";
 import type { SessionManager } from "./session-manager.ts";
+import { PromptCommandError } from "./session-manager.ts";
 import type { WireEvent } from "./wire.ts";
 
 const createSessionSchema = z.object({
@@ -183,8 +184,23 @@ export function createApp(manager: SessionManager): Hono {
 		if (!parsed.success) {
 			return c.json({ error: "body 需为 {content: string}" }, 400);
 		}
-		await manager.send(rec.id, parsed.data.content);
+		try {
+			await manager.send(rec.id, parsed.data.content);
+		} catch (err) {
+			// 未知斜杠命令：400 并带可用命令（消息不进入回合）
+			if (err instanceof PromptCommandError) {
+				return c.json({ error: err.message }, 400);
+			}
+			throw err;
+		}
 		return c.json({}, 202);
+	});
+
+	// M4 Feature⑤：当前会话可用的 prompt templates（web 端 `/` 补全用）
+	app.get("/api/sessions/:id/prompts", async (c) => {
+		const rec = await requireSession(c.req.param("id"));
+		if (rec === null) return c.json({ error: "会话不存在" }, 404);
+		return c.json({ prompts: manager.prompts(rec.id) });
 	});
 
 	app.post("/api/sessions/:id/steer", async (c) => {

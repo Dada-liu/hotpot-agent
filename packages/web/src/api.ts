@@ -15,6 +15,12 @@ export interface UsageSummary {
 	byAgent: Record<string, { input: number; output: number }>;
 }
 
+// GET /api/sessions/:id/prompts 的响应项（M4 prompt templates）
+export interface PromptInfo {
+	name: string;
+	description: string;
+}
+
 async function request(path: string, init?: RequestInit): Promise<unknown> {
 	const res = await fetch(path, init);
 	if (!res.ok) {
@@ -106,4 +112,11 @@ export async function getUsage(sessionId: string): Promise<UsageSummary> {
 	return (await request(
 		`/api/sessions/${encodeURIComponent(sessionId)}/usage`,
 	)) as UsageSummary;
+}
+
+export async function listPrompts(sessionId: string): Promise<PromptInfo[]> {
+	const body = (await request(
+		`/api/sessions/${encodeURIComponent(sessionId)}/prompts`,
+	)) as { prompts: PromptInfo[] };
+	return body.prompts;
 }

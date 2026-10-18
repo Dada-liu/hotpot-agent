@@ -30,14 +30,19 @@ import {
 	createAuditedApprovalChain,
 	createHookChain,
 	createSession,
+	discoverPromptTemplates,
 	discoverSkills,
+	expandTemplate,
 	featureEnabled,
 	type InboxMessage,
+	isSlashInput,
 	listSessions,
 	loadSession,
 	loadSettings,
 	type ModelTier,
+	type PromptTemplate,
 	resolveHome,
+	resolveSlashCommand,
 	resumeSession,
 	type Session,
 	type SessionEvent,
@@ -85,6 +90,20 @@ export interface SessionRecord {
 	running: boolean;
 }
 
+// 未知斜杠命令：REST 层转 400（消息不进入回合），CLI 侧有同款文案
+export class PromptCommandError extends Error {
+	readonly command: string;
+	readonly available: string[];
+	constructor(command: string, available: string[]) {
+		super(
+			`unknown prompt template: /${command}. Available: ${available.map((n) => `/${n}`).join(", ")}`,
+		);
+		this.name = "PromptCommandError";
+		this.command = command;
+		this.available = available;
+	}
+}
+
 export interface SessionManagerOptions {
 	home?: string;
 	// 测试注入点：缺省时按 settings 的 ModelRef 解析真实适配器（orchestrator 的 resolveModel）；
@@ -103,8 +122,11 @@ export interface SessionManager {
 	attachById(id: string): Promise<SessionRecord | null>;
 	get(id: string): SessionRecord | null;
 	list(): Promise<(SessionSummary & { running: boolean })[]>;
-	// turn 串行：挂到该会话的 turnTail 链尾，前一回合（含 followup 补发）结束后才执行
+	// turn 串行：挂到该会话的 turnTail 链尾，前一回合（含 followup 补发）结束后才执行。
+	// `/name args` 命中 prompt template 时先展开并落 prompt/invoked；未命中抛 PromptCommandError
 	send(id: string, content: string): Promise<void>;
+	// 当前会话可用的 prompt templates（GET 端点与 web 补全共用）
+	prompts(id: string): { name: string; description: string }[];
 	steer(id: string, content: string): Promise<void>;
 	cancel(id: string): void;
 	answerToolApproval(
@@ -146,6 +168,8 @@ interface ManagedSession {
 	tailer: Tailer;
 	// M4 Feature⑦ MCP：本会话挂载的 MCP 连接（close 时统一关闭）
 	mcpConnections: McpConnection[];
+	// M4 Feature⑤ prompt templates：装配时扫描（features.promptTemplates 关闭为空）
+	promptTemplates: PromptTemplate[];
 	emit: (input: WireEventInput) => WireEvent;
 	syncDurable: () => Promise<void>;
 	holder: { currentAbort: AbortController | null; running: boolean };
@@ -369,6 +393,15 @@ export function createSessionManager(
 				])
 			: [];
 
+		// M4 Feature⑤ prompt templates：与 skill 同款目录优先级（后扫描覆盖先扫描）
+		const promptTemplates = featureEnabled(settings.features, "promptTemplates")
+			? await discoverPromptTemplates([
+					...(settings.promptsDirs ?? []).map((d) => resolve(cwd, d)),
+					join(resolveHome(opts.home), "prompts"),
+					join(cwd, ".hotpot", "prompts"),
+				])
+			: [];
+
 		// M4 Feature③ hooks：开关打开时构造生命周期链（配置只来自用户级 settings）；
 		// pre/post tool 由 runTurn 触发，turn_end 由 runMainTurn/runAgentInline 触发，
 		// session_start 在 runtime 装配完成后触发一次
@@ -448,6 +481,7 @@ export function createSessionManager(
 			runtime,
 			tailer,
 			mcpConnections,
+			promptTemplates,
 			emit: emitLocal,
 			syncDurable: watermark.syncDurable,
 			holder,
@@ -560,6 +594,37 @@ export function createSessionManager(
 		};
 	}
 
+	// M4 Feature⑤：`/name args` → 模板正文。未命中抛 PromptCommandError（REST 转 400）；
+	// 非斜杠输入原样返回。展开后立刻落 prompt/invoked（声明 message 级输入意图，
+	// 与队列无关——真正的 user_msg 仍由 runMainTurn 在回合开始时落盘）
+	async function resolvePromptMessage(
+		m: ManagedSession,
+		content: string,
+	): Promise<string> {
+		if (m.promptTemplates.length === 0 || !isSlashInput(content)) {
+			return content;
+		}
+		const matched = resolveSlashCommand(content, m.promptTemplates);
+		if (matched === null) {
+			const command = content.trim().slice(1).split(/\s+/)[0] ?? "";
+			throw new PromptCommandError(
+				command,
+				m.promptTemplates.map((t) => t.name),
+			);
+		}
+		const expanded = expandTemplate(matched.template, matched.args);
+		await m.runtime.session.append({
+			type: "prompt/invoked",
+			id: randomUUID(),
+			ts: new Date().toISOString(),
+			agentId: MAIN_AGENT_ID,
+			name: matched.template.name,
+			args: matched.args.join(" "),
+			content: expanded,
+		});
+		return expanded;
+	}
+
 	return {
 		async create(cwd: string): Promise<SessionRecord> {
 			const settings = loadSettings({ cwd, home: opts.home });
@@ -610,12 +675,19 @@ export function createSessionManager(
 			});
 		},
 
-		send(id: string, content: string): Promise<void> {
+		async send(id: string, content: string): Promise<void> {
 			const m = requireManaged(id);
-			const run = () => runTurnWithFollowups(m, content);
+			const message = await resolvePromptMessage(m, content);
+			const run = () => runTurnWithFollowups(m, message);
 			// turn 串行链：挂到链尾；链断（前序异常）也不跳过本回合（runOneTurn 自身不抛）
 			m.turnTail = m.turnTail.then(run, run);
-			return Promise.resolve();
+		},
+
+		prompts(id: string): { name: string; description: string }[] {
+			return requireManaged(id).promptTemplates.map((t) => ({
+				name: t.name,
+				description: t.description,
+			}));
 		},
 
 		async steer(id: string, content: string): Promise<void> {

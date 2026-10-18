@@ -15,11 +15,15 @@ import {
 	createAuditedApprovalChain,
 	createHookChain,
 	createSession,
+	discoverPromptTemplates,
 	discoverSkills,
+	expandTemplate,
 	featureEnabled,
+	isSlashInput,
 	loadSettings,
 	type ModelTier,
 	resolveHome,
+	resolveSlashCommand,
 	resumeSession,
 	type Session,
 	type Settings,
@@ -260,6 +264,16 @@ export async function runChat(opts: RunChatOptions): Promise<void> {
 			])
 		: [];
 
+	// M4 Feature⑤ prompt templates：/命令 的模板来源。
+	// 与 skill 同款目录优先级（后扫描覆盖先扫描 = 项目级最高）
+	const promptTemplates = featureEnabled(settings.features, "promptTemplates")
+		? await discoverPromptTemplates([
+				...(settings.promptsDirs ?? []).map((d) => resolve(opts.cwd, d)),
+				join(resolveHome(opts.home), "prompts"),
+				join(opts.cwd, ".hotpot", "prompts"),
+			])
+		: [];
+
 	// M4 Feature③ hooks：开关（features.hooks，缺省开）打开时构造生命周期链。
 	// 配置只来自用户级 settings（项目级白名单不含 hooks）；session_start 在
 	// runtime 装配完成后触发一次，pre/post tool 由 runTurn 触发，turn_end 由回合包装层触发
@@ -350,6 +364,29 @@ export async function runChat(opts: RunChatOptions): Promise<void> {
 		}
 	};
 
+	// M4 Feature⑤：把 `/name args` 展开为模板正文并落 prompt/invoked。
+	// 返回 null 表示「看起来是命令但未命中模板」；非斜杠输入原样返回。
+	const expandPromptInput = async (content: string): Promise<string | null> => {
+		if (promptTemplates.length === 0 || !isSlashInput(content)) {
+			return content;
+		}
+		const matched = resolveSlashCommand(content, promptTemplates);
+		if (matched === null) {
+			return null;
+		}
+		const expanded = expandTemplate(matched.template, matched.args);
+		await session.append({
+			type: "prompt/invoked",
+			id: randomUUID(),
+			ts: new Date().toISOString(),
+			agentId: "main",
+			name: matched.template.name,
+			args: matched.args.join(" "),
+			content: expanded,
+		});
+		return expanded;
+	};
+
 	try {
 		for (;;) {
 			output.write("> ");
@@ -361,7 +398,24 @@ export async function runChat(opts: RunChatOptions): Promise<void> {
 			if (content === "") {
 				continue;
 			}
-			await runOneTurn(content);
+			let message = content;
+			try {
+				const expanded = await expandPromptInput(content);
+				if (expanded === null) {
+					const name = content.slice(1).split(/\s+/)[0] ?? "";
+					output.write(
+						`未知命令：/${name}。可用命令：${promptTemplates.map((t) => `/${t.name}`).join(", ")}\n`,
+					);
+					continue;
+				}
+				message = expanded;
+			} catch (err) {
+				output.write(
+					`[error] ${err instanceof Error ? err.message : String(err)}\n`,
+				);
+				continue;
+			}
+			await runOneTurn(message);
 			// turn 结束后 drain next-turn 队列（followup），按序补发为新的用户消息
 			let followups = await inbox.drainNextTurn();
 			while (followups.length > 0) {

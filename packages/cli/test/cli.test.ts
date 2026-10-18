@@ -4,7 +4,7 @@
 // 审批询问仍走终端 handler（在 worker 工具执行内触发），交互断言不变。
 // 脚本化适配器按全局 streamChat 调用序回放：1=main delegate 步，2..N=worker 各步，末位=main 收尾。
 
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -494,6 +494,54 @@ describe("runChat", () => {
 		expect(output.text).toContain("tier=medium");
 		// --tier 语义不变（主 agent 档）：delegate 后 worker 照常 spawn
 		expect(output.text).toContain("[spawn] worker-1");
+	});
+
+	it("prompt template：/命令展开为模板正文并落 prompt/invoked；未知命令报可用列表", async () => {
+		await mkdir(join(home, "prompts"), { recursive: true });
+		await writeFile(
+			join(home, "prompts", "deploy.md"),
+			"---\nname: deploy\ndescription: Deploy helper\n---\nDeploy target: $ARGUMENTS\n",
+		);
+		const input = new ScriptedInput(["/nope", "/deploy staging", "/exit"]);
+		const output = new CollectedOutput();
+		await runChat({
+			cwd: home,
+			home,
+			settings: SETTINGS,
+			llm: {
+				adapter: scriptedAdapter([
+					delegateRound("Deploy target: staging"),
+					textRound("worker 完成"),
+					textRound("已部署"),
+				]),
+				model: TEST_MODEL,
+			},
+			input,
+			output,
+		});
+
+		// 未知命令：提示可用命令且不进入回合
+		expect(output.text).toContain("未知命令：/nope");
+		expect(output.text).toContain("/deploy");
+
+		const sessions = await listSessions(home);
+		const { events } = await loadSession(sessions[0]?.filePath ?? "");
+		const invoked = events.find((e) => e.type === "prompt/invoked");
+		expect(invoked).toMatchObject({
+			agentId: "main",
+			name: "deploy",
+			args: "staging",
+			content: "Deploy target: staging\n",
+		});
+		// 展开后的正文作为 user_msg 进入回合（而非原始 /deploy 命令）
+		const userTexts = events
+			.filter(
+				(e): e is Extract<SessionEvent, { type: "user_msg" }> =>
+					e.type === "user_msg",
+			)
+			.map((e) => e.content);
+		expect(userTexts).toContain("Deploy target: staging\n");
+		expect(userTexts).not.toContain("/deploy staging");
 	});
 });
 

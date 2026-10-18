@@ -3,7 +3,7 @@
 // 每用例独立 manager + 独立 home + 独立端口，避免串扰。
 // SSE 连接用 AbortController 中断模拟断线；重连经 Last-Event-ID / ?after= 补发。
 
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { serve } from "@hono/node-server";
@@ -17,6 +17,7 @@ import {
 import type * as CoreMod from "@hotpot/core";
 import {
 	createSession as createDiskSession,
+	loadSession,
 	type Settings,
 } from "@hotpot/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -833,5 +834,60 @@ describe("HTTP API", () => {
 		expect(
 			(await fetch(`${fx.base}/api/sessions/no-such-id/events`)).status,
 		).toBe(404);
+	}, 20000);
+
+	it("prompt templates：GET 列表；/命令展开为模板正文并落 prompt/invoked；未知命令 400", async () => {
+		const fx = await startApi(
+			scriptedAdapter([textRound("已执行", { input: 3, output: 2 })]),
+			"never",
+		);
+		await mkdir(join(fx.home, "prompts"), { recursive: true });
+		await writeFile(
+			join(fx.home, "prompts", "commit.md"),
+			"---\nname: commit\ndescription: Commit helper\n---\nCommit task: $ARGUMENTS\n",
+			"utf8",
+		);
+		const { id } = await createSession(fx, fx.proj);
+
+		// 模板清单（web 端 `/` 补全的数据源）
+		const listRes = await fetch(`${fx.base}/api/sessions/${id}/prompts`);
+		expect(listRes.status).toBe(200);
+		expect(await listRes.json()).toEqual({
+			prompts: [{ name: "commit", description: "Commit helper" }],
+		});
+
+		// 未知斜杠命令：400，且消息不进入回合
+		const bad = await postJson(`${fx.base}/api/sessions/${id}/messages`, {
+			content: "/nope",
+		});
+		expect(bad.status).toBe(400);
+		const badBody = (await bad.json()) as { error: string };
+		expect(badBody.error).toContain("unknown prompt template");
+
+		// 命中模板：user_msg 为展开后的正文，日志有 prompt/invoked
+		const sse = await openSse(fx.base, id);
+		const ok = await postJson(`${fx.base}/api/sessions/${id}/messages`, {
+			content: "/commit  fix   lint",
+		});
+		expect(ok.status).toBe(202);
+		await sse.waitFor(() => sse.events.some(isTurnEnd));
+		sse.close();
+
+		const detail = (await (
+			await fetch(`${fx.base}/api/sessions/${id}`)
+		).json()) as { filePath: string };
+		const { events } = await loadSession(detail.filePath);
+		const user = events.find(
+			(e) => e.type === "user_msg" && e.content.includes("Commit task:"),
+		);
+		expect(user?.type === "user_msg" ? user.content : undefined).toBe(
+			"Commit task: fix lint\n",
+		);
+		const invoked = events.find((e) => e.type === "prompt/invoked");
+		expect(invoked).toMatchObject({
+			name: "commit",
+			args: "fix lint",
+			content: "Commit task: fix lint\n",
+		});
 	}, 20000);
 });

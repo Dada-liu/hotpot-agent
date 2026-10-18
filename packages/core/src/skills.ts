@@ -6,6 +6,7 @@
 
 import { readdir, readFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
+import { parseFrontmatter } from "./frontmatter.ts";
 
 export interface Skill {
 	name: string;
@@ -64,34 +65,4 @@ async function parseSkillFile(path: string): Promise<Skill> {
 		description: meta.description ?? "",
 		path,
 	};
-}
-
-// 最小 frontmatter 解析：首行须为 `---`，取到下一个 `---` 为止（无收尾围栏则读到文件尾，
-// 宽容处理）；只收集 key: value 行，key 仅 name/description 有意义。值取第一个冒号后的
-// 全部内容（`description: a: b` 的值是 `a: b`），首尾空白裁掉。
-function parseFrontmatter(text: string): {
-	name?: string;
-	description?: string;
-} {
-	const lines = text.split("\n");
-	if (lines[0]?.trim() !== "---") {
-		return {};
-	}
-	const meta: { name?: string; description?: string } = {};
-	for (let i = 1; i < lines.length; i++) {
-		const line = lines[i] ?? "";
-		if (line.trim() === "---") {
-			break;
-		}
-		const sep = line.indexOf(":");
-		if (sep <= 0) {
-			continue; // 非 key: value 行（空行、列表、注释等）一律忽略
-		}
-		const key = line.slice(0, sep).trim();
-		const value = line.slice(sep + 1).trim();
-		if (key === "name" || key === "description") {
-			meta[key] = value;
-		}
-	}
-	return meta;
 }
