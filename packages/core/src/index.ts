@@ -10,6 +10,7 @@ export * from "./session/derive.ts";
 export * from "./session/events.ts";
 export * from "./session/store.ts";
 export * from "./session/todos.ts";
+export * from "./skills.ts";
 export * from "./tools/bash.ts";
 export * from "./tools/edit.ts";
 export * from "./tools/read.ts";

@@ -5,7 +5,8 @@
 // 事件不外传（M2 计划决定 #3），只回收 error 事件、done(aborted) 与收尾 summary，
 // 失败标注由调用方按统一 taxonomy 决定（Task 9：`[FAILED] ${agentId}: ${reason}`）。
 // M4 Task 2：system prompt 按 features.todo 折入该 agent 的 todo 清单段
-// （构建前 foldTodos，关闭开关则不 fold 不出段）。
+// （构建前 foldTodos，关闭开关则不 fold 不出段）；M4 Task 6：skills 段同经
+// features.skills 门控注入（清单来自装配层 discoverSkills 扫描）。
 
 import {
 	featureEnabled,
@@ -69,6 +70,10 @@ export async function runAgentInline(
 	const todos = featureEnabled(runtime.features, "todo")
 		? foldTodos((await loadSession(runtime.session.filePath)).events, agentId)
 		: [];
+	// M4 Feature④：skills 段（开关关闭时不传，段不出）
+	const skills = featureEnabled(runtime.features, "skills")
+		? runtime.skills
+		: undefined;
 	const cfg: LoopConfig = {
 		session: runtime.session,
 		agentId,
@@ -87,7 +92,7 @@ export async function runAgentInline(
 				date: new Date().toISOString().slice(0, 10),
 				tools: registry.declarations(),
 			},
-			{ todos },
+			{ skills, todos },
 		),
 		tier,
 	};

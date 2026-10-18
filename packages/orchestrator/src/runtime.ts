@@ -12,6 +12,7 @@ import type {
 	Session,
 	SessionEvent,
 	Settings,
+	Skill,
 	ToolDefinition,
 } from "@hotpot/core";
 import {
@@ -30,14 +31,6 @@ export type WorkerToolDecorator = (
 	tool: ToolDefinition<unknown>,
 ) => ToolDefinition<unknown>;
 
-// M4 skill 清单占位类型：Task 6 在 core 落成 Skill（结构与本接口一致）后改为从
-// @hotpot/core 导入，本接口随之删除
-export interface SkillSummary {
-	name: string;
-	description: string;
-	path: string;
-}
-
 export interface OrchestrationRuntime {
 	readonly session: Session;
 	readonly cwd: string;
@@ -49,7 +42,7 @@ export interface OrchestrationRuntime {
 	// features：功能开关（读取侧一律经 core 的 featureEnabled `?? true`）
 	readonly features?: Settings["features"];
 	// skills：扫描到的 skill 清单（Task 6 注入 prompt + read 追踪）
-	readonly skills?: SkillSummary[];
+	readonly skills?: Skill[];
 	// mcpTools：MCP 桥接工具（Task 5 连接后注入；features.mcp 关闭则不并入注册表）
 	readonly mcpTools?: readonly ToolDefinition<unknown>[];
 	// webSearchBackend：web_search 工具后端；缺省由 createRuntime 依 opts.webSearch
@@ -74,7 +67,7 @@ export function createRuntime(opts: {
 	planMaxRevisions?: number;
 	decorateWorkerTool?: WorkerToolDecorator;
 	features?: Settings["features"];
-	skills?: SkillSummary[];
+	skills?: Skill[];
 	mcpTools?: readonly ToolDefinition<unknown>[];
 	webSearch?: Settings["webSearch"];
 	webSearchBackend?: WebSearchBackend;

@@ -6,6 +6,7 @@
 // 另含进程入口的组装函数 runChatCli 与 argv 解析 parseChatArgs。
 
 import { randomUUID } from "node:crypto";
+import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import type { LlmAdapter, ModelInfo } from "@hotpot/ai";
 import {
@@ -13,9 +14,11 @@ import {
 	ApprovalChain,
 	createAuditedApprovalChain,
 	createSession,
+	discoverSkills,
 	featureEnabled,
 	loadSettings,
 	type ModelTier,
+	resolveHome,
 	resumeSession,
 	type Session,
 	type Settings,
@@ -242,6 +245,20 @@ export async function runChat(opts: RunChatOptions): Promise<void> {
 						: withApproval(tool, tool.name === "bash" ? "command" : "write")
 			: undefined;
 
+	// M4 Feature④ skill：开关（features.skills，缺省开）打开时扫描
+	// skillsDirs（相对 cwd 解析）→ <home>/skills → <cwd>/.hotpot/skills。
+	// discoverSkills 同名去重、后扫描者胜，因此优先级 项目级 > home > skillsDirs；
+	// 项目级只查 cwd 一级、不向上逐级（已知边界，见 orchestrator README）。
+	// 清单经 runtime.skills 注入三角色 prompt，worker/task 的 read 命中 SKILL.md
+	// 路径时落盘 skill/loaded
+	const skills = featureEnabled(settings.features, "skills")
+		? await discoverSkills([
+				...(settings.skillsDirs ?? []).map((d) => resolve(opts.cwd, d)),
+				join(resolveHome(opts.home), "skills"),
+				join(opts.cwd, ".hotpot", "skills"),
+			])
+		: [];
+
 	const baseRuntime = createRuntime({
 		session,
 		cwd: opts.cwd,
@@ -251,7 +268,9 @@ export async function runChat(opts: RunChatOptions): Promise<void> {
 		planMaxRevisions: settings.planMaxRevisions,
 		decorateWorkerTool,
 		features: settings.features,
+		skills,
 		mcpTools: mcpConnections.flatMap((c) => c.tools),
+		webSearch: settings.webSearch,
 	});
 	// 测试注入点：opts.llm 覆盖 runtime 的档位解析（main/worker 共用同一录制适配器），
 	// 与 orchestrator 测试 makeRuntime 的展开覆盖同法。

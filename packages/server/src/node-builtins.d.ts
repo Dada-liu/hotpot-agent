@@ -28,6 +28,13 @@ interface HotpotFsWatcher {
 	on(event: "error", listener: (err: Error) => void): void;
 }
 
+// readdir withFileTypes 形态的目录项：core skills.ts 递归扫描用它区分文件/目录
+interface HotpotDirent {
+	name: string;
+	isDirectory(): boolean;
+	isFile(): boolean;
+}
+
 declare module "node:fs/promises" {
 	export function open(
 		path: string,
@@ -50,6 +57,10 @@ declare module "node:fs/promises" {
 		encoding: string,
 	): Promise<void>;
 	export function readdir(path: string): Promise<string[]>;
+	export function readdir(
+		path: string,
+		options: { withFileTypes: true },
+	): Promise<HotpotDirent[]>;
 	export function appendFile(path: string, data: string): Promise<void>;
 	export function mkdtemp(prefix: string): Promise<string>;
 	export function rm(
@@ -96,6 +107,7 @@ declare module "node:os" {
 }
 
 declare module "node:path" {
+	export function basename(path: string): string;
 	export function join(...parts: string[]): string;
 	export function resolve(...parts: string[]): string;
 	export function dirname(path: string): string;

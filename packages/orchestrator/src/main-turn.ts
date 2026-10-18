@@ -10,7 +10,12 @@
 // 再透传 —— agent_spawn 流事件先于对应 tool_result 到达、与调用序一致。
 
 import { randomUUID } from "node:crypto";
-import { type LoopConfig, type ModelTier, runTurn } from "@hotpot/core";
+import {
+	featureEnabled,
+	type LoopConfig,
+	type ModelTier,
+	runTurn,
+} from "@hotpot/core";
 import type { Inbox } from "./inbox.ts";
 import { type PlanDecision, runPlanPhase } from "./plan.ts";
 import { buildRoleSystemPrompt } from "./prompts.ts";
@@ -85,6 +90,11 @@ export async function* runMainTurn(opts: {
 		content: userMessage,
 	});
 	const resolved = runtime.resolveModel(mainTier);
+	// M4 Feature④：skills 段数据源（features.skills 关闭时不传，prompt 不出段——
+	// 装配层关闭时本就不扫描，这里是第二道门）
+	const skills = featureEnabled(runtime.features, "skills")
+		? runtime.skills
+		: undefined;
 	const cfg: LoopConfig = {
 		session: runtime.session,
 		agentId: MAIN_AGENT_ID,
@@ -95,12 +105,16 @@ export async function* runMainTurn(opts: {
 		registry,
 		approval: runtime.approval,
 		cwd: runtime.cwd,
-		system: buildRoleSystemPrompt(MAIN_AGENT_ID, {
-			cwd: runtime.cwd,
-			os: process.platform,
-			date: new Date().toISOString().slice(0, 10),
-			tools: registry.declarations(),
-		}),
+		system: buildRoleSystemPrompt(
+			MAIN_AGENT_ID,
+			{
+				cwd: runtime.cwd,
+				os: process.platform,
+				date: new Date().toISOString().slice(0, 10),
+				tools: registry.declarations(),
+			},
+			{ skills },
+		),
 		tier: mainTier,
 		pollInbox,
 	};
@@ -135,12 +149,16 @@ export async function* runMainTurn(opts: {
 		registry: execRegistry,
 		approval: runtime.approval,
 		cwd: runtime.cwd,
-		system: buildRoleSystemPrompt(MAIN_AGENT_ID, {
-			cwd: runtime.cwd,
-			os: process.platform,
-			date: new Date().toISOString().slice(0, 10),
-			tools: execRegistry.declarations(),
-		}),
+		system: buildRoleSystemPrompt(
+			MAIN_AGENT_ID,
+			{
+				cwd: runtime.cwd,
+				os: process.platform,
+				date: new Date().toISOString().slice(0, 10),
+				tools: execRegistry.declarations(),
+			},
+			{ skills },
+		),
 		tier: mainTier,
 		pollInbox,
 	};

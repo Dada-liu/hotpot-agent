@@ -18,10 +18,10 @@ import {
 	type PromptSection,
 	rulesSection,
 	SECTION_ORDER,
+	type Skill,
 	type TodoItem,
 	toolsSection,
 } from "@hotpot/core";
-import type { SkillSummary } from "./runtime.ts";
 import type { AgentRole } from "./types.ts";
 
 // 主 agent 指令：难度三分类（trivial/simple/complex），trivial 直接答、simple 派单个 worker、
@@ -98,7 +98,7 @@ function roleInstructionSection(role: AgentRole): PromptSection {
 
 // skills 动态段（M4 Task 6）：仅当扫描到 skill 时出段。清单只给 name/description/path，
 // 模型用 read 工具按 path 加载正文（渐进式）；段插在 role-instructions 之前（1400）
-function skillsSection(skills: SkillSummary[]): PromptSection {
+function skillsSection(skills: Skill[]): PromptSection {
 	const list = skills
 		.map((s) => `- ${s.name} — ${s.description} (${s.path})`)
 		.join("\n");
@@ -127,7 +127,7 @@ function todosSection(todos: TodoItem[]): PromptSection {
 export function buildRoleSystemPrompt(
 	role: AgentRole,
 	ctx: PromptContext,
-	opts?: { skills?: SkillSummary[]; todos?: TodoItem[] },
+	opts?: { skills?: Skill[]; todos?: TodoItem[] },
 ): string {
 	const sections: PromptSection[] = [
 		identitySection,

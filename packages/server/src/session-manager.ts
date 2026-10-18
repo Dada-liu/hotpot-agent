@@ -23,17 +23,20 @@
 // live 事件按 seq 序推送——每订阅者的 FIFO 序由单线程同步交付天然保证。
 
 import { randomUUID } from "node:crypto";
+import { join, resolve } from "node:path";
 import type { LlmAdapter, ModelInfo } from "@hotpot/ai";
 import {
 	ApprovalChain,
 	createAuditedApprovalChain,
 	createSession,
+	discoverSkills,
 	featureEnabled,
 	type InboxMessage,
 	listSessions,
 	loadSession,
 	loadSettings,
 	type ModelTier,
+	resolveHome,
 	resumeSession,
 	type Session,
 	type SessionEvent,
@@ -353,6 +356,18 @@ export function createSessionManager(
 			}
 		}
 
+		// M4 Feature④ skill：开关（features.skills，缺省开）打开时扫描
+		// skillsDirs（相对 cwd 解析）→ <home>/skills → <cwd>/.hotpot/skills
+		// （只查 cwd 一级、不向上逐级，已知边界见 orchestrator README）；
+		// discoverSkills 同名去重、后扫描者胜：项目级 > home > skillsDirs
+		const skills = featureEnabled(settings.features, "skills")
+			? await discoverSkills([
+					...(settings.skillsDirs ?? []).map((d) => resolve(cwd, d)),
+					join(resolveHome(opts.home), "skills"),
+					join(cwd, ".hotpot", "skills"),
+				])
+			: [];
+
 		const baseRuntime = createRuntime({
 			session: watermark.session,
 			cwd,
@@ -362,7 +377,9 @@ export function createSessionManager(
 			planMaxRevisions: settings.planMaxRevisions,
 			decorateWorkerTool,
 			features: settings.features,
+			skills,
 			mcpTools: mcpConnections.flatMap((c) => c.tools),
+			webSearch: settings.webSearch,
 		});
 		// opts.llm 覆盖档位解析（main/worker 共用同一录制适配器）；
 		// 未注入时仅为主档位解析一次拿兜底告警（runtime 内部每回合自行解析）
