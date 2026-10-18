@@ -66,6 +66,8 @@ describe("CheckoutWorkspaceProvider", () => {
 
 		await writeFile(join(workspace.cwd, "app.txt"), "changed\n", "utf8");
 		await writeFile(join(workspace.cwd, "new-file.txt"), "brand new\n", "utf8");
+		// agent 可能自己 git add：已 staged 的修改也必须进 patch（diff HEAD 而非 diff index）
+		await git(["add", "app.txt"], workspace.cwd);
 		await mkdir(join(workspace.cwd, "node_modules", "pkg"), {
 			recursive: true,
 		});

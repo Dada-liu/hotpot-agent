@@ -156,7 +156,7 @@ export async function capturePatch(cwd: string): Promise<string> {
 	}
 	const diff = await runCommand(
 		"git",
-		["diff", "--no-color", "--", ...pathspec],
+		["diff", "--no-color", "HEAD", "--", ...pathspec],
 		{ cwd },
 	);
 	if (diff.code !== 0) {
