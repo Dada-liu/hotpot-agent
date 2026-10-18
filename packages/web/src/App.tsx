@@ -62,11 +62,6 @@ function errorMessage(e: unknown): string {
 	return e instanceof Error ? e.message : String(e);
 }
 
-// main agent 档位徽标的数据源：服务端按 settings.mainAgentTier 解析（缺省 "high"），
-// 浏览器读不到该配置；非 web 创建（CLI 等）的会话同样无从得知——统一回退 "high"，
-// 经 props 传给 AgentPanel（web 创建会话开放档位选择后由创建流程替换）
-const MAIN_TIER_FALLBACK = "high";
-
 export function App() {
 	const [sessions, setSessions] = useState<SessionSummary[]>([]);
 	const [currentId, setCurrentId] = useState<string | null>(null);
@@ -216,6 +211,10 @@ export function App() {
 
 	const current = sessions.find((s) => s.id === currentId) ?? null;
 	const currentName = current ? (names[current.id] ?? current.cwd) : "";
+	// 右侧面板开关只在 work agent 运行期间展示
+	const workerRunning = chat.agents.some(
+		(a) => a.role === "worker" && a.status === "running",
+	);
 
 	return (
 		<TooltipProvider>
@@ -247,7 +246,7 @@ export function App() {
 						<Button
 							variant="ghost"
 							size="icon"
-							className="size-8"
+							className={cn("size-8", !workerRunning && "hidden")}
 							onClick={() => {
 								setPanelCollapsed((v) => !v);
 							}}
@@ -282,10 +281,8 @@ export function App() {
 				<AgentPanel
 					agents={chat.agents}
 					usage={chat.usage}
-					turn={chat.turn}
-					mainTier={MAIN_TIER_FALLBACK}
 					open={chat.panelOpen && !panelCollapsed}
-					sessionName={current?.cwd ?? ""}
+					sessionName={currentName}
 					onToggle={() => {
 						setPanelCollapsed((v) => !v);
 					}}

@@ -1,9 +1,8 @@
-// 右侧面板：main / worker / task 全部卡片化呈现（可视化重点）。
+// 右侧面板：只展示 work / task agent 卡片（main agent 不展示）。
 // 卡片 = 状态感头像（运行中切 *_active.webp 动图）+ 任务文本 + tier/状态徽标 + 当前工具；
 // 运行中卡片橙边高亮；worker/task 层级树用左边线 + 缩进表达；底部用量卡片按 tier 分组。
-// 收起时退化为右下角浮动圆钮（不挤占布局）。
 
-import { Check, Loader2, PanelRightOpen, Wrench, X } from "lucide-react";
+import { Check, Loader2, Wrench, X } from "lucide-react";
 import { type ReactElement, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -15,10 +14,6 @@ import type { AgentNode, AgentStatus, UsageTotals } from "../state/reducer.ts";
 interface AgentPanelProps {
 	agents: AgentNode[];
 	usage: UsageTotals;
-	turn: "idle" | "running";
-	// main agent 档位徽标：由 App 传入（web 创建会话时选择值）；
-	// 非 web 创建的会话无从得知，App 侧回退 "high"
-	mainTier: string;
 	open: boolean;
 	sessionName: string;
 	onToggle: () => void;
@@ -195,26 +190,14 @@ function AgentTree({
 export function AgentPanel({
 	agents,
 	usage,
-	turn,
-	mainTier,
 	open,
 	sessionName,
 	onToggle,
-}: AgentPanelProps): ReactElement {
+}: AgentPanelProps): ReactElement | null {
+	// 收起时完全隐藏：展开入口只有顶栏开关（且仅 worker 运行期间可见）
 	if (!open) {
-		return (
-			<Button
-				type="button"
-				size="icon"
-				className="fixed bottom-6 right-6 z-50 size-11 rounded-full shadow-lg"
-				onClick={onToggle}
-				aria-label="展开面板"
-			>
-				<PanelRightOpen className="size-4" />
-			</Button>
-		);
+		return null;
 	}
-	const mainRunning = turn === "running";
 	return (
 		<aside className="flex h-full w-80 shrink-0 flex-col border-l bg-secondary/40">
 			<div className="flex h-12 shrink-0 items-center gap-2 border-b px-3">
@@ -241,33 +224,6 @@ export function AgentPanel({
 			</div>
 			<ScrollArea className="min-h-0 flex-1">
 				<div className="flex flex-col gap-2.5 p-3">
-					{/* main agent 大卡 */}
-					<Card
-						className={cn(
-							"gap-2.5 rounded-xl p-3 transition-shadow",
-							mainRunning && "border-brand/50 shadow-sm",
-						)}
-					>
-						<div className="flex items-center gap-2.5">
-							<Avatar
-								src="/main_agent.png"
-								label="main"
-								className={cn(mainRunning && "ring-2 ring-brand/40")}
-							/>
-							<div className="min-w-0 flex-1">
-								<div className="text-[13px] font-semibold">main agent</div>
-								<div className="mt-1 flex items-center gap-1.5">
-									<Badge
-										variant="outline"
-										className="text-[10px] font-normal text-muted-foreground"
-									>
-										{mainTier}
-									</Badge>
-									<StatusBadge status={mainRunning ? "running" : "done"} />
-								</div>
-							</div>
-						</div>
-					</Card>
 					{agents.length > 0 ? (
 						<AgentTree agents={agents} parentId="main" depth={1} />
 					) : (
