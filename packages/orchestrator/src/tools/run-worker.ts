@@ -4,8 +4,12 @@
 // spawn_tasks，嵌套拆分才真正可用；task 走 createRoleRegistry 四件套、无派生能力），
 // 事件不外传（M2 计划决定 #3），只回收 error 事件、done(aborted) 与收尾 summary，
 // 失败标注由调用方按统一 taxonomy 决定（Task 9：`[FAILED] ${agentId}: ${reason}`）。
+// M4 Task 2：system prompt 按 features.todo 折入该 agent 的 todo 清单段
+// （构建前 foldTodos，关闭开关则不 fold 不出段）。
 
 import {
+	featureEnabled,
+	foldTodos,
 	type LoopConfig,
 	loadSession,
 	type ModelTier,
@@ -60,6 +64,11 @@ export async function runAgentInline(
 			: // task 角色同样应用 decorateWorkerTool：policy 包装对下层 agent 一视同仁
 				createRoleRegistry(runtime, role, []);
 	const resolved = runtime.resolveModel(tier);
+	// M4 Task 2：构建 prompt 前经 loadSession 做一次 foldTodos（与结尾 readAgentSummary
+	// 的成本模型一致）；features.todo 关闭时不 fold 也不传，prompt 不出 task-list 段
+	const todos = featureEnabled(runtime.features, "todo")
+		? foldTodos((await loadSession(runtime.session.filePath)).events, agentId)
+		: [];
 	const cfg: LoopConfig = {
 		session: runtime.session,
 		agentId,
@@ -70,12 +79,16 @@ export async function runAgentInline(
 		registry,
 		approval: runtime.approval,
 		cwd: runtime.cwd,
-		system: buildRoleSystemPrompt(role, {
-			cwd: runtime.cwd,
-			os: process.platform,
-			date: new Date().toISOString().slice(0, 10),
-			tools: registry.declarations(),
-		}),
+		system: buildRoleSystemPrompt(
+			role,
+			{
+				cwd: runtime.cwd,
+				os: process.platform,
+				date: new Date().toISOString().slice(0, 10),
+				tools: registry.declarations(),
+			},
+			{ todos },
+		),
 		tier,
 	};
 	const failures: string[] = [];

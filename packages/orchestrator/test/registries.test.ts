@@ -75,20 +75,21 @@ describe("createRoleRegistry 按角色装配工具集", () => {
 		expect(names(registry)).toEqual(["delegate", "spawn_workers"]);
 	});
 
-	it("worker = bash/read/write/edit + spawn_tasks", () => {
+	it("worker = bash/read/write/edit + todo + spawn_tasks", () => {
 		const registry = createRoleRegistry(stubRuntime(), "worker", WORKER_META);
 		expect(names(registry)).toEqual([
 			"bash",
 			"edit",
 			"read",
 			"spawn_tasks",
+			"todo",
 			"write",
 		]);
 	});
 
-	it("task = 仅 bash/read/write/edit，忽略 metaTools", () => {
+	it("task = 仅 bash/read/write/edit + todo，忽略 metaTools", () => {
 		const registry = createRoleRegistry(stubRuntime(), "task", WORKER_META);
-		expect(names(registry)).toEqual(["bash", "edit", "read", "write"]);
+		expect(names(registry)).toEqual(["bash", "edit", "read", "todo", "write"]);
 	});
 });
 
@@ -171,14 +172,22 @@ describe("buildRoleSystemPrompt 角色指令", () => {
 	});
 });
 
-// M4 矩阵：role × features × runtime 透传字段。当前 feature 派生外工具只有 mcpTools
-// （Task 2/3/4 陆续追加 todo/web_fetch/web_search），矩阵先以 mcp 为样本钉死规则：
+// M4 矩阵：role × features × runtime 透传字段。feature 派生外工具现有 todo（Task 2）
+// 与 mcpTools（Task 5 样板），矩阵钉死规则：
 // - 外工具只进 worker/task，main 永远只有元工具
 // - 开关缺省（undefined）= 开（featureEnabled `?? true`）；显式 false 才不注册
 // - decorateWorkerTool 只包四件套，外工具与元工具均不装饰
 describe("createRoleRegistry role×feature 矩阵", () => {
 	const mcpTool = stubMetaTool("mcp__demo__tool");
 	const BASE_FOUR = ["bash", "edit", "read", "write"];
+	const WORKER_WITH_TODO = [
+		"bash",
+		"edit",
+		"read",
+		"spawn_tasks",
+		"todo",
+		"write",
+	];
 
 	it("worker + features 缺省 + mcpTools 提供 → 并入外工具（缺省全开）", () => {
 		const registry = createRoleRegistry(
@@ -192,43 +201,69 @@ describe("createRoleRegistry role×feature 矩阵", () => {
 			"mcp__demo__tool",
 			"read",
 			"spawn_tasks",
+			"todo",
 			"write",
 		]);
 	});
 
-	it("worker + features.mcp=false → 不注册外工具", () => {
+	it("worker + features.mcp=false → 不注册 mcp 外工具，todo 缺省仍注册", () => {
 		const registry = createRoleRegistry(
 			stubRuntime({ features: { mcp: false }, mcpTools: [mcpTool] }),
 			"worker",
 			WORKER_META,
 		);
-		expect(names(registry)).toEqual([
-			"bash",
-			"edit",
-			"read",
-			"spawn_tasks",
-			"write",
-		]);
+		expect(names(registry)).toEqual(WORKER_WITH_TODO);
 	});
 
-	it("worker + features.mcp=true + mcpTools 缺省 → 空透传不报错、不加工具", () => {
+	it("worker + features.todo=false → 不注册 todo，mcp 缺省仍注册", () => {
 		const registry = createRoleRegistry(
-			stubRuntime({ features: { mcp: true } }),
+			stubRuntime({ features: { todo: false }, mcpTools: [mcpTool] }),
 			"worker",
 			WORKER_META,
 		);
 		expect(names(registry)).toEqual([
 			"bash",
 			"edit",
+			"mcp__demo__tool",
 			"read",
 			"spawn_tasks",
 			"write",
 		]);
 	});
 
-	it("task + features.mcp=true + mcpTools 提供 → task 同样并入外工具", () => {
+	it("worker + features 全开但外工具数据缺省（mcpTools 缺省）→ 空透传不报错、只加 todo", () => {
 		const registry = createRoleRegistry(
-			stubRuntime({ features: { mcp: true }, mcpTools: [mcpTool] }),
+			stubRuntime({
+				features: {
+					todo: true,
+					hooks: true,
+					skills: true,
+					promptTemplates: true,
+					webSearch: true,
+					webFetch: true,
+					mcp: true,
+				},
+			}),
+			"worker",
+			WORKER_META,
+		);
+		expect(names(registry)).toEqual(WORKER_WITH_TODO);
+	});
+
+	it("task + features 全开 + mcpTools 提供 → task 同样并入外工具", () => {
+		const registry = createRoleRegistry(
+			stubRuntime({
+				features: {
+					todo: true,
+					hooks: true,
+					skills: true,
+					promptTemplates: true,
+					webSearch: true,
+					webFetch: true,
+					mcp: true,
+				},
+				mcpTools: [mcpTool],
+			}),
 			"task",
 			WORKER_META,
 		);
@@ -237,8 +272,18 @@ describe("createRoleRegistry role×feature 矩阵", () => {
 			"edit",
 			"mcp__demo__tool",
 			"read",
+			"todo",
 			"write",
 		]);
+	});
+
+	it("task + features.todo=false → task 也无 todo", () => {
+		const registry = createRoleRegistry(
+			stubRuntime({ features: { todo: false } }),
+			"task",
+			WORKER_META,
+		);
+		expect(names(registry)).toEqual(BASE_FOUR);
 	});
 
 	it("main + features 全开 + mcpTools 提供 → 仍只有元工具（外工具不进 main）", () => {
@@ -261,6 +306,11 @@ describe("createRoleRegistry role×feature 矩阵", () => {
 		expect(names(registry)).toEqual(["delegate", "spawn_workers"]);
 	});
 
+	it("main + features 缺省 → 同样只有元工具（todo 缺省全开也不进 main）", () => {
+		const registry = createRoleRegistry(stubRuntime(), "main", MAIN_META);
+		expect(names(registry)).toEqual(["delegate", "spawn_workers"]);
+	});
+
 	it("decorateWorkerTool 只包四件套：外工具与元工具保持原样", () => {
 		const decorated: string[] = [];
 		const decorate = (tool: ToolDefinition<unknown>) => {
@@ -272,7 +322,7 @@ describe("createRoleRegistry role×feature 矩阵", () => {
 			"worker",
 			WORKER_META,
 		);
-		// 装饰器只被应用到四件套
+		// 装饰器只被应用到四件套（todo 与 mcp 外工具、spawn_tasks 均不装饰）
 		expect(decorated.sort()).toEqual(BASE_FOUR);
 		expect(names(registry)).toEqual([
 			"bash",
@@ -280,6 +330,7 @@ describe("createRoleRegistry role×feature 矩阵", () => {
 			"mcp__demo__tool",
 			"read",
 			"spawn_tasks",
+			"todo",
 			"write",
 		]);
 	});
