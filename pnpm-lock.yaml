@@ -23,6 +23,24 @@ importers:
 
   packages/ai: {}
 
+  packages/benchmarks:
+    dependencies:
+      '@hotpot/ai':
+        specifier: workspace:*
+        version: link:../ai
+      '@hotpot/core':
+        specifier: workspace:*
+        version: link:../core
+      '@hotpot/orchestrator':
+        specifier: workspace:*
+        version: link:../orchestrator
+      '@hotpot/telemetry':
+        specifier: workspace:*
+        version: link:../telemetry
+      zod:
+        specifier: ^4
+        version: 4.6.5
+
   packages/cli:
     dependencies:
       '@hotpot/ai':

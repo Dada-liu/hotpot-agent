@@ -8,6 +8,7 @@
 		"node": ">=22"
 	},
 	"scripts": {
+		"bench": "tsx packages/benchmarks/src/cli.ts",
 		"dev": "tsx scripts/dev.ts",
 		"test": "vitest run",
 		"check": "biome check .",

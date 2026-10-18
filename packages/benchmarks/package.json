@@ -1,0 +1,16 @@
+{
+	"name": "@hotpot/benchmarks",
+	"version": "0.0.0",
+	"private": true,
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts"
+	},
+	"dependencies": {
+		"@hotpot/ai": "workspace:*",
+		"@hotpot/core": "workspace:*",
+		"@hotpot/orchestrator": "workspace:*",
+		"@hotpot/telemetry": "workspace:*",
+		"zod": "^4"
+	}
+}
