@@ -1,7 +1,13 @@
-// plan 审查卡片：Markdown 渲染计划正文 + 批准/拒绝/批注操作。
+// plan 审查卡片：橙色高亮卡片 + Markdown 计划正文 + 批准/拒绝/批注操作。
 // 批注/拒绝需附 note（server 对 reject/annotate 强制要求），批准后按钮区收起。
 
+import { ListChecks } from "lucide-react";
 import { type ReactElement, useState } from "react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { Textarea } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
 import { Markdown } from "./Markdown.tsx";
 
 interface PlanPanelProps {
@@ -31,61 +37,67 @@ export function PlanPanel({
 	const [note, setNote] = useState("");
 	const noteReady = note.trim() !== "";
 	return (
-		<div className="plan-card">
-			<div className="plan-card-head">
-				<span className="plan-card-title">执行计划</span>
-				<span className={phase === "drafted" ? "badge badge-warn" : "badge"}>
+		<Card className="gap-3 rounded-xl border-brand/40 bg-brand-soft/60 p-4">
+			<div className="flex items-center gap-2">
+				<ListChecks className="size-4 shrink-0 text-brand" />
+				<span className="text-sm font-semibold">执行计划</span>
+				<Badge
+					variant={pending ? "default" : "secondary"}
+					className={cn(
+						"ml-auto text-[11px]",
+						pending && "bg-brand text-white",
+					)}
+				>
 					{PHASE_LABEL[phase]}
-				</span>
+				</Badge>
 			</div>
 			{plan !== undefined && plan !== "" && (
-				<div className="plan-card-body">
+				<div className="md text-sm">
 					<Markdown text={plan} />
 				</div>
 			)}
 			{pending && (
-				<div className="plan-card-actions">
-					<textarea
-						className="plan-card-note"
+				<div className="flex flex-col gap-2">
+					<Textarea
+						className="min-h-[52px] resize-y bg-background text-sm"
 						placeholder="批注（拒绝/批注时必填）"
 						value={note}
 						onChange={(e) => {
 							setNote(e.target.value);
 						}}
 					/>
-					<div className="plan-card-buttons">
-						<button
-							type="button"
-							className="btn btn-primary"
+					<div className="flex gap-2">
+						<Button
+							size="sm"
 							onClick={() => {
 								onDecide("approve");
 							}}
 						>
 							批准
-						</button>
-						<button
-							type="button"
-							className="btn"
+						</Button>
+						<Button
+							size="sm"
+							variant="outline"
 							disabled={!noteReady}
 							onClick={() => {
 								onDecide("annotate", note.trim());
 							}}
 						>
 							批注
-						</button>
-						<button
-							type="button"
-							className="btn btn-danger"
+						</Button>
+						<Button
+							size="sm"
+							variant="destructive"
 							disabled={!noteReady}
 							onClick={() => {
 								onDecide("reject", note.trim());
 							}}
 						>
 							拒绝
-						</button>
+						</Button>
 					</div>
 				</div>
 			)}
-		</div>
+		</Card>
 	);
 }

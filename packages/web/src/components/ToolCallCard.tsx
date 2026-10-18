@@ -1,6 +1,11 @@
-// 工具调用卡片：名称 + 入参摘要（JSON 截断 200 字符）+ 输出可展开 + isError 红标。
+// 工具调用卡片：图标 + 名称 + 入参摘要（JSON 截断 200 字符）+ 输出可展开 + isError 橙标。
 
+import { ChevronDown, ChevronRight, Wrench } from "lucide-react";
 import { type ReactElement, useState } from "react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { cn } from "@/lib/utils";
 
 function summarize(input: unknown): string {
 	if (input === undefined) {
@@ -28,37 +33,52 @@ export function ToolCallCard({
 }: ToolCallCardProps): ReactElement {
 	const [expanded, setExpanded] = useState(false);
 	const summary = summarize(input);
+	const failed = result?.isError === true;
 	return (
-		<div
-			className={
-				result?.isError === true ? "tool-card tool-card-error" : "tool-card"
-			}
+		<Card
+			className={cn("gap-2 rounded-xl p-3", failed && "border-destructive/50")}
 		>
-			<div className="tool-card-head">
-				<span className="tool-card-name">{name}</span>
+			<div className="flex items-center gap-2">
+				<Wrench className="size-3.5 shrink-0 text-muted-foreground" />
+				<span className="font-mono text-sm font-medium">{name}</span>
 				{result !== undefined && (
-					<span
-						className={result.isError ? "badge badge-error" : "badge badge-ok"}
+					<Badge
+						variant={failed ? "destructive" : "secondary"}
+						className="ml-auto text-[11px]"
 					>
-						{result.isError ? "error" : "done"}
-					</span>
+						{failed ? "error" : "done"}
+					</Badge>
 				)}
 			</div>
-			{summary !== "" && <pre className="tool-card-input">{summary}</pre>}
+			{summary !== "" && (
+				<pre className="overflow-x-auto rounded-md bg-secondary p-2 font-mono text-xs text-muted-foreground">
+					{summary}
+				</pre>
+			)}
 			{result !== undefined && (
-				<div className="tool-card-result">
-					<button
-						type="button"
-						className="btn btn-link"
+				<div>
+					<Button
+						variant="ghost"
+						size="sm"
+						className="h-6 gap-1 px-2 text-xs text-muted-foreground"
 						onClick={() => {
 							setExpanded((v) => !v);
 						}}
 					>
+						{expanded ? (
+							<ChevronDown className="size-3" />
+						) : (
+							<ChevronRight className="size-3" />
+						)}
 						{expanded ? "收起输出" : "展开输出"}
-					</button>
-					{expanded && <pre className="tool-card-output">{result.content}</pre>}
+					</Button>
+					{expanded && (
+						<pre className="mt-1 max-h-72 overflow-auto rounded-md bg-secondary p-2 font-mono text-xs">
+							{result.content}
+						</pre>
+					)}
 				</div>
 			)}
-		</div>
+		</Card>
 	);
 }

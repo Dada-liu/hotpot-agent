@@ -1,6 +1,11 @@
-// 左栏：会话列表。新建（cwd 可留空走服务端默认）、切换、创建时间与 cwd 截断展示。
+// 左栏：Kimi 风窄边栏（logo + 新建会话大卡 + 会话列表）。
+// 新建（cwd 可留空走服务端默认）、切换、创建时间与 cwd 截断展示；激活项黑底白字。
 
+import { Plus } from "lucide-react";
 import type { ReactElement } from "react";
+import { Button } from "@/components/ui/button";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { cn } from "@/lib/utils";
 import type { SessionSummary } from "../api.ts";
 
 function truncate(text: string, max: number): string {
@@ -26,47 +31,78 @@ export function SessionList({
 	onCreate,
 }: SessionListProps): ReactElement {
 	return (
-		<aside className="session-list">
-			<div className="session-list-header">
-				<span>会话</span>
-				<button type="button" className="btn" onClick={onCreate}>
-					+ 新建
-				</button>
+		<aside className="flex h-full w-60 shrink-0 flex-col border-r bg-secondary/60">
+			<div className="flex items-center gap-2 px-4 pb-1 pt-4">
+				<img
+					src="/logo.png"
+					alt="hotpot"
+					className="h-8 w-8 rounded-lg object-contain"
+				/>
+				<span className="text-base font-semibold tracking-tight">hotpot</span>
 			</div>
-			<ul>
-				{sessions.map((s) => (
-					<li key={s.id}>
-						<button
-							type="button"
-							className={
-								s.id === currentId
-									? "session-item session-item-active"
-									: "session-item"
-							}
-							onClick={() => {
-								onSelect(s.id);
-							}}
-						>
-							<span className="session-item-cwd" title={s.cwd}>
-								{truncate(s.cwd, 28)}
-							</span>
-							<span className="session-item-meta">
-								<span
-									className={
-										s.turn === "running"
-											? "turn-dot turn-dot-running"
-											: "turn-dot"
-									}
-								/>
-								{formatTime(s.createdAt)}
-							</span>
-						</button>
-					</li>
-				))}
-				{sessions.length === 0 && (
-					<li className="session-list-empty">暂无会话，点击「+ 新建」开始</li>
-				)}
-			</ul>
+			<div className="px-3 pb-2 pt-3">
+				<Button
+					variant="outline"
+					className="w-full justify-start gap-2 rounded-xl border bg-background py-5 shadow-sm hover:bg-accent"
+					onClick={onCreate}
+				>
+					<Plus className="size-4" />
+					新建会话
+				</Button>
+			</div>
+			<div className="px-4 pb-1 pt-2 text-xs font-medium text-muted-foreground">
+				会话
+			</div>
+			<ScrollArea className="min-h-0 flex-1">
+				<ul className="flex flex-col gap-0.5 px-2 pb-3">
+					{sessions.map((s) => {
+						const active = s.id === currentId;
+						return (
+							<li key={s.id}>
+								<button
+									type="button"
+									className={cn(
+										"w-full rounded-lg px-3 py-2 text-left transition-colors",
+										active
+											? "bg-primary text-primary-foreground"
+											: "hover:bg-accent",
+									)}
+									onClick={() => {
+										onSelect(s.id);
+									}}
+								>
+									<span className="block truncate text-sm" title={s.cwd}>
+										{truncate(s.cwd, 26)}
+									</span>
+									<span
+										className={cn(
+											"mt-0.5 flex items-center gap-1.5 text-[11px]",
+											active
+												? "text-primary-foreground/60"
+												: "text-muted-foreground",
+										)}
+									>
+										<span
+											className={cn(
+												"size-1.5 rounded-full",
+												s.turn === "running"
+													? "bg-brand"
+													: "bg-current opacity-40",
+											)}
+										/>
+										{formatTime(s.createdAt)}
+									</span>
+								</button>
+							</li>
+						);
+					})}
+					{sessions.length === 0 && (
+						<li className="px-3 py-6 text-center text-xs text-muted-foreground">
+							暂无会话，点上方「新建会话」开始
+						</li>
+					)}
+				</ul>
+			</ScrollArea>
 		</aside>
 	);
 }

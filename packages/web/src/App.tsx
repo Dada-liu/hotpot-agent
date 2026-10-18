@@ -1,7 +1,12 @@
 // 根组件：三栏布局（会话列表 | 对话 | agent 面板）与全局状态。
 // 全局状态 = useReducer(chatReducer) 折叠 WireEvent 流；切换会话时重置并重建 SSE 连接。
+// 顶栏：会话目录名 + 重连指示 + 右侧面板开关。
 
+import { PanelRight } from "lucide-react";
 import { useCallback, useEffect, useReducer, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
 import {
 	answerApproval,
 	answerPlan,
@@ -177,48 +182,79 @@ export function App() {
 	const current = sessions.find((s) => s.id === currentId) ?? null;
 
 	return (
-		<div className="app">
-			<SessionList
-				sessions={sessions}
-				currentId={currentId}
-				onSelect={handleSelect}
-				onCreate={() => {
-					void handleCreate();
-				}}
-			/>
-			<div className="center">
-				{connState === "reconnecting" && (
-					<div className="banner">连接断开，重连中…</div>
-				)}
-				{error !== null && <div className="banner banner-error">{error}</div>}
-				<ChatView
-					state={chat}
-					hasSession={currentId !== null}
-					onSend={(content) => {
-						void handleSend(content);
+		<TooltipProvider>
+			<div className="flex h-screen overflow-hidden">
+				<SessionList
+					sessions={sessions}
+					currentId={currentId}
+					onSelect={handleSelect}
+					onCreate={() => {
+						void handleCreate();
 					}}
-					onCancel={() => {
-						void handleCancel();
-					}}
-					onApproval={(decision) => {
-						void handleApproval(decision);
-					}}
-					onPlanDecision={(decision, note) => {
-						void handlePlanDecision(decision, note);
+				/>
+				<div className="flex min-w-0 flex-1 flex-col">
+					<header className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
+						<span
+							className="min-w-0 flex-1 truncate text-sm text-muted-foreground"
+							title={current?.cwd}
+						>
+							{current ? current.cwd : "hotpot code"}
+						</span>
+						<span
+							className={cn(
+								"flex items-center gap-1.5 text-xs text-brand",
+								connState !== "reconnecting" && "hidden",
+							)}
+						>
+							<span className="size-1.5 animate-pulse rounded-full bg-brand" />
+							重连中
+						</span>
+						<Button
+							variant="ghost"
+							size="icon"
+							className="size-8"
+							onClick={() => {
+								setPanelCollapsed((v) => !v);
+							}}
+							aria-label="切换右侧面板"
+						>
+							<PanelRight className="size-4" />
+						</Button>
+					</header>
+					{error !== null && (
+						<div className="bg-destructive/10 px-4 py-1.5 text-center text-xs text-destructive">
+							{error}
+						</div>
+					)}
+					<ChatView
+						state={chat}
+						hasSession={currentId !== null}
+						onSend={(content) => {
+							void handleSend(content);
+						}}
+						onCancel={() => {
+							void handleCancel();
+						}}
+						onApproval={(decision) => {
+							void handleApproval(decision);
+						}}
+						onPlanDecision={(decision, note) => {
+							void handlePlanDecision(decision, note);
+						}}
+					/>
+				</div>
+				<AgentPanel
+					agents={chat.agents}
+					usage={chat.usage}
+					turn={chat.turn}
+					mainTier={MAIN_TIER_FALLBACK}
+					open={chat.panelOpen && !panelCollapsed}
+					sessionName={current?.cwd ?? ""}
+					onToggle={() => {
+						setPanelCollapsed((v) => !v);
 					}}
 				/>
 			</div>
-			<AgentPanel
-				agents={chat.agents}
-				usage={chat.usage}
-				turn={chat.turn}
-				mainTier={MAIN_TIER_FALLBACK}
-				open={chat.panelOpen && !panelCollapsed}
-				sessionName={current?.cwd ?? ""}
-				onToggle={() => {
-					setPanelCollapsed((v) => !v);
-				}}
-			/>
-		</div>
+		</TooltipProvider>
 	);
 }
