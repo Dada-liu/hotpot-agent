@@ -556,6 +556,124 @@ describe("reduce：usage 按 tier 累计", () => {
 	});
 });
 
+describe("reduce：plan 卡片与正文去重", () => {
+	const planText = "PLAN: (1) add auth (2) add login.";
+
+	it("plan(drafted) 按 messageIds 移除已存在的计划正文 assistant", () => {
+		let state = createInitialState();
+		state = reduce(state, log(1, userMsg("u-1", "给项目加认证")));
+		state = reduce(
+			state,
+			log(
+				2,
+				assistantMsg("a-plan", "main", [{ type: "text", text: planText }]),
+			),
+		);
+		expect(
+			state.transcript.some((t) => t.kind === "assistant" && t.id === "a-plan"),
+		).toBe(true);
+
+		state = reduce(state, {
+			seq: 3,
+			kind: "plan",
+			phase: "drafted",
+			plan: planText,
+			messageIds: ["a-plan"],
+		});
+		expect(
+			state.transcript.some((t) => t.kind === "assistant" && t.id === "a-plan"),
+		).toBe(false);
+		expect(
+			state.transcript.some((t) => t.kind === "plan" && t.plan === planText),
+		).toBe(true);
+		expect(state.pendingPlan?.plan).toBe(planText);
+	});
+
+	it("plan 事件先于 assistant 日志到达时，后到的正文同样不渲染", () => {
+		let state = createInitialState();
+		state = reduce(state, {
+			seq: 1,
+			kind: "plan",
+			phase: "drafted",
+			plan: planText,
+			messageIds: ["a-plan"],
+		});
+		state = reduce(
+			state,
+			log(
+				2,
+				assistantMsg("a-plan", "main", [{ type: "text", text: planText }]),
+			),
+		);
+		expect(
+			state.transcript.some((t) => t.kind === "assistant" && t.id === "a-plan"),
+		).toBe(false);
+		expect(state.hiddenPlanMessageIds).toContain("a-plan");
+	});
+
+	it("plan 型 approval 广播由 plan 卡片承担，不重复落审计条目", () => {
+		let state = createInitialState();
+		state = reduce(state, {
+			seq: 1,
+			kind: "approval",
+			requestId: "req-plan",
+			approvalType: "plan",
+			summary: "执行计划",
+			plan: planText,
+		});
+		expect(state.transcript).toEqual([]);
+		expect(state.pendingApproval).toBeNull();
+
+		state = reduce(state, {
+			seq: 2,
+			kind: "plan",
+			phase: "drafted",
+			plan: planText,
+		});
+		state = reduce(state, { seq: 3, kind: "plan", phase: "approved" });
+		expect(state.pendingPlan).toBeNull();
+		expect(state.pendingApproval).toBeNull();
+	});
+});
+
+describe("reduce：internal_msg 与 plan 审计条目", () => {
+	it("internal_msg 不进入 transcript", () => {
+		let state = createInitialState();
+		state = reduce(
+			state,
+			log(1, {
+				type: "internal_msg",
+				id: "i-1",
+				ts,
+				agentId: "main",
+				content: "Draft the implementation plan...",
+			}),
+		);
+		expect(state.transcript).toEqual([]);
+	});
+
+	it("approval/asked 的 plan payload 归为 plan 类型且有可读 summary", () => {
+		let state = createInitialState();
+		state = reduce(
+			state,
+			log(1, {
+				type: "approval/asked",
+				id: "asked-1",
+				ts,
+				agentId: "main",
+				payload: { kind: "plan", plan: "PLAN: do it" },
+			}),
+		);
+		const entry = state.transcript.find((t) => t.kind === "approval");
+		expect(entry).toMatchObject({
+			kind: "approval",
+			requestId: "asked-1",
+			approvalType: "plan",
+			summary: "执行计划",
+		});
+	});
+});
+
 // M4 Feature②：steer/queue 队列折叠与快照覆盖
 describe("inbox 队列（M4）", () => {
 	function spliced(

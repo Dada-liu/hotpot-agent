@@ -36,6 +36,14 @@ export type SessionEvent =
 			agentId: string;
 			content: string;
 	  }
+	// 编排层内部延续提示：进入模型历史，但 UI 不渲染
+	| {
+			type: "internal_msg";
+			id: string;
+			ts: string;
+			agentId: string;
+			content: string;
+	  }
 	| {
 			type: "assistant_msg";
 			id: string;
@@ -160,6 +168,8 @@ export type WireEvent =
 			kind: "plan";
 			phase: "drafted" | "approved" | "denied" | "revision_exhausted";
 			plan?: string;
+			// 计划正文所在的 assistant_msg id：渲染时隐藏正文气泡，只保留计划卡片
+			messageIds?: string[];
 	  }
 	| {
 			seq: number;

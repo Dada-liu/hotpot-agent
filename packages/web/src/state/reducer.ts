@@ -111,6 +111,8 @@ export interface ChatState {
 	usage: UsageTotals;
 	// steer/queue 两队列（inbox/spliced 折叠；REST 快照可覆盖修正消费后的残留）
 	inbox: InboxSnapshot;
+	// 作为计划正文落盘的 assistant_msg id：UI 只保留 plan 卡片，不再重复渲染正文气泡
+	hiddenPlanMessageIds: string[];
 	// 已见过的 log 事件 id（幂等去重）
 	seenEventIds: string[];
 }
@@ -131,6 +133,7 @@ export function createInitialState(): ChatState {
 		panelOpen: false,
 		usage: { total: { input: 0, output: 0 }, byTier: {} },
 		inbox: { nextTurn: [], nextStep: [] },
+		hiddenPlanMessageIds: [],
 		seenEventIds: [],
 	};
 }
@@ -233,7 +236,11 @@ export function reduce(state: ChatState, event: WireEvent): ChatState {
 				}),
 			};
 		case "approval": {
-			// 登记待审批并落一条审计痕迹；plan 审批同时占据 pendingPlan 槽位
+			// plan 审批由 plan 卡片承担；asked/decided 日志已提供审计，不重复落条目
+			if (event.approvalType === "plan") {
+				return state;
+			}
+			// 登记待审批并落一条审计痕迹
 			const entry: TranscriptEntry = {
 				kind: "approval",
 				id: `approval:${event.requestId}`,
@@ -283,6 +290,10 @@ function reduceLog(state: ChatState, event: SessionEvent): ChatState {
 			};
 			return { ...state, transcript: [...state.transcript, entry] };
 		}
+		case "internal_msg": {
+			// 编排层内部延续提示：进入模型历史，但不属于用户输入，UI 不渲染
+			return state;
+		}
 		case "assistant_msg": {
 			// 工具块落成工具卡片；最后一个 in-flight 工具名记到 agent.currentTool
 			const toolEntries: TranscriptEntry[] = [];
@@ -314,7 +325,10 @@ function reduceLog(state: ChatState, event: SessionEvent): ChatState {
 				usage: event.usage
 					? accumulateUsage(state.usage, event.usage, event.tier ?? "high")
 					: state.usage,
-				transcript: [...state.transcript, assistantEntry, ...toolEntries],
+				// 计划正文由 plan 卡片承载：隐藏对应 assistant 气泡，工具卡片仍保留
+				transcript: state.hiddenPlanMessageIds.includes(event.id)
+					? [...state.transcript, ...toolEntries]
+					: [...state.transcript, assistantEntry, ...toolEntries],
 				// 流式段定格：durable 消息已落 transcript，以 content 为准
 				streaming:
 					state.streaming?.agentId === event.agentId ? null : state.streaming,
@@ -371,21 +385,26 @@ function reduceLog(state: ChatState, event: SessionEvent): ChatState {
 				}),
 			};
 		case "approval/asked": {
-			// 审计痕迹：payload.requestId 可关联到对应审批条目
+			// 审计痕迹：payload.requestId 可关联到对应审批条目；
+			// plan 流程的 payload 是 {kind:"plan", plan}，不能按工具审批展示
 			const requestId =
 				typeof event.payload.requestId === "string"
 					? event.payload.requestId
 					: event.id;
+			const approvalType =
+				event.payload.kind === "plan" ? ("plan" as const) : ("tool" as const);
 			const entry: TranscriptEntry = {
 				kind: "approval",
 				id: event.id,
 				ts: event.ts,
 				requestId,
-				approvalType: "tool",
+				approvalType,
 				summary:
 					typeof event.payload.summary === "string"
 						? event.payload.summary
-						: "",
+						: approvalType === "plan"
+							? "执行计划"
+							: "",
 			};
 			return { ...state, transcript: [...state.transcript, entry] };
 		}
@@ -463,10 +482,24 @@ function reducePlan(
 			phase: "drafted",
 			plan: event.plan,
 		};
+		// 计划正文由卡片承载：隐藏对应 assistant 气泡。messageIds 为空时保持旧行为；
+		// 同时记录 id 集合，后到的 assistant 日志也不会重新渲染（SSE 顺序兜底）。
+		const messageIds = event.messageIds ?? [];
+		const hiddenPlanMessageIds = [
+			...state.hiddenPlanMessageIds,
+			...messageIds.filter((id) => !state.hiddenPlanMessageIds.includes(id)),
+		];
+		const transcript =
+			messageIds.length === 0
+				? state.transcript
+				: state.transcript.filter(
+						(t) => !(t.kind === "assistant" && messageIds.includes(t.id)),
+					);
 		return {
 			...state,
-			transcript: [...state.transcript, entry],
+			transcript: [...transcript, entry],
 			pendingPlan: { entryId, plan: event.plan },
+			hiddenPlanMessageIds,
 		};
 	}
 	// approved/denied/revision_exhausted：回填 plan 卡片并清除 pending
@@ -475,7 +508,16 @@ function reducePlan(
 			? { ...t, phase: event.phase }
 			: t,
 	);
-	return { ...state, transcript, pendingPlan: null };
+	return {
+		...state,
+		transcript,
+		pendingPlan: null,
+		// plan 型审批由卡片承担；决定后清掉桥广播留下的 pendingApproval
+		pendingApproval:
+			state.pendingApproval?.approvalType === "plan"
+				? null
+				: state.pendingApproval,
+	};
 }
 
 // 登记或刷新 agent 节点（按 agentId 去重，重复 spawn 不新增）

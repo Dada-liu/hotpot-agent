@@ -30,4 +30,5 @@ pnpm --filter @hotpot/web build  # 产物输出到 packages/web/dist
 
 - **steer/queue 队列展示**：reducer 折叠 `inbox/spliced` 事件维护 `state.inbox`（next-step = steer、next-turn = 排队），输入框上方的队列条可展开查看消息正文；回合结束与发送 steer 后经 `GET /api/sessions/:id/inbox` 拉快照修正已消费条目（drain/poll 不落事件）。
 - **prompt templates 补全**：输入 `/` 前缀时列出 `GET /api/sessions/:id/prompts` 返回的模板，点击补全为 `/name `；展开由 server 统一完成，web 不复制参数替换逻辑。
+- **plan 卡片去重**：`plan(drafted)` 携带 `messageIds`（计划正文所在的 assistant 消息 id），reducer 移除对应正文气泡并记录该 id 集合；后到的日志同样不渲染，计划只在卡片中展示。编排层内部提示 `internal_msg` 不进入主对话投影。
 - **协议镜像**：`protocol.ts` 已补齐 M4 五个事件变体（todo/set、hook/fired、skill/loaded、prompt/invoked、mcp/attached），reducer 对它们幂等忽略（不进入主对话投影）。
