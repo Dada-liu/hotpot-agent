@@ -9,6 +9,7 @@ import {
 	ApprovalChain,
 	type ToolDefinition,
 	type ToolRegistry,
+	type WebSearchBackend,
 } from "@hotpot/core";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
@@ -29,10 +30,14 @@ function stubMetaTool(name: string): ToolDefinition<unknown> {
 const MAIN_META = [stubMetaTool("delegate"), stubMetaTool("spawn_workers")];
 const WORKER_META = [stubMetaTool("spawn_tasks")];
 
-// 最小 runtime 桩：注册表只消费 decorateWorkerTool/features/mcpTools，其余字段原样占位
+// 最小 runtime 桩：注册表只消费 decorateWorkerTool/features/mcpTools/webSearchBackend，
+// 其余字段原样占位
 function stubRuntime(
 	overrides?: Partial<
-		Pick<OrchestrationRuntime, "decorateWorkerTool" | "features" | "mcpTools">
+		Pick<
+			OrchestrationRuntime,
+			"decorateWorkerTool" | "features" | "mcpTools" | "webSearchBackend"
+		>
 	>,
 ): OrchestrationRuntime {
 	return {
@@ -180,13 +185,22 @@ describe("buildRoleSystemPrompt 角色指令", () => {
 	});
 });
 
-// M4 矩阵：role × features × runtime 透传字段。feature 派生外工具现有 todo（Task 2）、
-// web_fetch（Task 3）与 mcpTools（Task 5 样板），矩阵钉死规则：
+// M4 矩阵：role × features × runtime 透传字段（mcpTools、webSearchBackend）。
+// feature 派生外工具现有 todo（Task 2）、web_fetch（Task 3）、web_search（Task 4）
+// 与 mcpTools（Task 5 样板），矩阵钉死规则：
 // - 外工具只进 worker/task，main 永远只有元工具
 // - 开关缺省（undefined）= 开（featureEnabled `?? true`）；显式 false 才不注册
+// - web_search 尚需 runtime.webSearchBackend 已解析（真实 createRuntime 缺省 duckduckgo；
+//   桩 runtime 不注 backend 则不注册，外工具数据缺省不报错）
 // - decorateWorkerTool 只包四件套，外工具与元工具均不装饰
 describe("createRoleRegistry role×feature 矩阵", () => {
 	const mcpTool = stubMetaTool("mcp__demo__tool");
+	// web_search 用 fake backend：矩阵只钉注册行为，不触网络
+	const searchBackend: WebSearchBackend = {
+		async search() {
+			return [];
+		},
+	};
 	const BASE_FOUR = ["bash", "edit", "read", "write"];
 	const WORKER_WITH_TODO = [
 		"bash",
@@ -195,6 +209,16 @@ describe("createRoleRegistry role×feature 矩阵", () => {
 		"spawn_tasks",
 		"todo",
 		"web_fetch",
+		"write",
+	];
+	const WORKER_WITH_SEARCH = [
+		"bash",
+		"edit",
+		"read",
+		"spawn_tasks",
+		"todo",
+		"web_fetch",
+		"web_search",
 		"write",
 	];
 
@@ -256,6 +280,36 @@ describe("createRoleRegistry role×feature 矩阵", () => {
 			"todo",
 			"write",
 		]);
+	});
+
+	it("worker + webSearchBackend 提供 + 开关缺省 → 注册 web_search", () => {
+		const registry = createRoleRegistry(
+			stubRuntime({ webSearchBackend: searchBackend }),
+			"worker",
+			WORKER_META,
+		);
+		expect(names(registry)).toEqual(WORKER_WITH_SEARCH);
+	});
+
+	it("worker + features.webSearch=false + backend 提供 → 仍不注册 web_search", () => {
+		const registry = createRoleRegistry(
+			stubRuntime({
+				features: { webSearch: false },
+				webSearchBackend: searchBackend,
+			}),
+			"worker",
+			WORKER_META,
+		);
+		expect(names(registry)).toEqual(WORKER_WITH_TODO);
+	});
+
+	it("worker + features.webSearch=true 但无 backend → 不注册 web_search（外工具数据缺省不报错）", () => {
+		const registry = createRoleRegistry(
+			stubRuntime({ features: { webSearch: true } }),
+			"worker",
+			WORKER_META,
+		);
+		expect(names(registry)).toEqual(WORKER_WITH_TODO);
 	});
 
 	it("worker + features 全开但外工具数据缺省（mcpTools 缺省）→ 空透传不报错、只加 todo", () => {
@@ -329,6 +383,23 @@ describe("createRoleRegistry role×feature 矩阵", () => {
 		expect(names(registry)).toEqual(["bash", "edit", "read", "todo", "write"]);
 	});
 
+	it("task + webSearchBackend 提供 + 开关缺省 → task 同样注册 web_search", () => {
+		const registry = createRoleRegistry(
+			stubRuntime({ webSearchBackend: searchBackend }),
+			"task",
+			WORKER_META,
+		);
+		expect(names(registry)).toEqual([
+			"bash",
+			"edit",
+			"read",
+			"todo",
+			"web_fetch",
+			"web_search",
+			"write",
+		]);
+	});
+
 	it("main + features 全开 + mcpTools 提供 → 仍只有元工具（外工具不进 main）", () => {
 		const registry = createRoleRegistry(
 			stubRuntime({
@@ -343,6 +414,15 @@ describe("createRoleRegistry role×feature 矩阵", () => {
 				},
 				mcpTools: [mcpTool],
 			}),
+			"main",
+			MAIN_META,
+		);
+		expect(names(registry)).toEqual(["delegate", "spawn_workers"]);
+	});
+
+	it("main + webSearchBackend 提供 → 仍只有元工具（web_search 不进 main）", () => {
+		const registry = createRoleRegistry(
+			stubRuntime({ webSearchBackend: searchBackend }),
 			"main",
 			MAIN_META,
 		);

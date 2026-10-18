@@ -14,7 +14,11 @@ import type {
 	Settings,
 	ToolDefinition,
 } from "@hotpot/core";
-import { loadSession } from "@hotpot/core";
+import {
+	createWebSearchBackendFromConfig,
+	loadSession,
+	type WebSearchBackend,
+} from "@hotpot/core";
 import { type ModelResolution, resolveModel } from "./models.ts";
 import type { AgentRole } from "./types.ts";
 
@@ -25,22 +29,6 @@ import type { AgentRole } from "./types.ts";
 export type WorkerToolDecorator = (
 	tool: ToolDefinition<unknown>,
 ) => ToolDefinition<unknown>;
-
-// M4 webSearchBackend 占位接口：Task 4 在 core 落成 WebSearchBackend 与
-// duckduckgo/custom 两种实现后迁移到 core（本签名即最终形状，Task 4 无需改动本文件）。
-// 结果项结构按 Task 4 契约定型
-export interface WebSearchResult {
-	title: string;
-	url: string;
-	snippet: string;
-}
-export interface WebSearchBackend {
-	search(
-		query: string,
-		count: number,
-		signal: AbortSignal,
-	): Promise<WebSearchResult[]>;
-}
 
 // M4 skill 清单占位类型：Task 6 在 core 落成 Skill（结构与本接口一致）后改为从
 // @hotpot/core 导入，本接口随之删除
@@ -64,7 +52,9 @@ export interface OrchestrationRuntime {
 	readonly skills?: SkillSummary[];
 	// mcpTools：MCP 桥接工具（Task 5 连接后注入；features.mcp 关闭则不并入注册表）
 	readonly mcpTools?: readonly ToolDefinition<unknown>[];
-	// webSearchBackend：web_search 工具后端（Task 4 依 settings.webSearch 解析）
+	// webSearchBackend：web_search 工具后端；缺省由 createRuntime 依 opts.webSearch
+	// 经 core 的 createWebSearchBackendFromConfig 解析（缺省 duckduckgo），
+	// 显式注入（webSearchBackend opt）优先，是 hermetic 测试的注入缝
 	readonly webSearchBackend?: WebSearchBackend;
 	resolveModel(tier: ModelTier): ModelResolution;
 	spawn(opts: {
@@ -86,6 +76,7 @@ export function createRuntime(opts: {
 	features?: Settings["features"];
 	skills?: SkillSummary[];
 	mcpTools?: readonly ToolDefinition<unknown>[];
+	webSearch?: Settings["webSearch"];
 	webSearchBackend?: WebSearchBackend;
 }): OrchestrationRuntime {
 	// 每个 role 一条计数链：同一 runtime 内单调递增，编号不复用
@@ -139,7 +130,8 @@ export function createRuntime(opts: {
 		features: opts.features,
 		skills: opts.skills,
 		mcpTools: opts.mcpTools,
-		webSearchBackend: opts.webSearchBackend,
+		webSearchBackend:
+			opts.webSearchBackend ?? createWebSearchBackendFromConfig(opts.webSearch),
 
 		resolveModel(tier: ModelTier): ModelResolution {
 			return resolveModel(opts.models[tier]);

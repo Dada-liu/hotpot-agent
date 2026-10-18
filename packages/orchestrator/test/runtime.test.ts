@@ -10,6 +10,7 @@ import {
 	resumeSession,
 	type SessionEvent,
 	type Settings,
+	type WebSearchBackend,
 } from "@hotpot/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { resolveModel } from "../src/models.ts";
@@ -228,5 +229,58 @@ describe("resolveModel", () => {
 		expect(resolved.model.contextWindow).toBe(128000);
 		expect(resolved.warning).toContain("acme/acme-1");
 		expect(resolved.apiKey).toBe("k");
+	});
+});
+
+describe("createRuntime webSearchBackend 解析（Task 4）", () => {
+	const baseOpts = async () => {
+		const session = await createSession("/tmp/proj", home);
+		return {
+			session,
+			cwd: "/tmp/proj",
+			approval: new ApprovalChain(),
+			models: MODELS,
+		};
+	};
+
+	it("webSearch 配置缺省 → 挂 DuckDuckGo 缺省后端（非 undefined）", async () => {
+		const rt = createRuntime(await baseOpts());
+		expect(rt.webSearchBackend).toBeDefined();
+	});
+
+	it("settings.webSearch.backend=custom → 依配置解析后端", async () => {
+		const rt = createRuntime({
+			...(await baseOpts()),
+			webSearch: {
+				backend: "custom",
+				baseUrl: "https://search.example.com/api",
+				apiKey: "sk-123",
+			},
+		});
+		expect(rt.webSearchBackend).toBeDefined();
+	});
+
+	it("backend=custom 但 baseUrl 缺失 → 构造时抛配置错误（fail fast）", async () => {
+		const opts = await baseOpts();
+		expect(() =>
+			createRuntime({
+				...opts,
+				webSearch: { backend: "custom" },
+			}),
+		).toThrow(/requires a baseUrl/);
+	});
+
+	it("显式注入 webSearchBackend 优先于配置解析（hermetic 测试缝）", async () => {
+		const injected: WebSearchBackend = {
+			async search() {
+				return [];
+			},
+		};
+		const rt = createRuntime({
+			...(await baseOpts()),
+			webSearch: { backend: "custom", baseUrl: "https://x.example.com/" },
+			webSearchBackend: injected,
+		});
+		expect(rt.webSearchBackend).toBe(injected);
 	});
 });

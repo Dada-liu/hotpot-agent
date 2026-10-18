@@ -273,7 +273,15 @@ describe("todo 工具端到端（runAgentInline）", () => {
 				.declarations()
 				.map((d) => d.name)
 				.sort(),
-		).toEqual(["bash", "edit", "read", "spawn_tasks", "web_fetch", "write"]);
+		).toEqual([
+			"bash",
+			"edit",
+			"read",
+			"spawn_tasks",
+			"web_fetch",
+			"web_search",
+			"write",
+		]);
 
 		await runAgentInline(
 			offRuntime,

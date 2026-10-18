@@ -15,6 +15,7 @@ import {
 	bashTool,
 	createToolRegistry,
 	createWebFetchTool,
+	createWebSearchTool,
 	editTool,
 	featureEnabled,
 	type ModelTier,
@@ -29,8 +30,9 @@ import { createSpawnTasksTool } from "./tools/spawn-tasks.ts";
 import type { AgentRole } from "./types.ts";
 
 // feature 派生的基础外工具（worker/task 追加；main 永远只有元工具，不进这里）。
-// 开关一律经 featureEnabled（`?? true` 缺省全开）；Task 2/3 已并入 todo 与 web_fetch，
-// Task 4 web_search、Task 5 mcpTools（已并入，是后续任务的接入样板）。
+// 开关一律经 featureEnabled（`?? true` 缺省全开）；todo（Task 2）、web_fetch（Task 3）、
+// web_search（Task 4，尚需 runtime.webSearchBackend 已解析，缺省由 createRuntime 装配）、
+// mcpTools（Task 5 样板，已并入）。
 // 返回的工具裸注册：不套 decorateWorkerTool（policy 包装只包四件套）
 function featureDerivedTools(
 	runtime: OrchestrationRuntime,
@@ -41,6 +43,12 @@ function featureDerivedTools(
 	}
 	if (featureEnabled(runtime.features, "webFetch")) {
 		tools.push(createWebFetchTool());
+	}
+	if (
+		featureEnabled(runtime.features, "webSearch") &&
+		runtime.webSearchBackend !== undefined
+	) {
+		tools.push(createWebSearchTool(runtime.webSearchBackend));
 	}
 	if (featureEnabled(runtime.features, "mcp")) {
 		tools.push(...(runtime.mcpTools ?? []));
