@@ -34,8 +34,11 @@ M5 benchmark runner：在真实仓库上跑无交互 agent 生成 patch，调用
 ## SWE-bench
 
 ```bash
-# 1. 导出实例（在已装 datasets 的 venv 中执行）
+# 0. 激活已安装 swebench 的 venv（harness 通过 python3 调用）
+source ~/swebench-venv/bin/activate
 export HF_ENDPOINT=https://hf-mirror.com
+
+# 1. 导出实例（在已装 datasets 的 venv 中执行）
 python packages/benchmarks/scripts/export_instances.py \
   --dataset princeton-nlp/SWE-bench_Lite --split test --limit 10 \
   --output instances.jsonl
