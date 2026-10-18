@@ -183,7 +183,7 @@ export function App() {
 
 	return (
 		<TooltipProvider>
-			<div className="flex h-screen overflow-hidden bg-secondary">
+			<div className="flex h-screen overflow-hidden">
 				<SessionList
 					sessions={sessions}
 					currentId={currentId}
@@ -192,7 +192,7 @@ export function App() {
 						void handleCreate();
 					}}
 				/>
-				<div className="flex min-w-0 flex-1 flex-col rounded-t-2xl bg-background">
+				<div className="flex min-w-0 flex-1 flex-col">
 					<header className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
 						<span
 							className="min-w-0 flex-1 truncate text-sm text-muted-foreground"
