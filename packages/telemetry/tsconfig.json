@@ -1,0 +1,9 @@
+{
+	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		// fetch（HTTP 客户端）与 setInterval（定时 flush）是 Node 22 运行时全局，
+		// 类型声明来自 DOM lib，做法与 packages/core、packages/ai 的 tsconfig 一致
+		"lib": ["es2023", "dom"]
+	},
+	"include": ["src", "test"]
+}

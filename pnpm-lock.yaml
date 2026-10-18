@@ -80,6 +80,15 @@ importers:
         specifier: ^4.6.5
         version: 4.6.5
 
+  packages/telemetry:
+    dependencies:
+      '@hotpot/core':
+        specifier: workspace:*
+        version: link:../core
+      zod:
+        specifier: ^4
+        version: 4.6.5
+
   packages/web:
     dependencies:
       '@radix-ui/react-scroll-area':
