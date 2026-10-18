@@ -5,6 +5,7 @@
 // IO 全部经 ChatInput/ChatOutput 两个最小接口注入：bin 入口给真实终端实现，测试给脚本化实现。
 // 另含进程入口的组装函数 runChatCli 与 argv 解析 parseChatArgs。
 
+import { randomUUID } from "node:crypto";
 import { createInterface } from "node:readline";
 import type { LlmAdapter, ModelInfo } from "@hotpot/ai";
 import {
@@ -12,6 +13,7 @@ import {
 	ApprovalChain,
 	createAuditedApprovalChain,
 	createSession,
+	featureEnabled,
 	loadSettings,
 	type ModelTier,
 	resumeSession,
@@ -20,8 +22,11 @@ import {
 	type ToolDefinition,
 } from "@hotpot/core";
 import {
+	closeMcpConnections,
+	connectMcpServers,
 	createInbox,
 	createRuntime,
+	type McpConnection,
 	type OrchestrationEvent,
 	type OrchestrationRuntime,
 	resolveModel,
@@ -181,6 +186,36 @@ export async function runChat(opts: RunChatOptions): Promise<void> {
 	);
 	output.write("输入消息开始对话；/exit 退出，Ctrl-C 中断当前回合\n");
 
+	// M4 Feature⑦ MCP：开关（features.mcp，缺省开）打开且配置了 server 才连接。
+	// 单 server 失败由 connectMcpServers 内部告警跳过，不阻塞启动；连接成功逐个
+	// 落盘 mcp/attached（会话级事件，不进模型历史），REPL 结束 finally 统一关闭
+	const mcpConnections: McpConnection[] = [];
+	if (
+		featureEnabled(settings.features, "mcp") &&
+		settings.mcpServers !== undefined &&
+		Object.keys(settings.mcpServers).length > 0
+	) {
+		mcpConnections.push(
+			...(await connectMcpServers(settings.mcpServers, {
+				cwd: opts.cwd,
+				warn,
+			})),
+		);
+		for (const conn of mcpConnections) {
+			await session.append({
+				type: "mcp/attached",
+				id: randomUUID(),
+				ts: new Date().toISOString(),
+				server: conn.name,
+				transport: conn.transport,
+				tools: conn.tools.map((t) => t.name),
+			});
+			output.write(
+				`[mcp] attached: ${conn.name} (${conn.transport}) — ${conn.tools.length} tools\n`,
+			);
+		}
+	}
+
 	// 审批装配：终端 handler 挂内层链，整体经 createAuditedApprovalChain 落盘 asked/decided。
 	// 审计包装的 agentId 在装配期固定为 "main"：ApprovalChain.ask 不带 agentId，
 	// worker 发起的 command/write 询问也记在同一 id 下（core 包装层的既有契约）。
@@ -215,6 +250,8 @@ export async function runChat(opts: RunChatOptions): Promise<void> {
 		maxParallelTasks: settings.maxParallelTasks,
 		planMaxRevisions: settings.planMaxRevisions,
 		decorateWorkerTool,
+		features: settings.features,
+		mcpTools: mcpConnections.flatMap((c) => c.tools),
 	});
 	// 测试注入点：opts.llm 覆盖 runtime 的档位解析（main/worker 共用同一录制适配器），
 	// 与 orchestrator 测试 makeRuntime 的展开覆盖同法。
@@ -300,6 +337,8 @@ export async function runChat(opts: RunChatOptions): Promise<void> {
 		}
 	} finally {
 		input.setInterruptHandler(null);
+		// MCP 连接统一关闭：stdio 子进程与 HTTP 会话都在这里收尾，关闭失败不阻塞退出
+		await closeMcpConnections(mcpConnections);
 	}
 	output.write("再见\n");
 }
