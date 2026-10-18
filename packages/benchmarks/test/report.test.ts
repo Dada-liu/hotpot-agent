@@ -95,7 +95,7 @@ describe("buildReport", () => {
 			false,
 		]);
 		expect(report.failures).toEqual([
-			{ instanceId: "b", reason: "unresolved by official harness" },
+			{ instanceId: "b", reason: "empty patch" },
 		]);
 		expect(report.runId).toBe("run-1");
 		expect(report.patchOnly).toBe(true);

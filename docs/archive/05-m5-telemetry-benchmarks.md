@@ -119,6 +119,7 @@ M5 的 benchmark agent 只生成 patch：普通 checkout，不装 repo 依赖、
 |------|------|
 | HuggingFace 下载失败 | `export HF_ENDPOINT=https://hf-mirror.com`，或从可访问机器导出 JSONL 后 `rsync` |
 | Docker 拉镜像失败 | 先 `docker pull hello-world` 验证 registry mirror；仍失败则检查 Docker Desktop 代理 |
+| Apple Silicon 报 `no matching manifest for linux/arm64` | 预拉 amd64：`docker pull --platform linux/amd64 swebench/sweb.eval.x86_64.<id>:latest`；镜像名用 `make_test_spec(instance).image` 生成（见 `packages/benchmarks/README.md`） |
 | harness 打印进度但没有 report | runner 以非 0 退出并打印日志路径；查 `official/<runId>.log`，不当作通过 |
 | tmux 不存在 | `evaluate.ts` 自动回退 `nohup`；也可 `brew install tmux` |
 | 磁盘不足 | 预检记录镜像大小；磁盘 < 20G 停止，`docker system prune` 后继续 |
@@ -129,6 +130,6 @@ M5 的 benchmark agent 只生成 patch：普通 checkout，不装 repo 依赖、
 ### 已知限制
 
 - 不安装 repo 依赖、不跑 repo 测试，因此不覆盖「需要构建/测试反馈」的能力。
-- Apple Silicon 上 amd64 镜像模拟可能显著慢于原生 x86_64。
+- Apple Silicon 上 amd64 镜像模拟可能显著慢于原生 x86_64；swebench 5.x 还需手动 `docker pull --platform linux/amd64` 预拉镜像。
 - 默认只跑 Lite 10 题；完整 300 题是手动跑批，需要更多磁盘与时间。
-- 官方 report 路径随 harness 版本变化，runner 会按 `<runId>.json`、`<runId>/report.json`、浅层扫描依次查找；遇到新格式需更新 `parseOfficialReport`。
+- 官方 report 路径随 harness 版本变化：swebench 5.x 实际写到 `<report_dir>/<model_name>.<runId>.json`；runner 按 `<runId>.json`、`hotpot-code.<runId>.json`、`<runId>/report.json`、浅层扫描依次查找。

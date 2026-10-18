@@ -117,6 +117,25 @@ M5 拆成两条独立工作流：工具侧遥测客户端（M5.1，本仓库，�
 - `pnpm bench --help` 与未知参数非 0 退出
 - 全量 `pnpm typecheck`、`pnpm test`、`pnpm exec biome check .` 通过
 
+#### Lite 10 题验收状态（2026-10-19，macmini）
+
+macmini 环境：Node v24.21.0（fnm）、pnpm 10.33.0、Python 3.12.15（uv）、swebench 5.0.2、Docker Desktop 4.95 / Engine 29.8.2（VM 8GB 内存）。仓库同步后 `pnpm install` 与 `pnpm test` 通过（64 个测试文件 / 539 条用例）。
+
+已完成的操作性预检：
+
+- 用 `HF_ENDPOINT=https://hf-mirror.com` 导出 `SWE-bench/SWE-bench_Lite` test 全部 300 条到 `instances-lite.jsonl`；`--limit 10 --seed 0` 选中 sympy / django / pylint / sphinx 混合 10 题（固定种子可复现）。
+- 官方 harness（swebench 5.0.2）empty-patch 预检：report 写入 `empty_patch_ids`，runner 解析为失败原因 "empty patch"，不误判 resolved。
+- 官方 harness gold-patch 预检（`astropy__astropy-12907`）：`docker pull --platform linux/amd64` 镜像 4.16GB / 200s；单题评测 437s（约 7 分 17 秒），结果 resolved；容器内存峰值约 235MB，系统内存空闲 78%-82%，评测后磁盘剩余 153GB。
+- Apple Silicon 上 swebench 5.x 的 docker-py pull 不传 platform，必须先手动预拉 amd64 镜像；步骤写入 `packages/benchmarks/README.md` 与 `05-m5-telemetry-benchmarks.md`。
+
+阻塞：macmini 没有 `~/.hotpot/settings.json`，也没有任何 provider 环境变量，agent 阶段无法运行；按约定不伪造凭证，因此 10 题的通过率、平均 input/output token、平均时长尚未产生。补齐用户级 settings 后执行（patch-only 基线不变）：
+
+```bash
+source ~/swebench-venv/bin/activate
+pnpm bench swebench --instances-file instances-lite.jsonl \
+  --limit 10 --seed 0 --eval-mode local --max-workers 1
+```
+
 ### 仍未开始（独立工作流）
 
 - M5.2 遥测后台：仓库外 `../hotpot-telemetry/`（ingest + SQLite + 聚合 API + 管理界面 + 邮件/webhook/飞书告警），部署在 `sell_system`，不打进 CLI/server 构建产物

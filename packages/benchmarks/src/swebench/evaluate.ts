@@ -293,7 +293,8 @@ async function runRemote(
 }
 
 // 官方 report 的路径随 swebench 版本变化：优先 <reportDir>/<runId>.json，
-// 再找 <reportDir>/<runId>/report.json 与 <reportDir>/report.json；
+// 再找 <reportDir>/<model_name>.<runId>.json（swebench 5.x 实际命名）、
+// <reportDir>/<runId>/report.json 与 <reportDir>/report.json；
 // 最后在 reportDir 下浅层扫描带 resolved 字段的 JSON，避免版本差异直接判失败。
 export async function findReportFile(
 	reportDir: string,
@@ -301,6 +302,7 @@ export async function findReportFile(
 ): Promise<string | null> {
 	const candidates = [
 		join(reportDir, `${runId}.json`),
+		join(reportDir, `hotpot-code.${runId}.json`),
 		join(reportDir, runId, "report.json"),
 		join(reportDir, "report.json"),
 	];

@@ -61,6 +61,7 @@ export function buildReport(
 	opts: BuildReportOptions,
 ): BenchmarkReport {
 	const resolved = new Set(official?.resolved ?? []);
+	const emptyPatches = new Set(official?.emptyPatch ?? []);
 	const instances = results.map((result) => {
 		const passed =
 			official === undefined ? result.passed : resolved.has(result.instanceId);
@@ -70,7 +71,9 @@ export function buildReport(
 					result.error ??
 						(official === undefined
 							? "failed"
-							: "unresolved by official harness"),
+							: emptyPatches.has(result.instanceId)
+								? "empty patch"
+								: "unresolved by official harness"),
 				);
 		return {
 			...result,

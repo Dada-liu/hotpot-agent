@@ -65,6 +65,34 @@ pnpm bench swebench --instances-file instances.jsonl --eval-mode remote --eval-h
 └── workspaces/            # 每题 worktree，跑完即清理
 ```
 
+### Apple Silicon 与 Docker
+
+`swebench` 5.x 通过 docker-py 拉镜像时不传 platform；在 Apple Silicon 上直接跑会报 `no matching manifest for linux/arm64/v8`。评测前用官方镜像名手动预拉 amd64 版本，harness 检测到本地镜像后就不再 pull：
+
+```bash
+docker pull --platform linux/amd64 \
+  swebench/sweb.eval.x86_64.<instance_id 的 __ 替换为 _1776_>:latest
+```
+
+镜像名可由 harness 自身计算（避免手拼）：
+
+```bash
+~/swebench-venv/bin/python - <<'PY'
+import json
+from datasets import load_dataset
+from swebench.harness.utils import make_test_spec
+
+ids = [json.loads(line)["instance_id"] for line in open("instances.jsonl")]
+rows = {row["instance_id"]: row for row in load_dataset("SWE-bench/SWE-bench_Lite", split="test")}
+for iid in ids:
+    print(iid, make_test_spec(rows[iid]).image)
+PY
+```
+
+- 单个 Lite 镜像约 4GB；预检记录磁盘与内存，磁盘低于 20G 时停止并 `docker system prune`。
+- 预拉耗时与镜像层大小相关（实测 4.16GB / 约 3 分 20 秒）；amd64 模拟下单个 astropy 题约 7 分钟，容器内存峰值约 235MB（Docker VM 8GB 足够）。
+- 评测机器是 x86_64 Linux 时不需要这一步。
+
 ### patch-only 基线
 
 M5 的 agent 只改工作树：不安装 repo 依赖、不执行 repo 测试、不 commit。提示词额外要求「不要装依赖/不要跑测试」。因此通过率是 patch-only 基线，不是带测试反馈的完整 agent；`report.md` 会显式标注。空 patch 会写成空串，由官方 harness 记为 unresolved，不会伪造通过。
