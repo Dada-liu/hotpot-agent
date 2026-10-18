@@ -1,7 +1,8 @@
 // 遥测批量客户端测试：全程注入 fetch 与调度器，不触网、不等待真实退避时间。
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
 	createTelemetryClient,
+	defaultSchedule,
 	type TelemetryClientOptions,
 	type TelemetrySchedule,
 } from "../src/client.ts";
@@ -252,5 +253,46 @@ describe("createTelemetryClient", () => {
 		client.enqueue(event("e3"));
 		await client.flush();
 		expect(requests).toHaveLength(2);
+	});
+});
+
+describe("defaultSchedule", () => {
+	it("unrefs the interval handle and clears it on stop", () => {
+		const timer = { unref: vi.fn() };
+		const setIntervalMock = vi.fn(() => timer);
+		const clearIntervalMock = vi.fn();
+		vi.stubGlobal("setInterval", setIntervalMock);
+		vi.stubGlobal("clearInterval", clearIntervalMock);
+		try {
+			const stop = defaultSchedule.interval(() => {}, 1000);
+
+			expect(setIntervalMock).toHaveBeenCalledTimes(1);
+			// 定时 flush 不能单独把 CLI 进程留在前台
+			expect(timer.unref).toHaveBeenCalledTimes(1);
+
+			stop();
+			expect(clearIntervalMock).toHaveBeenCalledWith(timer);
+		} finally {
+			vi.unstubAllGlobals();
+		}
+	});
+
+	it("unrefs the retry sleep timeout", async () => {
+		const timer = { unref: vi.fn() };
+		vi.stubGlobal(
+			"setTimeout",
+			vi.fn((callback: () => void) => {
+				callback();
+				return timer;
+			}),
+		);
+		try {
+			await defaultSchedule.sleep(1000);
+
+			// 重试退避等待同样不能阻止进程退出
+			expect(timer.unref).toHaveBeenCalledTimes(1);
+		} finally {
+			vi.unstubAllGlobals();
+		}
 	});
 });

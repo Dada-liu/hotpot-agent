@@ -57,7 +57,7 @@ export interface TelemetryClient {
 export function createTelemetryClient(
 	opts: TelemetryClientOptions,
 ): TelemetryClient {
-	const schedule = opts.schedule ?? createDefaultSchedule();
+	const schedule = opts.schedule ?? defaultSchedule;
 	const now = opts.now ?? Date.now;
 	const fetchImpl = opts.fetchImpl ?? fetch;
 	const endpoint = (opts.endpoint ?? DEFAULT_TELEMETRY_ENDPOINT)
@@ -195,21 +195,30 @@ export function createTelemetryClient(
 	return { enqueue, flush, close, stats };
 }
 
-function createDefaultSchedule(): TelemetrySchedule {
-	return {
-		interval(callback, intervalMs) {
-			const handle = setInterval(callback, intervalMs);
-			return () => {
-				clearInterval(handle);
-			};
-		},
-		sleep(ms) {
-			return new Promise((resolve) => {
-				setTimeout(resolve, ms);
-			});
-		},
-	};
+interface UnrefableTimer {
+	unref?: () => void;
 }
+
+// 默认定时器必须 unref：CLI 漏调 close() 时，定时 flush 和重试退避都不能阻止进程退出
+function unrefTimer(handle: unknown): void {
+	(handle as UnrefableTimer | undefined)?.unref?.();
+}
+
+export const defaultSchedule: TelemetrySchedule = {
+	interval(callback, intervalMs) {
+		const handle = setInterval(callback, intervalMs);
+		unrefTimer(handle);
+		return () => {
+			clearInterval(handle);
+		};
+	},
+	sleep(ms) {
+		return new Promise((resolve) => {
+			const handle = setTimeout(resolve, ms);
+			unrefTimer(handle);
+		});
+	},
+};
 
 function positiveInt(value: number | undefined, fallback: number): number {
 	if (value === undefined || !Number.isFinite(value) || value < 1) {
