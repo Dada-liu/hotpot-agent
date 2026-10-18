@@ -179,7 +179,7 @@ export function ChatView({
 				</div>
 			</div>
 			{hasSession && (
-				<div className="px-4 pb-5 pt-2">
+				<div className="px-4 pb-10 pt-2">
 					<form
 						className="relative mx-auto max-w-3xl"
 						onSubmit={(e) => {
@@ -205,7 +205,7 @@ export function ChatView({
 										: "输入消息，Enter 发送"
 								}
 								rows={1}
-								className="min-h-[38px] flex-1 resize-none border-0 bg-transparent px-2 py-1.5 shadow-none focus-visible:ring-0"
+								className="min-h-[76px] flex-1 resize-none border-0 bg-transparent px-2 py-1.5 shadow-none focus-visible:ring-0"
 							/>
 							{running ? (
 								<Button

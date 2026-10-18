@@ -22,8 +22,8 @@
 	/* 失败/危险收敛到橙系深档，保持三色纪律 */
 	--destructive: #d94800;
 	--destructive-foreground: #ffffff;
-	--border: #e8e8eb;
-	--input: #e0e0e4;
+	--border: #f0f0f2;
+	--input: #e6e6ea;
 	--ring: #ff5c00;
 	--brand: #ff5c00;
 	--brand-soft: #fff3ea;
