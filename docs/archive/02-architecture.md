@@ -78,6 +78,14 @@
 - 最小可用：直接对话、恢复会话、审批交互
 - 不引入自研 TUI 库（pi 自研 TUI 是一个包的工作量，过重）；M1 用行式交互即可
 
+### packages/telemetry — 匿名遥测客户端（M5.1）
+- 旁路包：`cli` 与 `server` 依赖 `@hotpot/telemetry`，后续 `benchmarks` runner 复用（`kind: "benchmark"`）；workspace 依赖只有 `core`（复用 `resolveHome`、`loadSession`、`featureEnabled`），外部依赖仅 `zod`，不依赖 `orchestrator`/`server`/`cli`
+- 事件 schema v1：九类事件（`session_start`/`session_end`/`turn_start`/`turn_end`/`llm_call`/`tool_call`/`error`/`feature_usage`/`benchmark_run`）严格白名单，zod `.strict()`，未知字段直接拒绝
+- 错误消息统一经 `sanitizeErrorMessage` 脱敏；客户端异步批量 POST、失败指数退避、定时器 unref，绝不阻塞或让 turn 失败
+- 开关与 endpoint：`settings.telemetry` > `HOTPOT_TELEMETRY_ENDPOINT` > 源码常量；空或非 http(s) 地址视为未启用
+- 安装 ID：`<home>/telemetry/install-id`（benchmark 使用独立文件），不关联账号或机器名
+- 详见 [packages/telemetry/README.md](../../packages/telemetry/README.md)
+
 ## 3.1 模块目录约定（core / orchestrator）
 
 `packages/core` 与 `packages/orchestrator` 的 `src/` 采用「一个特性一个子文件夹」：
@@ -135,6 +143,30 @@ WorkerAgent: 可并行则 spawn TaskAgent × N（上限可配，默认 10）
   所有事件 append 到会话 JSONL + 推给 UI
 ```
 
+### 4.1 遥测旁路数据流（M5.1）
+
+遥测不改变上面这条主链路，只在 cli/server 的 turn 边界旁路采集：
+
+```text
+cli / server
+  └─ createTelemetryRuntime(settings)          # 关闭或 endpoint 不可用 → null
+       ├─ collector.start()/observe()/finish() # 观察编排事件 + 从会话 JSONL 折叠
+       │     · done/error/plan/agent_spawn 只判 outcome，不读内容
+       │     · llm_call/tool_call/error/feature_usage 只取元数据
+       │     · turn_end 覆盖整棵 agent 树（main + worker + task）
+       └─ client.enqueue()                     # 内存队列
+            └─ 阈值(50)/定时(30s)/close flush
+                 → POST <endpoint>/api/v1/ingest
+                      → ../hotpot-telemetry ingest → SQLite → 聚合/告警
+```
+
+边界与保证：
+
+- **无用户内容**：不上报 prompt/回复文本、工具入参/输出、文件内容、文件路径、命令、URL 查询参数、用户名、仓库名。错误只上报机器码与脱敏后的消息；脱敏失败时丢弃原文。
+- **不阻塞、不失败**：`enqueue` 同步返回；`flush` 串行执行并吞掉所有网络/序列化异常；会话日志缺失或损坏时按空日志折叠；server 读取 settings 失败只退化为「遥测关闭」。
+- **仅用户级配置**：`telemetry.endpoint`/`token` 不接受项目级覆盖，避免恶意仓库把上报数据与凭证导向别处。
+- 后台服务在仓库外（`../hotpot-telemetry/`），不进入 CLI/server 的构建产物。
+
 ## 5. 会话存储：append-only JSONL 事件日志
 
 每会话一个文件，append-only，**日志即唯一事实源**。
@@ -187,6 +219,7 @@ WorkerAgent: 可并行则 spawn TaskAgent × N（上限可配，默认 10）
 ├── sessions/         # 会话日志
 ├── skills/           # M4 skill（<name>/SKILL.md）
 ├── prompts/          # M4 prompt templates（<name>.md → /命令）
+├── telemetry/        # M5 匿名安装 ID（install-id；benchmark 用 benchmark-install-id）
 └── memory/           # 用户记忆（M4 后续项）
 ```
 
@@ -212,9 +245,12 @@ WorkerAgent: 可并行则 spawn TaskAgent × N（上限可配，默认 10）
 | mcpServers | 无 | 仅用户级 | MCP server：stdio（command/args/env）或 streamable HTTP（url/headers） |
 | skillsDirs | [] | 仅用户级 | 额外 skill 扫描目录（相对 cwd） |
 | promptsDirs | [] | 仅用户级 | 额外 prompt template 扫描目录（相对 cwd） |
-| telemetry.enabled | true | 用户级 | 本地遥测开关（M5） |
+| telemetry.enabled | true | 仅用户级 | 匿名遥测开关（M5.1） |
+| telemetry.endpoint | 空（源码常量） | 仅用户级 | 上报地址；解析顺序 settings > `HOTPOT_TELEMETRY_ENDPOINT` > 源码常量，空/非 http(s) 视为未启用 |
+| telemetry.token | 无 | 仅用户级 | ingest 的 Bearer token，支持整串 `$ENV` 引用；缺省时不带 Authorization 头 |
+| telemetry.flushIntervalMs | 30000 | 仅用户级 | 定时批量上报间隔（毫秒），0 关闭定时 flush |
 
-项目级可覆盖白名单：`mainAgentTier`、`maxParallelTasks`、`planMaxRevisions`、`approval.policy`；其余字段（含 models）一律忽略。凭证只从用户级读取，规避恶意仓库注入风险（M4 再考虑 pi 式 project trust 提示）。M4 新增字段（features/hooks/webSearch/mcpServers/skillsDirs/promptsDirs）一律仅用户级：hooks/mcpServers 涉及任意命令执行，项目级注入即 RCE；扫描目录与外发流量同理。
+项目级可覆盖白名单：`mainAgentTier`、`maxParallelTasks`、`planMaxRevisions`、`approval.policy`；其余字段（含 models）一律忽略。凭证只从用户级读取，规避恶意仓库注入风险（M4 再考虑 pi 式 project trust 提示）。M4 新增字段（features/hooks/webSearch/mcpServers/skillsDirs/promptsDirs）一律仅用户级：hooks/mcpServers 涉及任意命令执行，项目级注入即 RCE；扫描目录与外发流量同理。M5 的 `telemetry` 同样仅用户级：endpoint/token 决定数据与凭证去向，项目级可写等于允许仓库劫持上报。
 
 ## 7. 从 pi / dsh 借鉴的设计（汇总）
 

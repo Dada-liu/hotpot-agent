@@ -80,15 +80,36 @@
 
 ## M5 配套体系
 
-范围：
-- 测试补齐：集成测试覆盖主要 agent 场景（mock LLM 录制回放）
-- benchmarks：SWE-bench 跑通；自建 bench 金融/软件开发/自媒体运营**各先出 1 题打底**（已确认，出题人：设计者），后续从日常使用本 agent 的历史任务中沉淀新题
-- 遥测：token/耗时/工具成功率/任务成功率，本地存储 + 导出报表
+M5 拆成两条独立工作流：工具侧遥测客户端（M5.1，本仓库，已完成）与遥测后台 / benchmarks（独立工作流，另行推进）。
 
-验收标准：
-1. benchmark 一键运行，输出成功率与平均 token 成本报告
-2. 遥测报表能回答「上周每个任务平均花了多少 token、成功率多少」
-3. 自建 bench 有从历史会话沉淀新题的流程文档（筛选 → 脱敏 → 题目化）
+### M5.1 遥测客户端（已完成）
+
+范围（已实现）：
+
+- `packages/telemetry`：事件 schema v1（九类事件严格白名单）、错误消息脱敏、匿名安装 ID、内存队列 + 批量 POST + 指数退避、turn 采集器、cli/server 共用 runtime
+- `packages/core/src/config/config.ts`：用户级 `telemetry` 配置（`enabled` / `endpoint` / `token` / `flushIntervalMs`），项目级不接受
+- `packages/cli`、`packages/server`：会话生命周期与每个 turn 的旁路接入
+- 数据边界：只上报匿名指标与脱敏后的错误；不采集 prompt/回复、工具入参/输出、文件内容、文件路径、命令、URL 查询参数、用户名、仓库名（详见 `packages/telemetry/README.md`）
+
+验收证据：
+
+- `packages/telemetry/test/`：schema 4 条、脱敏 6 条、客户端 9 条、安装 ID 7 条、采集器 18 条（turn 折叠、worker/task 用量、outcome 判定、feature 计数、损坏日志、会话生命周期）
+- `packages/cli/test/telemetry.test.ts`（4 条）：每个 turn 上报匿名批次且 payload 不含对话文本；`enabled=false`、空 endpoint、非法 endpoint 均不发请求
+- `packages/server/test/telemetry.test.ts`（4 条）：`turn_end` 含 worker 用量、`close` 上报 `session_end`、`attachById` 上报 `session_start(resumed: true)`、禁用与空 endpoint 不发请求
+- 全量 `pnpm typecheck`、`pnpm test`、`pnpm exec biome check .` 通过
+
+### 仍未开始（独立工作流）
+
+- M5.2 遥测后台：仓库外 `../hotpot-telemetry/`（ingest + SQLite + 聚合 API + 管理界面 + 邮件/webhook/飞书告警），部署在 `sell_system`，不打进 CLI/server 构建产物
+- M5.3 / M5.4 benchmark runner 与官方评测：`packages/benchmarks`、SWE-bench Lite 10 题、`swebench` harness + Docker
+
+两者与 M5.1 解耦：客户端只约定 ingest 的 HTTP 契约（`POST <endpoint>/api/v1/ingest`，`schemaVersion = 1`，`kind` 区分 `user`/`benchmark`）。
+
+验收标准（保持原目标）：
+
+1. benchmark 一键运行，输出成功率与平均 token 成本报告（依赖 M5.3/M5.4）
+2. 遥测报表能回答「上周每个任务平均花了多少 token、成功率多少」（依赖 M5.2）
+3. 自建 bench 有从历史会话沉淀新题的流程文档（筛选 → 脱敏 → 题目化）（依赖 M5.3）
 
 ## 依赖关系
 
