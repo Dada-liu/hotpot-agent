@@ -120,11 +120,13 @@ export function createApp(manager: SessionManager): Hono {
 		);
 	});
 
-	// 受管会话存在性：未知 id 一律 404
-	const requireSession = (id: string) => {
+	// 受管会话存在性：内存 managed 表未命中时降级 attachById 恢复磁盘上的会话
+	// （CLI/其他进程创建的会话经 listSessions 可见，也必须能打开与订阅）；
+	// attach 同样未命中才 404。attachById 是异步的，调用方必须 await
+	const requireSession = async (id: string) => {
 		const rec = manager.get(id);
-		if (rec === null) return null;
-		return rec;
+		if (rec !== null) return rec;
+		return manager.attachById(id);
 	};
 
 	app.get("/api/sessions", async (c) => {
@@ -150,7 +152,7 @@ export function createApp(manager: SessionManager): Hono {
 	});
 
 	app.get("/api/sessions/:id", async (c) => {
-		const rec = requireSession(c.req.param("id"));
+		const rec = await requireSession(c.req.param("id"));
 		if (rec === null) return c.json({ error: "会话不存在" }, 404);
 		const usage = await manager.usage(rec.id);
 		return c.json({
@@ -164,7 +166,7 @@ export function createApp(manager: SessionManager): Hono {
 	});
 
 	app.get("/api/sessions/:id/events", async (c) => {
-		const rec = requireSession(c.req.param("id"));
+		const rec = await requireSession(c.req.param("id"));
 		if (rec === null) return c.json({ error: "会话不存在" }, 404);
 		const afterSeq = resolveAfterSeq(c);
 		if (Number.isNaN(afterSeq)) {
@@ -174,7 +176,7 @@ export function createApp(manager: SessionManager): Hono {
 	});
 
 	app.post("/api/sessions/:id/messages", async (c) => {
-		const rec = requireSession(c.req.param("id"));
+		const rec = await requireSession(c.req.param("id"));
 		if (rec === null) return c.json({ error: "会话不存在" }, 404);
 		const body = await readJsonBody(c);
 		const parsed = messageSchema.safeParse(body);
@@ -186,7 +188,7 @@ export function createApp(manager: SessionManager): Hono {
 	});
 
 	app.post("/api/sessions/:id/steer", async (c) => {
-		const rec = requireSession(c.req.param("id"));
+		const rec = await requireSession(c.req.param("id"));
 		if (rec === null) return c.json({ error: "会话不存在" }, 404);
 		const body = await readJsonBody(c);
 		const parsed = messageSchema.safeParse(body);
@@ -198,14 +200,14 @@ export function createApp(manager: SessionManager): Hono {
 	});
 
 	app.post("/api/sessions/:id/cancel", async (c) => {
-		const rec = requireSession(c.req.param("id"));
+		const rec = await requireSession(c.req.param("id"));
 		if (rec === null) return c.json({ error: "会话不存在" }, 404);
 		manager.cancel(rec.id);
 		return c.json({}, 202);
 	});
 
 	app.post("/api/sessions/:id/approvals/:requestId", async (c) => {
-		const rec = requireSession(c.req.param("id"));
+		const rec = await requireSession(c.req.param("id"));
 		if (rec === null) return c.json({ error: "会话不存在" }, 404);
 		const body = await readJsonBody(c);
 		const parsed = approvalSchema.safeParse(body);
@@ -222,7 +224,7 @@ export function createApp(manager: SessionManager): Hono {
 	});
 
 	app.post("/api/sessions/:id/plan", async (c) => {
-		const rec = requireSession(c.req.param("id"));
+		const rec = await requireSession(c.req.param("id"));
 		if (rec === null) return c.json({ error: "会话不存在" }, 404);
 		const body = await readJsonBody(c);
 		const parsed = planSchema.safeParse(body);
@@ -247,7 +249,7 @@ export function createApp(manager: SessionManager): Hono {
 	});
 
 	app.get("/api/sessions/:id/usage", async (c) => {
-		const rec = requireSession(c.req.param("id"));
+		const rec = await requireSession(c.req.param("id"));
 		if (rec === null) return c.json({ error: "会话不存在" }, 404);
 		return c.json(await manager.usage(rec.id));
 	});

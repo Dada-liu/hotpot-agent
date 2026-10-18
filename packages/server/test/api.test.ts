@@ -15,7 +15,10 @@ import {
 	type Usage,
 } from "@hotpot/ai";
 import type * as CoreMod from "@hotpot/core";
-import type { Settings } from "@hotpot/core";
+import {
+	createSession as createDiskSession,
+	type Settings,
+} from "@hotpot/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "../src/app.ts";
 import {
@@ -793,5 +796,42 @@ describe("HTTP API", () => {
 		const ids = list.sessions.map((s) => s.id);
 		expect(ids).toContain(id);
 		expect(ids).toContain(defaultId);
+	}, 20000);
+
+	it("磁盘上已有会话（不经 HTTP create，等价 CLI 创建后由本 server 打开）：详情 200、events 可订阅；不存在 id 仍 404", async () => {
+		// 回归：listSessions 列磁盘会话，而单会话路由原只查内存 managed 表——
+		// CLI 创建的会话在 web 列表可见却打不开（404）。requireSession 降级
+		// attachById 后，此处直接经 core 写磁盘会话文件（不经 HTTP create 路由），
+		// 模拟「非本 server 进程托管」的现存会话
+		const fx = await startApi(scriptedAdapter([]), "never");
+		const disk = await createDiskSession(fx.proj, fx.home);
+
+		// 列表可见（listSessions 读磁盘）
+		const list = (await (await fetch(`${fx.base}/api/sessions`)).json()) as {
+			sessions: { id: string; cwd: string; turn: string }[];
+		};
+		const mine = list.sessions.find((s) => s.id === disk.id);
+		expect(mine).toMatchObject({ id: disk.id, cwd: fx.proj, turn: "idle" });
+
+		// 详情：get 未命中 → attachById 恢复 → 200
+		const detail = (await (
+			await fetch(`${fx.base}/api/sessions/${disk.id}`)
+		).json()) as { id: string; cwd: string; turn: string };
+		expect(detail).toMatchObject({ id: disk.id, cwd: fx.proj, turn: "idle" });
+
+		// events：SSE 可订阅；attach 时 tailer 补读历史，至少重放出 log:meta
+		const sse = await openSse(fx.base, disk.id);
+		await sse.waitFor(() =>
+			sse.events.some((e) => isLog(e) && e.event.type === "meta"),
+		);
+		sse.close();
+
+		// 不存在的 id：get 与 attach 双双未命中，仍 404
+		expect((await fetch(`${fx.base}/api/sessions/no-such-id`)).status).toBe(
+			404,
+		);
+		expect(
+			(await fetch(`${fx.base}/api/sessions/no-such-id/events`)).status,
+		).toBe(404);
 	}, 20000);
 });
