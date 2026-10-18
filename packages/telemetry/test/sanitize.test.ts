@@ -29,6 +29,22 @@ describe("sanitizeErrorMessage", () => {
 		expect(custom).not.toContain("/Users/alice");
 		expect(custom).toBe("<path>");
 	});
+	it("redacts the tail of POSIX paths containing spaces", () => {
+		const sanitized = sanitizeErrorMessage(
+			"ENOENT: open /Users/alice/My Project/src/payments.ts",
+		);
+		expect(sanitized).toBe("ENOENT: open <path> <path>");
+		expect(sanitized).not.toContain("My Project");
+		expect(sanitized).not.toContain("payments.ts");
+	});
+	it("redacts the tail of Windows paths containing spaces", () => {
+		const sanitized = sanitizeErrorMessage(
+			"ENOENT: open C:\\Users\\alice\\My Project\\src\\payments.ts",
+		);
+		expect(sanitized).not.toContain("My Project");
+		expect(sanitized).not.toContain("payments.ts");
+		expect(sanitized).toBe("ENOENT: open <path> <path>");
+	});
 	it("removes code blocks", () => {
 		expect(sanitizeErrorMessage("boom\n```ts\nsecret()\n```")).toContain(
 			"<code>",

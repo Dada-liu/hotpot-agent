@@ -79,14 +79,17 @@ export function createTelemetryRuntime(
 	};
 }
 
-// endpoint 优先级：settings > 环境变量 > 源码常量。
-// 空串或非 http(s) URL 一律视为「未配置」：客户端会无限重试不可达地址，
+// endpoint 优先级：settings（非空且非纯空白时）> 环境变量 > 源码常量。
+// settings 里的空串/空白视为「未配置」，继续向后回退；而空的环境变量会遮挡源码常量
+//（`??` 只跳过 undefined，不跳过空串），这是刻意的：显式把环境变量置空等于关闭遥测。
+// 最终取值为空或非 http(s) URL 一律视为「未配置」：客户端会无限重试不可达地址，
 // 与其让配置错误变成后台噪音，不如直接不启用。
 function resolveEndpoint(configured: string | undefined): string | null {
+	const settingsEndpoint = configured?.trim() ?? "";
 	const raw =
-		configured ??
-		process.env.HOTPOT_TELEMETRY_ENDPOINT ??
-		DEFAULT_TELEMETRY_ENDPOINT;
+		settingsEndpoint !== ""
+			? settingsEndpoint
+			: (process.env.HOTPOT_TELEMETRY_ENDPOINT ?? DEFAULT_TELEMETRY_ENDPOINT);
 	const endpoint = raw.trim();
 	if (endpoint === "") {
 		return null;

@@ -308,8 +308,8 @@ describe("server telemetry", () => {
 	});
 
 	it("endpoint 为空时全程不发请求", async () => {
-		// settings schema 不接受空串 endpoint，空 endpoint 走环境变量路径（同样视为未配置）
-		await writeSettings({ enabled: true });
+		// settings 里的空 endpoint 会回退到环境变量；环境变量同样置空即视为未配置
+		await writeSettings({ enabled: true, endpoint: "" });
 		process.env.HOTPOT_TELEMETRY_ENDPOINT = "";
 		const { fetchImpl, requests } = createFakeFetch();
 		const sm = createSessionManager({
@@ -330,5 +330,42 @@ describe("server telemetry", () => {
 		await sm.close(rec.id);
 
 		expect(requests).toEqual([]);
+	});
+
+	it("上报 fetch 抛错时回合仍成功", async () => {
+		await writeSettings({
+			enabled: true,
+			endpoint: "https://telemetry.example",
+		});
+		const telemetryFetch: typeof fetch = async () => {
+			throw new Error("telemetry endpoint down");
+		};
+		const sm = createSessionManager({
+			home,
+			llm: {
+				adapter: scriptedAdapter([
+					textRound(ASSISTANT_TEXT, { input: 10, output: 5 }),
+				]),
+				model: MODEL,
+			},
+			telemetryFetch,
+		});
+		const rec = await sm.create(proj);
+		const { events, sink } = makeSink();
+		sm.subscribe(rec.id, null, sink);
+
+		await sm.send(rec.id, USER_PROMPT);
+		await waitFor(() => events.some(isTurnEnd));
+		await sm.close(rec.id);
+
+		const turnEnd = events.find(
+			(e): e is Extract<WireEvent, { kind: "turn" }> =>
+				e.kind === "turn" && e.phase === "end",
+		);
+		if (turnEnd === undefined) {
+			throw new Error("turn end 缺失");
+		}
+		// 遥测失败不改变回合结果
+		expect(turnEnd.stopReason).toBe("stop");
 	});
 });

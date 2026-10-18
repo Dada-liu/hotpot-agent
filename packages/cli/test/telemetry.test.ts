@@ -153,6 +153,14 @@ async function runOneTurn(
 	settings: Settings,
 	telemetryFetch: typeof fetch,
 ): Promise<void> {
+	await runOneTurnWithOutput(settings, telemetryFetch);
+}
+
+async function runOneTurnWithOutput(
+	settings: Settings,
+	telemetryFetch: typeof fetch,
+): Promise<CollectedOutput> {
+	const output = new CollectedOutput();
 	await runChat({
 		cwd: home,
 		home,
@@ -162,9 +170,10 @@ async function runOneTurn(
 			model: TEST_MODEL,
 		},
 		input: new ScriptedInput([USER_PROMPT, "/exit"]),
-		output: new CollectedOutput(),
+		output,
 		telemetryFetch,
 	});
+	return output;
 }
 
 describe("runChat telemetry", () => {
@@ -244,5 +253,23 @@ describe("runChat telemetry", () => {
 		);
 
 		expect(requests).toEqual([]);
+	});
+
+	it("上报 fetch 抛错时回合仍正常完成，runChat 正常返回", async () => {
+		const telemetryFetch: typeof fetch = async () => {
+			throw new Error("telemetry endpoint down");
+		};
+
+		const output = await runOneTurnWithOutput(
+			{
+				...SETTINGS,
+				telemetry: { enabled: true, endpoint: "https://telemetry.example" },
+			},
+			telemetryFetch,
+		);
+
+		// 回合正常渲染完成；close 对失败的上报只做一次有界尝试，不阻塞退出
+		expect(output.text).toContain(ASSISTANT_TEXT);
+		expect(output.text).toContain("再见");
 	});
 });

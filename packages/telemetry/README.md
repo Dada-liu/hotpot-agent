@@ -70,11 +70,11 @@ schema v1 只允许以下字段（每个事件另有 `eventId`、`ts`）。所�
 
 endpoint 解析顺序（`src/runtime.ts`）：
 
-1. `settings.telemetry.endpoint`
+1. `settings.telemetry.endpoint`（空串或纯空白视为「本机未配置」，继续向后回退）
 2. 环境变量 `HOTPOT_TELEMETRY_ENDPOINT`
 3. `src/defaults.ts` 的 `DEFAULT_TELEMETRY_ENDPOINT`（仓库内默认为空）
 
-`settings.telemetry.endpoint` 只要出现就必须是非空字符串（schema `min(1)`；空串是配置校验错误，不会走到运行时）。运行时对最终取值（settings > 环境变量 > 源码常量）做校验：空串、非绝对 URL、非 `http(s)` 协议都视为「未配置」，`createTelemetryRuntime` 返回 `null`。settings 未设置时由 `HOTPOT_TELEMETRY_ENDPOINT` 或源码常量提供地址；二者都为空则遥测不启用。这样不会让配置错误变成后台对不可达地址的无限重试。启用后客户端向 `<endpoint>/api/v1/ingest` POST JSON。
+`settings.telemetry.endpoint` 是可选字符串，schema 不要求非空：空值/空白表示「本机未配置」，交给环境变量与源码常量。空的环境变量会遮挡源码常量（`??` 只跳过 `undefined`），即 `HOTPOT_TELEMETRY_ENDPOINT=""` 等于显式关闭遥测，不会再回退到源码常量。运行时对最终取值做校验：空串、非绝对 URL、非 `http(s)` 协议都视为「未配置」，`createTelemetryRuntime` 返回 `null`；遥测是旁路，无效配置退化为 no-op，不会让 `loadSettings` 抛错或拖垮进程启动。启用后客户端向 `<endpoint>/api/v1/ingest` POST JSON。
 
 token 来自 `settings.telemetry.token`，可以是字面值，也可以是整串 `$ENV` 引用（如 `"$HOTPOT_TELEMETRY_TOKEN"`）。引用不存在或为空时不算错误：照常上报，只是不带 `Authorization` 头；有 token 时发送 `Authorization: Bearer <token>`。
 
@@ -82,7 +82,7 @@ token 来自 `settings.telemetry.token`，可以是字面值，也可以是整�
 
 - `settings.telemetry.enabled: false` → runtime 为 `null`，全部 no-op。
 - 缺省为开启；但 endpoint 未配置时同样不启用。
-- `settings.telemetry.flushIntervalMs` 必须是正整数，默认 `30000`；schema 拒绝 `0`。要关闭定时 flush，只能关闭遥测，或在代码层直接构造 client 并传入 `flushIntervalMs: 0` / 注入自定义 `schedule`（`interval` 不注册定时器）；不能通过 settings 设 0。
+- `settings.telemetry.flushIntervalMs` 取非负整数，默认 `30000`；`0` 表示不定时 flush，只靠阈值（默认 50 条）与 `close()` 触发。负数仍是配置校验错误。
 - `telemetry` 只从用户级 `~/.hotpot/settings.json` 读取。项目级 `.hotpot/settings.json` 的 schema 不接受该字段，防止恶意仓库改写上报地址或凭证。
 
 ## 安装 ID
@@ -99,6 +99,7 @@ token 来自 `settings.telemetry.token`，可以是字面值，也可以是整�
 - 队列超过 `maxQueue`（默认 1000）时丢最旧事件并计入 `dropped`。
 - flush 串行执行，同一批不会被并发重发；失败按 1s / 2s / 4s 退避重试 3 次，仍失败则整批放回队首，等下一次 flush 再试。
 - 单请求超时 5s；默认定时器与重试 sleep 都 `unref()`，即使调用方漏调 `close()` 也不会阻止进程退出。
+- `close()` 是退出路径，只做一次有界尝试：不重试、不退避，并持有 ref 定时器直到最后一次请求结算，避免事件循环提前排空（Node exit code 13）或用户在 `/exit` 后等待重试链。失败的那批留在队列里，进程退出即丢弃。
 - 网络错误、超时、序列化异常都被吞掉，`flush()` / `close()` 永不 reject，只更新 `stats()` 里的计数。
 
 ## cli / server 接入点
@@ -112,8 +113,9 @@ token 来自 `settings.telemetry.token`，可以是字面值，也可以是整�
 `pnpm test` 覆盖：
 
 - `test/events.test.ts`：批次信封、未知字段/未知事件类型拒绝、单批 500 条上限。
-- `test/sanitize.test.ts`：绝对路径、URL 查询串、邮箱、非 web scheme、代码块、长度截断。
-- `test/client.test.ts`：批量投递、无 token 时不带 Authorization、失败重试、禁用/空 endpoint、队列溢出、请求超时、close 后忽略入队、定时器 unref。
+- `test/sanitize.test.ts`：绝对路径、带空格路径的残片（POSIX/Windows）、URL 查询串、邮箱、非 web scheme、代码块、长度截断。
+- `test/client.test.ts`：批量投递、无 token 时不带 Authorization、失败重试、禁用/空 endpoint、队列溢出、请求超时、`close()` 单次有界尝试（失败与挂起两种）、`flushIntervalMs <= 0` 不注册定时器、定时器 unref。
+- `test/runtime.test.ts`：settings endpoint 优先、空/空白 endpoint 回退到环境变量、空环境变量遮挡源码常量并返回 `null`、非法协议返回 `null`。
 - `test/install-id.test.ts`：持久化、benchmark 独立 ID、损坏文件重建、只读 home 不抛错。
 - `test/collector.test.ts`：turn 折叠（含 worker/task 用量）、feature 计数、损坏日志、outcome 判定、会话生命周期事件。
-- `packages/cli/test/telemetry.test.ts`、`packages/server/test/telemetry.test.ts`：端到端 payload 不含对话文本；`enabled=false`、未配置 endpoint（测试直接注入 settings 时传空串也按未配置处理）、非法 endpoint 时不发请求。
+- `packages/cli/test/telemetry.test.ts`、`packages/server/test/telemetry.test.ts`：端到端 payload 不含对话文本；`enabled=false`、未配置 endpoint（settings 空串会回退，环境变量也为空时按未配置处理）、非法 endpoint 时不发请求；上报 `fetch` 持续抛错时 turn 仍成功、`runChat` 正常返回。

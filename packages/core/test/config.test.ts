@@ -429,16 +429,25 @@ describe("loadSettings telemetry 字段", () => {
 		});
 	});
 
-	it("telemetry.endpoint 为空串时报错", async () => {
+	it("telemetry.endpoint 为空串时接受（运行时回退到环境变量/源码常量）", async () => {
 		const data = telemetrySettings();
 		data.telemetry = { endpoint: "" };
 		await writeSettings(data);
-		expect(() => loadSettings({ home, cwd: home })).toThrow(/endpoint/);
+		const settings = loadSettings({ home, cwd: home });
+		expect(settings.telemetry).toEqual({ endpoint: "" });
 	});
 
-	it("telemetry.flushIntervalMs 非正整数时报错", async () => {
+	it("telemetry.flushIntervalMs 为 0 时接受（表示不定时 flush）", async () => {
 		const data = telemetrySettings();
 		data.telemetry = { flushIntervalMs: 0 };
+		await writeSettings(data);
+		const settings = loadSettings({ home, cwd: home });
+		expect(settings.telemetry).toEqual({ flushIntervalMs: 0 });
+	});
+
+	it("telemetry.flushIntervalMs 为负数时仍报错（只放宽到 0）", async () => {
+		const data = telemetrySettings();
+		data.telemetry = { flushIntervalMs: -1 };
 		await writeSettings(data);
 		expect(() => loadSettings({ home, cwd: home })).toThrow(/flushIntervalMs/);
 	});

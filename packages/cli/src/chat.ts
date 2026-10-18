@@ -511,7 +511,7 @@ export async function runChat(opts: RunChatOptions): Promise<void> {
 					errors: telemetryErrors,
 				}),
 			);
-			// close 会等队列里的残余批次（含 session_end）发完；失败由客户端内部吞掉
+			// close 只做一次有界尝试发送残余批次（含 session_end）；失败由客户端内部吞掉，不影响退出码
 			await telemetry.client.close();
 		}
 	}

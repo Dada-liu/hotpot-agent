@@ -1,6 +1,7 @@
 // 异步批量上报客户端：内存排队、阈值/定时 flush、批量 POST、指数退避重试。
 // 设计原则是永不阻塞、永不抛错：enqueue 同步返回；flush 串行执行且吞掉所有失败。
 // 最终失败的一批放回队首，等下一次 flush 再试，避免一次网络抖动丢数据。
+// close 是例外：它只做一次有界尝试（不重试、不退避），保证 CLI /exit 不被网络拖住。
 
 import { APP_VERSION, DEFAULT_TELEMETRY_ENDPOINT } from "./defaults.ts";
 import {
@@ -64,10 +65,11 @@ export function createTelemetryClient(
 		.trim()
 		.replace(/\/+$/, "");
 	const active = (opts.enabled ?? true) && endpoint !== "";
-	const flushIntervalMs = nonNegativeInt(
-		opts.flushIntervalMs,
-		DEFAULT_FLUSH_INTERVAL_MS,
-	);
+	// 0 或负数 = 不定时 flush（只靠阈值与 close 触发）；undefined/非有限数回落到默认 30s
+	const flushIntervalMs =
+		opts.flushIntervalMs === undefined || !Number.isFinite(opts.flushIntervalMs)
+			? DEFAULT_FLUSH_INTERVAL_MS
+			: Math.max(0, Math.floor(opts.flushIntervalMs));
 	const maxBatch = positiveInt(opts.maxBatch, DEFAULT_MAX_BATCH);
 	const maxQueue = nonNegativeInt(opts.maxQueue, DEFAULT_MAX_QUEUE);
 	const timeoutMs = positiveInt(opts.timeoutMs, DEFAULT_TIMEOUT_MS);
@@ -82,30 +84,57 @@ export function createTelemetryClient(
 
 	const queue: TelemetryEvent[] = [];
 	let closed = false;
+	// 收尾标志：close 之后在途 flush 不再重试/退避，避免退出前再等 1/2/4 秒
+	let closing = false;
 	let flushing: Promise<void> = Promise.resolve();
 	let sent = 0;
 	let failed = 0;
 	let dropped = 0;
 	let lastFlushAt: number | null = null;
 
-	// 把一批事件编码后 POST 出去；网络错误和超时都只返回 false，交给重试循环
-	async function postBatch(body: string): Promise<boolean> {
+	// 把一批事件编码后 POST 出去；网络错误和超时都只返回 false，交给重试循环。
+	// holdProcess 为 true（close 的收尾请求）时改用 ref 的定时器代替 AbortSignal.timeout：
+	// 此时若事件循环里只剩 unref 句柄，进程会在请求结算前退出（Node 以 code 13 结束），
+	// 最后一批数据随之丢失。定时器在请求结算后立即清除，不会额外拖延退出。
+	async function postBatch(
+		body: string,
+		holdProcess: boolean,
+	): Promise<boolean> {
 		try {
-			const response = await fetchImpl(url, {
-				method: "POST",
-				headers,
-				body,
-				signal: AbortSignal.timeout(timeoutMs),
-			});
-			// 显式释放响应体，避免长连接因未消费而滞留
-			await response.body?.cancel().catch(() => {});
-			return response.ok;
+			if (!holdProcess) {
+				const response = await fetchImpl(url, {
+					method: "POST",
+					headers,
+					body,
+					signal: AbortSignal.timeout(timeoutMs),
+				});
+				// 显式释放响应体，避免长连接因未消费而滞留
+				await response.body?.cancel().catch(() => {});
+				return response.ok;
+			}
+			const controller = new AbortController();
+			const timer = setTimeout(() => {
+				controller.abort();
+			}, timeoutMs);
+			try {
+				const response = await fetchImpl(url, {
+					method: "POST",
+					headers,
+					body,
+					signal: controller.signal,
+				});
+				await response.body?.cancel().catch(() => {});
+				return response.ok;
+			} finally {
+				clearTimeout(timer);
+			}
 		} catch {
 			return false;
 		}
 	}
 
-	async function flushBatch(): Promise<void> {
+	// final 为 true 时只尝试一次：不重试、不 sleep，供 close 使用
+	async function flushBatch(final: boolean): Promise<void> {
 		if (!active || queue.length === 0) {
 			return;
 		}
@@ -121,21 +150,25 @@ export function createTelemetryClient(
 			});
 
 			for (let attempt = 0; ; attempt += 1) {
-				if (await postBatch(body)) {
+				// 收尾已开始：不再发起新的重试，剩余事件留给最后一次收尾请求
+				if (attempt > 0 && closing) {
+					break;
+				}
+				if (await postBatch(body, final)) {
 					sent += batch.length;
 					lastFlushAt = now();
 					return;
 				}
 				const delay = RETRY_DELAYS_MS[attempt];
-				if (delay === undefined) {
-					// 重试耗尽：整批放回队首，保证顺序不变
-					queue.unshift(...batch);
-					failed += batch.length;
-					lastFlushAt = now();
-					return;
+				if (final || delay === undefined) {
+					break;
 				}
 				await schedule.sleep(delay);
 			}
+			// 失败或收尾中止：整批放回队首，保证顺序不变
+			queue.unshift(...batch);
+			failed += batch.length;
+			lastFlushAt = now();
 		} catch {
 			// 兜底：任何意外都不能丢数据，也不能让 flush 抛错
 			queue.unshift(...batch);
@@ -145,7 +178,7 @@ export function createTelemetryClient(
 
 	function flush(): Promise<void> {
 		// 串行化：并发调用按注册顺序排队，避免同一批事件被重复发送
-		flushing = flushing.then(() => flushBatch());
+		flushing = flushing.then(() => flushBatch(false));
 		return flushing;
 	}
 
@@ -184,12 +217,14 @@ export function createTelemetryClient(
 
 	async function close(): Promise<void> {
 		if (closed) {
-			await flushing;
 			return;
 		}
 		closed = true;
+		closing = true;
 		stopTimer();
-		await flush();
+		// 收尾只做一次有界尝试：不重试、不退避，也不等待在途 flush 的重试链。
+		// 否则 /exit 后用户可能多等 1/2/4 秒的 sleep 加整条重试链（约 27 秒）。
+		await flushBatch(true);
 	}
 
 	return { enqueue, flush, close, stats };

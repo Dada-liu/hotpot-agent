@@ -254,6 +254,80 @@ describe("createTelemetryClient", () => {
 		await client.flush();
 		expect(requests).toHaveLength(2);
 	});
+
+	it("does not schedule an interval when flushIntervalMs is zero or negative", () => {
+		let intervals = 0;
+		const schedule: TelemetrySchedule = {
+			interval: () => {
+				intervals += 1;
+				return () => {};
+			},
+			sleep: async () => {},
+		};
+		const { fetchImpl } = okFetch();
+
+		createTelemetryClient({
+			...baseOptions(),
+			fetchImpl,
+			schedule,
+			flushIntervalMs: 0,
+		});
+		createTelemetryClient({
+			...baseOptions(),
+			fetchImpl,
+			schedule,
+			flushIntervalMs: -1,
+		});
+
+		expect(intervals).toBe(0);
+	});
+
+	it("close makes one bounded attempt without retrying or sleeping", async () => {
+		let calls = 0;
+		const schedule = createSchedule();
+		const client = createTelemetryClient({
+			...baseOptions(),
+			fetchImpl: async () => {
+				calls += 1;
+				throw new Error("endpoint down");
+			},
+			schedule,
+			timeoutMs: 20,
+		});
+
+		client.enqueue(event("e1"));
+		const startedAt = Date.now();
+		await expect(client.close()).resolves.toBeUndefined();
+		const elapsedMs = Date.now() - startedAt;
+
+		// 只尝试一次：不再走 1s/2s/4s 退避，退出不会被网络拖住
+		expect(calls).toBe(1);
+		expect(schedule.sleeps).toEqual([]);
+		expect(elapsedMs).toBeLessThan(1000);
+		expect(client.stats()).toMatchObject({ queued: 1, failed: 1 });
+	});
+
+	it("close resolves within about one timeout when the endpoint hangs", async () => {
+		const client = createTelemetryClient({
+			...baseOptions(),
+			fetchImpl: (_input, init) =>
+				new Promise<Response>((_resolve, reject) => {
+					init?.signal?.addEventListener("abort", () => {
+						reject(init.signal?.reason);
+					});
+				}),
+			schedule: createSchedule(),
+			timeoutMs: 20,
+		});
+
+		client.enqueue(event("e1"));
+		const startedAt = Date.now();
+		await expect(client.close()).resolves.toBeUndefined();
+		const elapsedMs = Date.now() - startedAt;
+
+		expect(elapsedMs).toBeLessThan(1000);
+		expect(client.stats()).toMatchObject({ queued: 1, failed: 1 });
+	});
 });
 
 describe("defaultSchedule", () => {

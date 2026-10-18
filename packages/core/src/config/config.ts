@@ -71,12 +71,15 @@ const mcpServersSchema = z.record(
 );
 
 // M5 telemetry：用户级主动上报配置。token 可为字面值或整串 "$ENV"，
-// 插值由运行时 helper 负责，schema 只校验类型，保持与其他接口字段一致的解析语义
+// 插值由运行时 helper 负责，schema 只校验类型，保持与其他接口字段一致的解析语义。
+// endpoint 允许空串/空白（表示「清空本机配置」，运行时继续回退到环境变量/源码常量），
+// flushIntervalMs 允许 0（表示不定时 flush）：遥测是旁路，无效配置应退化为 no-op，
+// 而不是让 loadSettings 抛错、拖垮整个 CLI/server 启动
 const telemetrySchema = z.object({
 	enabled: z.boolean().optional(),
-	endpoint: z.string().min(1).optional(),
+	endpoint: z.string().optional(),
 	token: z.string().optional(),
-	flushIntervalMs: z.number().int().positive().optional(),
+	flushIntervalMs: z.number().int().nonnegative().optional(),
 });
 
 const settingsSchema = z.object({

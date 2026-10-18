@@ -82,7 +82,7 @@
 - 旁路包：`cli` 与 `server` 依赖 `@hotpot/telemetry`，后续 `benchmarks` runner 复用（`kind: "benchmark"`）；workspace 依赖只有 `core`（复用 `resolveHome`、`loadSession`、`featureEnabled`），外部依赖仅 `zod`，不依赖 `orchestrator`/`server`/`cli`
 - 事件 schema v1：九类事件（`session_start`/`session_end`/`turn_start`/`turn_end`/`llm_call`/`tool_call`/`error`/`feature_usage`/`benchmark_run`）严格白名单，zod `.strict()`，未知字段直接拒绝
 - 错误消息统一经 `sanitizeErrorMessage` 脱敏；客户端异步批量 POST、失败指数退避、定时器 unref，绝不阻塞或让 turn 失败
-- 开关与 endpoint：`settings.telemetry` > `HOTPOT_TELEMETRY_ENDPOINT` > 源码常量；空或非 http(s) 地址视为未启用
+- 开关与 endpoint：`settings.telemetry` > `HOTPOT_TELEMETRY_ENDPOINT` > 源码常量；settings 中的空值/空白继续回退，最终为空或非 http(s) 地址视为未启用（空环境变量会遮挡源码常量）
 - 安装 ID：`<home>/telemetry/install-id`（benchmark 使用独立文件），不关联账号或机器名
 - 详见 [packages/telemetry/README.md](../../packages/telemetry/README.md)
 
@@ -164,7 +164,7 @@ cli / server
 边界与保证：
 
 - **无用户内容**：不上报 prompt/回复文本、工具入参/输出、文件内容、文件路径、命令、URL 查询参数、用户名、仓库名。错误只上报机器码与脱敏后的消息；脱敏失败时丢弃原文。
-- **不阻塞、不失败**：`enqueue` 同步返回；`flush` 串行执行并吞掉所有网络/序列化异常；会话日志缺失或损坏时按空日志折叠；server 读取 settings 失败只退化为「遥测关闭」。
+- **不阻塞、不失败**：`enqueue` 同步返回；`flush` 串行执行并吞掉所有网络/序列化异常；`close()` 只做一次有界尝试（不重试、不退避，并持有 ref 定时器直到最后一次请求结算），cli 的 `/exit` 不会被网络拖住，也不会因事件循环提前排空而以 code 13 退出；会话日志缺失或损坏时按空日志折叠；server 读取 settings 失败只退化为「遥测关闭」。
 - **仅用户级配置**：`telemetry.endpoint`/`token` 不接受项目级覆盖，避免恶意仓库把上报数据与凭证导向别处。
 - 后台服务在仓库外（`../hotpot-telemetry/`），M5.2 尚未开始；客户端只约定 ingest 的 HTTP 契约（`POST <endpoint>/api/v1/ingest`，`schemaVersion = 1`）。后台不进入 CLI/server 的构建产物。
 
@@ -247,9 +247,9 @@ cli / server
 | skillsDirs | [] | 仅用户级 | 额外 skill 扫描目录（相对 cwd） |
 | promptsDirs | [] | 仅用户级 | 额外 prompt template 扫描目录（相对 cwd） |
 | telemetry.enabled | true | 仅用户级 | 匿名遥测开关（M5.1） |
-| telemetry.endpoint | 未设置（源码常量为空） | 仅用户级 | 上报地址；settings 中出现时必须是非空字符串（schema `min(1)`，空串是校验错误）；解析顺序 settings > `HOTPOT_TELEMETRY_ENDPOINT` > 源码常量，最终值为空或非 http(s) 时视为未启用 |
+| telemetry.endpoint | 未设置（源码常量为空） | 仅用户级 | 上报地址；settings 中的空串/纯空白表示「本机未配置」，回退到环境变量与源码常量（schema 不再要求非空）；解析顺序 settings > `HOTPOT_TELEMETRY_ENDPOINT` > 源码常量，空环境变量会遮挡源码常量，最终值为空或非 http(s) 时视为未启用 |
 | telemetry.token | 无 | 仅用户级 | ingest 的 Bearer token，支持整串 `$ENV` 引用；缺省时不带 Authorization 头 |
-| telemetry.flushIntervalMs | 30000 | 仅用户级 | 定时批量上报间隔（毫秒），必须为正整数（schema 拒绝 0）；关闭定时 flush 需关闭遥测，或在代码层构造 client 时传 `flushIntervalMs: 0` / 注入自定义 scheduler |
+| telemetry.flushIntervalMs | 30000 | 仅用户级 | 定时批量上报间隔（毫秒），非负整数，`0` 表示不定时 flush；负数仍是校验错误 |
 
 项目级可覆盖白名单：`mainAgentTier`、`maxParallelTasks`、`planMaxRevisions`、`approval.policy`；其余字段（含 models）一律忽略。凭证只从用户级读取，规避恶意仓库注入风险（M4 再考虑 pi 式 project trust 提示）。M4 新增字段（features/hooks/webSearch/mcpServers/skillsDirs/promptsDirs）一律仅用户级：hooks/mcpServers 涉及任意命令执行，项目级注入即 RCE；扫描目录与外发流量同理。M5 的 `telemetry` 同样仅用户级：endpoint/token 决定数据与凭证去向，项目级可写等于允许仓库劫持上报。
 
