@@ -66,13 +66,13 @@
 | 5 | prompt templates | `prompts/*.md` 变成 `/命令`，支持参数占位；自定义命令入口 | pi | ✅ 已实现：`core/src/prompt-templates.ts`、CLI 展开、server 统一展开、web `/` 补全；验收 `core/test/prompt-templates.test.ts`、`server/test/api.test.ts`、`cli/test/cli.test.ts` |
 | 6 | web_search / web_fetch 工具 | 自媒体运营 bench 需要联网能力；搜索后端可换 | dsh | ✅ 已实现：`core/src/tools/web-fetch.ts`、`core/src/tools/web-search.ts`；验收 `core/test/web-fetch.test.ts`、`core/test/web-search.test.ts` |
 | 7 | MCP 支持 | stdio + streamable HTTP client；工具桥接为 `mcp__<server>__<tool>` | pi/dsh 一致 | ✅ 已实现：`orchestrator/src/mcp.ts` + `json-schema-to-zod.ts`；验收 `orchestrator/test/mcp.test.ts`、`json-schema-to-zod.test.ts`；真实 server 冒烟步骤见 `orchestrator/README.md` |
-| 8 | 上下文自动压缩 | compaction 作为会话事件（记录保留点 + 摘要），恢复时跳过被压缩段（pi 手法）；M1 遗留项 | pi/dsh |
-| 9 | 用户记忆 | 跨会话记忆，启动时注入摘要 section，写记忆走独立工具 | — |
-| 10 | 向量数据库 | 服务记忆与代码检索，独立 packages/memory | — |
-| 11 | 后台任务 jobs | 后台 bash、子 agent 后台运行，完成时通知 | dsh |
-| 12 | 权限预设 | sandbox/approval 旋钮打包成预设（safe / default / yolo） | dsh |
-| 13 | tool_search 延迟工具加载 | 工具多时先给目录、按需加载声明，省 token | pi |
-| 14 | 沙箱 | 审批链上的执行器替换；本地 Seatbelt/容器 | — |
+| 8 | 上下文自动压缩 | compaction 作为会话事件（记录保留点 + 摘要），恢复时跳过被压缩段（pi 手法）；M1 遗留项 | pi/dsh | ⏳ 未开始 |
+| 9 | 用户记忆 | 跨会话记忆，启动时注入摘要 section，写记忆走独立工具 | — | ⏳ 未开始 |
+| 10 | 向量数据库 | 服务记忆与代码检索，独立 packages/memory | — | ⏳ 未开始 |
+| 11 | 后台任务 jobs | 后台 bash、子 agent 后台运行，完成时通知 | dsh | ⏳ 未开始 |
+| 12 | 权限预设 | sandbox/approval 旋钮打包成预设（safe / default / yolo） | dsh | ⏳ 未开始 |
+| 13 | tool_search 延迟工具加载 | 工具多时先给目录、按需加载声明，省 token | pi | ⏳ 未开始 |
+| 14 | 沙箱 | 审批链上的执行器替换；本地 Seatbelt/容器 | — | ⏳ 未开始 |
 
 每项验收：功能自身可用 + 新增事件类型纳入 JSONL v1 规范 + 遥测能看到该功能的开关与用量。
 
