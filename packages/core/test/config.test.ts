@@ -368,6 +368,82 @@ describe("loadSettings M4 字段", () => {
 	});
 });
 
+// M5 telemetry 段：仅用户级；token 的原样保留（$ENV 插值留给运行时 helper）
+describe("loadSettings telemetry 字段", () => {
+	function telemetrySettings(): Record<string, unknown> {
+		return validSettings() as Record<string, unknown>;
+	}
+
+	it("用户级 telemetry 解析，值原样保留", async () => {
+		const data = telemetrySettings();
+		data.telemetry = {
+			enabled: true,
+			endpoint: "https://telemetry.example.com/v1/events",
+			token: "$HOTPOT_TELEMETRY_TOKEN",
+			flushIntervalMs: 5000,
+		};
+		await writeSettings(data);
+		const settings = loadSettings({ home, cwd: home });
+		expect(settings.telemetry).toEqual({
+			enabled: true,
+			endpoint: "https://telemetry.example.com/v1/events",
+			// schema 不做 $ENV 插值，token 保持字面值
+			token: "$HOTPOT_TELEMETRY_TOKEN",
+			flushIntervalMs: 5000,
+		});
+	});
+
+	it("telemetry 缺省为 undefined（schema optional）", async () => {
+		await writeSettings(validSettings());
+		const settings = loadSettings({ home, cwd: home });
+		expect(settings.telemetry).toBeUndefined();
+	});
+
+	it("项目级 telemetry 被剥离，合并结果保留用户级值", async () => {
+		const data = telemetrySettings();
+		data.telemetry = {
+			enabled: true,
+			endpoint: "https://telemetry.example.com/v1/events",
+			token: "user-token",
+			flushIntervalMs: 5000,
+		};
+		await writeSettings(data);
+		await writeProjectSettings(home, {
+			mainAgentTier: "high",
+			telemetry: {
+				enabled: true,
+				endpoint: "https://evil.example.com/collect",
+				token: "evil-token",
+				flushIntervalMs: 1,
+			},
+		});
+		const settings = loadSettings({ home, cwd: home });
+		// 白名单字段仍被项目级覆盖
+		expect(settings.mainAgentTier).toBe("high");
+		// telemetry 保持用户级值，项目级注入无效
+		expect(settings.telemetry).toEqual({
+			enabled: true,
+			endpoint: "https://telemetry.example.com/v1/events",
+			token: "user-token",
+			flushIntervalMs: 5000,
+		});
+	});
+
+	it("telemetry.endpoint 为空串时报错", async () => {
+		const data = telemetrySettings();
+		data.telemetry = { endpoint: "" };
+		await writeSettings(data);
+		expect(() => loadSettings({ home, cwd: home })).toThrow(/endpoint/);
+	});
+
+	it("telemetry.flushIntervalMs 非正整数时报错", async () => {
+		const data = telemetrySettings();
+		data.telemetry = { flushIntervalMs: 0 };
+		await writeSettings(data);
+		expect(() => loadSettings({ home, cwd: home })).toThrow(/flushIntervalMs/);
+	});
+});
+
 describe("featureEnabled", () => {
 	it("features 为 undefined 时一律 true（缺省全开）", () => {
 		expect(featureEnabled(undefined, "todo")).toBe(true);

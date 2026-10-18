@@ -70,6 +70,15 @@ const mcpServersSchema = z.record(
 	z.union([mcpStdioServerSchema, mcpHttpServerSchema]),
 );
 
+// M5 telemetry：用户级主动上报配置。token 可为字面值或整串 "$ENV"，
+// 插值由运行时 helper 负责，schema 只校验类型，保持与其他接口字段一致的解析语义
+const telemetrySchema = z.object({
+	enabled: z.boolean().optional(),
+	endpoint: z.string().min(1).optional(),
+	token: z.string().optional(),
+	flushIntervalMs: z.number().int().positive().optional(),
+});
+
 const settingsSchema = z.object({
 	models: z.object({
 		high: modelRefSchema,
@@ -90,11 +99,13 @@ const settingsSchema = z.object({
 	mcpServers: mcpServersSchema.optional(),
 	skillsDirs: z.array(z.string()).optional(),
 	promptsDirs: z.array(z.string()).optional(),
+	telemetry: telemetrySchema.optional(),
 });
 
 // 项目级收窄 schema：只含 4 个白名单字段；zod 默认 strip 静默丢弃 models 等未知字段。
-// 安全理由（M4 定案）：M4 新增字段一律仅用户级 —— hooks/mcpServers 涉及任意命令执行，
+// 安全理由（M4 定案）：M4/M5 新增字段一律仅用户级 —— hooks/mcpServers 涉及任意命令执行，
 // 项目级注入即 RCE；skillsDirs/promptsDirs 决定磁盘扫描范围，features/webSearch 影响外发流量，
+// telemetry 的 endpoint/token 更不能由仓库改写（否则会把遥测与凭证导向攻击者），
 // 均不允许恶意仓库经 .hotpot/settings.json 篡改
 const projectSettingsSchema = z.object({
 	mainAgentTier: z.enum(["high", "medium", "low"]).optional(),
@@ -113,6 +124,7 @@ export type Features = z.infer<typeof featuresSchema>;
 export type HooksConfig = z.infer<typeof hooksSchema>;
 export type WebSearchConfig = z.infer<typeof webSearchSchema>;
 export type McpServersConfig = z.infer<typeof mcpServersSchema>;
+export type TelemetryConfig = z.infer<typeof telemetrySchema>;
 type ProjectSettings = z.infer<typeof projectSettingsSchema>;
 
 // 功能开关统一读取口：缺省全开（`?? true`）。关闭开关 = 不注册工具/不挂钩子/不扫描目录，
