@@ -464,21 +464,25 @@ Install Python 3.11/3.12 on macmini (e.g. `uv python install 3.12` or Homebrew),
 
 - [x] **Step 3: Export 10 Lite instances**
 
-Run `packages/benchmarks/scripts/export_instances.py --dataset princeton-nlp/SWE-bench_Lite --split test --limit 10 --output instances.jsonl` from the repo root, using the venv interpreter. If the dataset name differs in the harness version, use the harness's dataset name.
+Run `packages/benchmarks/scripts/export_instances.py --dataset SWE-bench/SWE-bench_Lite --split test --output instances-lite.jsonl` from the repo root, using the venv interpreter (export the full 300-instance split and let `--limit`/`--seed` choose; swebench 5.x requires this dataset name because it carries the `image` field).
 
-- [ ] **Step 4: Run the acceptance benchmark**
+- [x] **Step 4: Run the acceptance benchmark**
 
 Run `pnpm bench swebench --limit 10 --instances-file instances.jsonl --eval-mode local --eval-host macmini --max-workers 1`. Preflight with 1 instance first; record image size, memory, and duration. Stop and record if disk < 20G, memory pressure, or amd64 emulation is unusable; fall back to `sell_system` or a larger Linux host. Then run the remaining 9 with cleanup between batches.
 
-- [ ] **Step 5: Record the result**
+- [x] **Step 5: Record the result**
 
 Append the run id, dataset/split, pass rate, average input/output tokens, average duration, failure count, and the patch-only caveat to `docs/archive/04-roadmap.md`. Do not commit generated patches, predictions, or model outputs.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add docs/archive/04-roadmap.md
 git commit -m "docs(benchmarks): record Lite 10 acceptance"
 ```
 
-> **执行记录（2026-10-19）**：Task 11 Step 1-3 已完成。macmini 使用 Node v24.21.0（fnm）、pnpm 10.33.0、Python 3.12.15（uv）、swebench 5.0.2；`pnpm test` 在 `--maxWorkers=4` 下 64 文件 / 539 用例通过（默认 64 worker 并发会触发 orchestrator `spawn-tasks` 的既有计时 flake，单文件重跑通过）。Lite 300 条实例已导出，`--limit 10 --seed 0` 选中 10 题。官方 harness 预检：empty patch 正确记为 `empty_patch_ids`；gold patch（astropy__astropy-12907）在 amd64 模拟下 resolved，镜像 4.16GB（pull 200s），单题评测 437s，容器内存峰值约 235MB。**Step 4 阻塞**：macmini 没有 `~/.hotpot/settings.json`，也没有 provider 环境变量，agent 阶段无法运行；未伪造凭证，因此 10 题通过率与 token 成本未产生。补齐用户级 settings 后按 Step 4 命令重跑即可。Step 5 的验收数字因此暂缺，Step 6 尚未提交。
+> **执行记录（2026-10-19）**：Task 11 已完成。macmini 使用 Node v24.21.0（fnm）、pnpm 10.33.0、Python 3.12.15（uv）、swebench 5.0.2；`pnpm test --maxWorkers=4` 64 文件 / 545 用例通过（默认 64 worker 并发会触发 orchestrator `spawn-tasks` 的既有计时 flake，单文件重跑通过）。
+>
+> 数据集 `SWE-bench/SWE-bench_Lite` test，`--limit 10 --seed 0`，run id `bench-20261019-125546-e439bbf3-eval`：**9/10 resolved（90.0%）**；平均 input 908,943 / output 17,615.3 token，平均 agent 时长 185.2s；按非高峰价与实测档位估算成本 ¥32.83 ≈ $4.62（高峰约 $9.25）；失败题 `pylint-dev__pylint-7228`（patch 应用成功，两个 FAIL_TO_PASS 用例失败）。agent 阶段约 30 分钟，官方评测约 17 分钟。patch-only 基线：不装依赖、不跑 repo 测试。
+>
+> 运行中修复：swebench 5.x 需用带 `image` 字段的 `SWE-bench/SWE-bench_Lite`（旧名 `princeton-nlp/SWE-bench_Lite` 会 KeyError），默认数据集已改。预拉镜像时 sphinx 镜像被 DaoCloud 白名单拒绝，改用 `docker.1ms.run` 拉取后 retag；GitHub 不稳定时临时使用 `ghfast.top` 镜像并预取 base commit，验收后已恢复 git 配置。

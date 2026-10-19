@@ -137,3 +137,4 @@ M5 的 benchmark agent 只生成 patch：普通 checkout，不装 repo 依赖、
 - Apple Silicon 上 amd64 镜像模拟可能显著慢于原生 x86_64；swebench 5.x 还需手动 `docker pull --platform linux/amd64` 预拉镜像。
 - 默认只跑 Lite 10 题；完整 300 题是手动跑批，需要更多磁盘与时间。
 - 官方 report 路径随 harness 版本变化：swebench 5.x 实际写到 `<report_dir>/<model_name>.<runId>.json`；runner 按 `<runId>.json`、`hotpot-code.<runId>.json`、`<runId>/report.json`、浅层扫描依次查找。
+- swebench 5.x 必须使用 `SWE-bench/SWE-bench_Lite`（数据集自带 `image` 字段）；旧名 `princeton-nlp/SWE-bench_Lite` 会让 harness 抛 `KeyError: 'image'`。

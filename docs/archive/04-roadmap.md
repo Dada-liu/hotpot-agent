@@ -119,7 +119,7 @@ M5 拆成两条独立工作流：工具侧遥测客户端（M5.1，本仓库，�
 
 #### Lite 10 题验收状态（2026-10-19，macmini）
 
-macmini 环境：Node v24.21.0（fnm）、pnpm 10.33.0、Python 3.12.15（uv）、swebench 5.0.2、Docker Desktop 4.95 / Engine 29.8.2（VM 8GB 内存）。仓库同步后 `pnpm install` 通过；`pnpm test --maxWorkers=4` 64 个测试文件 / 539 条用例全部通过（默认 64 worker 并发在 macmini 上会触发 orchestrator `spawn-tasks` 的既有计时 flake，单文件重跑通过）。
+macmini 环境：Node v24.21.0（fnm）、pnpm 10.33.0、Python 3.12.15（uv）、swebench 5.0.2、Docker Desktop 4.95 / Engine 29.8.2（VM 8GB 内存）。仓库同步后 `pnpm install` 通过；`pnpm test --maxWorkers=4` 64 个测试文件 / 545 条用例全部通过（默认 64 worker 并发在 macmini 上会触发 orchestrator `spawn-tasks` 的既有计时 flake，单文件重跑通过）。
 
 已完成的操作性预检：
 
@@ -128,13 +128,23 @@ macmini 环境：Node v24.21.0（fnm）、pnpm 10.33.0、Python 3.12.15（uv）�
 - 官方 harness gold-patch 预检（`astropy__astropy-12907`）：`docker pull --platform linux/amd64` 镜像 4.16GB / 200s；单题评测 437s（约 7 分 17 秒），结果 resolved；容器内存峰值约 235MB，系统内存空闲 78%-82%，评测后磁盘剩余 153GB。
 - Apple Silicon 上 swebench 5.x 的 docker-py pull 不传 platform，必须先手动预拉 amd64 镜像；步骤写入 `packages/benchmarks/README.md` 与 `05-m5-telemetry-benchmarks.md`。
 
-阻塞：macmini 没有 `~/.hotpot/settings.json`，也没有任何 provider 环境变量，agent 阶段无法运行；按约定不伪造凭证，因此 10 题的通过率、平均 input/output token、平均时长尚未产生。补齐用户级 settings 后执行（patch-only 基线不变）：
+#### Lite 10 题验收结果（2026-10-19，run id `bench-20261019-125546-e439bbf3-eval`）
 
-```bash
-source ~/swebench-venv/bin/activate
-pnpm bench swebench --instances-file instances-lite.jsonl \
-  --limit 10 --seed 0 --eval-mode local --max-workers 1
-```
+补齐 `~/.hotpot/settings.json`（high=deepseek-flash、medium=deepseek-v4-pro、low=deepseek-v4-flash）后完成正式跑批：
+
+- 数据集/切片：`SWE-bench/SWE-bench_Lite` test，`--limit 10 --seed 0`；10 题为 sympy ×4、django ×4、pylint ×1、sphinx ×1。
+- 命令：`pnpm bench swebench --instances-file instances-lite.jsonl --limit 10 --seed 0 --eval-mode local --max-workers 1 --output benchmark-runs/lite10`。
+- **通过率：9/10 resolved（90.0%）**；失败题 `pylint-dev__pylint-7228`（patch 成功应用，`FAIL_TO_PASS` 的 `tests/config/test_config.py::test_regex_error` 与 `::test_csv_regex_error` 失败，`PASS_TO_PASS` 全部通过）。
+- token：平均 input **908,943** / output **17,615.3**；总计 input 9,089,430 / output 176,153。
+- 平均时长：**185.2s**（agent 阶段单题均值；agent 阶段总计约 30 分钟）。官方评测阶段另约 17 分钟（max_workers=1，amd64 模拟）。
+- 估算成本：按非高峰价、缓存未命中，并按会话日志中的实际档位统计（high=deepseek-flash ¥1/¥4 per M，medium=deepseek-v4-pro ¥4.5/¥13.5 per M），合计 **¥32.83 ≈ $4.62**；高峰翻倍约 **$9.25**。DeepSeek 缓存命中价更低，实际账单可能低于该估算。
+- 备注：`django__django-15695` 的 agent 回合以 `max_tokens` 结束，但 patch 仍被官方 resolve；`sympy__sympy-17655` agent 阶段接近 600s 超时上限。patch-only 基线不变：agent 未安装 repo 依赖、未运行 repo 测试；题目来自公开 benchmark，模型训练语料可能覆盖相关内容。
+- 产物（macmini，不提交仓库）：`~/hotpot-code/benchmark-runs/lite10/report.json`、`report.md`、`predictions.jsonl`、`official/hotpot-code.bench-20261019-125546-e439bbf3-eval.json`、`~/hotpot-code/logs/lite10-run.log`、`logs/lite10-eval.log`。
+
+运行中发现并修复的问题：
+
+- swebench 5.x 的 `SWE-bench/SWE-bench_Lite` 数据集自带 `image` 字段；旧名 `princeton-nlp/SWE-bench_Lite` 缺该字段会让 harness 抛 `KeyError: 'image'`。CLI/导出脚本默认数据集已改为官方新名（commit `fa9de78`）。
+- sphinx 题目镜像被 DaoCloud 白名单拒绝，改用 `docker.1ms.run` 拉取后 retag 为官方镜像名；GitHub 直连不稳定，验收期间临时使用 `ghfast.top` 镜像并预取各题 base commit（验收后已恢复 git 配置）。
 
 ### 仍未开始（独立工作流）
 
@@ -144,7 +154,7 @@ pnpm bench swebench --instances-file instances-lite.jsonl \
 
 验收标准（保持原目标）：
 
-1. benchmark 一键运行，输出成功率与平均 token 成本报告（runner 已完成；Lite 10 题真实验收记录待补）
+1. benchmark 一键运行，输出成功率与平均 token 成本报告（已完成：Lite 10 题 9/10，90.0%，平均 input 908,943 / output 17,615.3，估算 $4.62 非高峰）
 2. 遥测报表能回答「上周每个任务平均花了多少 token、成功率多少」（依赖 M5.2，未开始）
 3. 自建 bench 有从历史会话沉淀新题的流程文档（筛选 → 脱敏 → 题目化）（已完成：`docs/benchmark-authoring.md`）
 

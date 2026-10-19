@@ -93,6 +93,8 @@ PY
 ```
 
 - 单个 Lite 镜像约 4GB；预检记录磁盘与内存，磁盘低于 20G 时停止并 `docker system prune`。
+- 若 Docker Desktop 配置的镜像加速器返回 `this image is not in the allowlist`，可用允许任意 Docker Hub 路径的镜像站拉取后改回官方名，例如：
+  `docker pull --platform linux/amd64 docker.1ms.run/swebench/<image>:latest && docker tag docker.1ms.run/swebench/<image>:latest swebench/<image>:latest`。
 - 预拉耗时与镜像层大小相关（实测 4.16GB / 约 3 分 20 秒）；amd64 模拟下单个 astropy 题约 7 分钟，容器内存峰值约 235MB（Docker VM 8GB 足够）。
 - 评测机器是 x86_64 Linux 时不需要这一步。
 
