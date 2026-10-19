@@ -5,7 +5,7 @@
 import type { ModelTier } from "@hotpot/core";
 import { CUSTOM_TASK_DOMAINS, type CustomTaskDomain } from "./custom/task.ts";
 
-export const DEFAULT_DATASET = "princeton-nlp/SWE-bench_Lite";
+export const DEFAULT_DATASET = "SWE-bench/SWE-bench_Lite";
 export const DEFAULT_SPLIT = "test";
 export const DEFAULT_EVAL_HOST = "macmini";
 export const DEFAULT_MAX_WORKERS = 1;

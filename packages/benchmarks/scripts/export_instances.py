@@ -6,12 +6,12 @@ HuggingFace 在部分网络环境下不可达，默认使用镜像；如本机�
 
     export HF_ENDPOINT=https://hf-mirror.com
     python export_instances.py \
-        --dataset princeton-nlp/SWE-bench_Lite \
+        --dataset SWE-bench/SWE-bench_Lite \
         --split test --limit 10 --output instances.jsonl
 
 也可以显式指定题目（保持请求顺序）：
 
-    python export_instances.py --dataset princeton-nlp/SWE-bench_Lite \
+    python export_instances.py --dataset SWE-bench/SWE-bench_Lite \
         --split test --instance-ids django__django-11099 pytest-dev__pytest-7432
 
 只导出七个字段：instance_id、repo、base_commit、problem_statement、
@@ -59,8 +59,8 @@ def parse_args():
     )
     parser.add_argument(
         "--dataset",
-        default="princeton-nlp/SWE-bench_Lite",
-        help="HuggingFace dataset name (default: princeton-nlp/SWE-bench_Lite)",
+        default="SWE-bench/SWE-bench_Lite",
+        help="HuggingFace dataset name (default: SWE-bench/SWE-bench_Lite)",
     )
     parser.add_argument("--split", default="test", help="dataset split (default: test)")
     parser.add_argument(

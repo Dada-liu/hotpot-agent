@@ -40,7 +40,7 @@ export HF_ENDPOINT=https://hf-mirror.com
 
 # 1. 导出实例（在已装 datasets 的 venv 中执行）
 python packages/benchmarks/scripts/export_instances.py \
-  --dataset princeton-nlp/SWE-bench_Lite --split test --limit 10 \
+  --dataset SWE-bench/SWE-bench_Lite --split test --limit 10 \
   --output instances.jsonl
 
 # 2. 生成 patch 并调用官方评测（默认 max_workers=1）
@@ -54,7 +54,7 @@ pnpm bench swebench \
 pnpm bench swebench --instances-file instances.jsonl --eval-mode remote --eval-host macmini
 ```
 
-默认数据集 `princeton-nlp/SWE-bench_Lite`、split `test`、seed 0；`--instance-ids a,b` 可指定题目并保持顺序。
+默认数据集 `SWE-bench/SWE-bench_Lite`（swebench 5.x 起官方仓库名；数据集自带镜像名，旧名 `princeton-nlp/SWE-bench_Lite` 缺 `image` 字段会导致 harness KeyError）、split `test`、seed 0；`--instance-ids a,b` 可指定题目并保持顺序。
 
 输出目录（默认 `./benchmark-runs/<时间戳>-swebench/`）：
 

@@ -16,7 +16,7 @@ describe("parseBenchArgs", () => {
 		expect(defaults).toMatchObject({
 			suite: "swebench",
 			instancesFile: "instances.jsonl",
-			dataset: "princeton-nlp/SWE-bench_Lite",
+			dataset: "SWE-bench/SWE-bench_Lite",
 			split: "test",
 			seed: 0,
 			evalMode: "local",

@@ -84,7 +84,7 @@ export HF_ENDPOINT=https://hf-mirror.com
 
 # 导出 Lite 10 题
 python packages/benchmarks/scripts/export_instances.py \
-  --dataset princeton-nlp/SWE-bench_Lite --split test --limit 10 \
+  --dataset SWE-bench/SWE-bench_Lite --split test --limit 10 \
   --output instances.jsonl
 
 # 本地跑 agent + 官方评测
