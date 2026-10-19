@@ -10,6 +10,14 @@
 
 A code agent built on Node + TypeScript. Goal: lower cost, better results.
 
+## Install
+
+```bash
+npm install -g hotpot-agent
+```
+
+The npm package is named `hotpot-agent` (the `hotpot` name is taken by an unrelated project); the installed command is `hotpot`. Node >= 22 is required.
+
 ## Architecture
 
 ```
@@ -59,6 +67,7 @@ Data flow of one user message: cli → `runMainTurn` (`delegate` difficulty rout
 │   ├── server/        # @hotpot/server: REST + SSE service (sessions, log replay, approval bridge, static hosting)
 │   ├── web/           # @hotpot/web: React SPA (three-column UI, agent status panel)
 │   ├── cli/           # @hotpot/cli: line-based interactive entry
+│   ├── hotpot-agent/  # hotpot-agent: npm distribution package (hotpot command + web assets)
 │   ├── telemetry/     # @hotpot/telemetry: M5 anonymous telemetry client (event schema, redaction, batching)
 │   └── benchmarks/    # @hotpot/benchmarks: M5 benchmark runner (official SWE-bench evaluation + three built-in tasks)
 └── scripts/           # development helper scripts (pnpm dev, etc.)
@@ -68,8 +77,11 @@ Data flow of one user message: cli → `runMainTurn` (`delegate` difficulty rout
 
 ```bash
 pnpm install          # install dependencies
+pnpm build            # build the web app and the npm distribution package
 pnpm test             # run all tests (vitest, packages/*/test/**/*.test.ts)
 pnpm typecheck        # tsc typecheck for all packages
+pnpm pack:npm         # create the npm tarball under artifacts/
+pnpm publish:npm      # publish the npm tarball (requires npm login)
 pnpm bench --help     # benchmark runner: official SWE-bench / three built-in tasks
 pnpm dev <pkg> [args] # run a package entry directly with tsx, e.g. pnpm dev cli chat
 pnpm dev web          # build and start the web app (default port 4573, opens the browser)
@@ -109,6 +121,24 @@ How to run:
 
    Protocol selection for catalog models is automatic (anthropic → anthropic-messages, others → openai-completions); `baseUrl` is optional and defaults to each provider's official endpoint (the OpenAI family defaults to `https://api.openai.com/v1`; third-party endpoints such as deepseek/moonshot must be set explicitly). At project level, a `.hotpot/settings.json` in cwd or any parent directory can override non-credential allowlisted fields (`mainAgentTier`/`maxParallelTasks`/`planMaxRevisions`/`approval.policy`); credentials are read only from the user level.
 
-2. The CLI command is `hotpot` (source-repo dev equivalent: `pnpm dev cli chat`); it starts line-based chat: `/exit` quits, Ctrl-C interrupts the current turn; high-risk commands and overwrites ask for `y/n` approval (default n).
+2. The CLI command is `hotpot` (available after installation; source-repo dev equivalent: `pnpm dev cli chat`); it starts line-based chat: `/exit` quits, Ctrl-C interrupts the current turn; high-risk commands and overwrites ask for `y/n` approval (default n).
 3. Sessions are persisted as JSONL under `~/.hotpot/sessions/`; `hotpot chat --session <session file path>` resumes history and continues the conversation (source-repo dev equivalent: `pnpm dev cli chat --session <session file path>`).
-4. Web: run `pnpm dev web` in the source repo to build and start the web app (http://localhost:4573 by default, opens the browser once ready; same settings, sessions shared with CLI); after installation you can also build with `pnpm --filter @hotpot/web build` and run `hotpot-server`. When developing the frontend, run `pnpm --filter @hotpot/web dev` in another terminal and Vite proxies `/api` to 4573.
+4. Web: after installation run `hotpot web` (http://127.0.0.1:4573 by default, opens the browser once ready; same settings, sessions shared with CLI); in the source repo use `pnpm dev web`. When developing the frontend, run `pnpm --filter @hotpot/web dev` in another terminal and Vite proxies `/api` to 4573.
+
+## Publishing the npm Package
+
+The distribution package lives in `packages/hotpot-agent` and contains only `dist/` (single-file CLI + web assets). Release steps:
+
+1. Keep versions in sync: `packages/hotpot-agent/package.json` and `APP_VERSION` in `packages/telemetry/src/defaults.ts`.
+2. Add `NPM_TOKEN` (an npm granular access token with publish permission) under GitHub repo Settings → Secrets and variables → Actions.
+3. Commit, then tag and push:
+
+   ```bash
+   git tag v0.1.0
+   git push origin main --tags
+   ```
+
+   `.github/workflows/publish.yml` verifies that the tag matches the package version, runs check / typecheck / test / build, then publishes to npm with provenance.
+4. Manual local publish: run `npm login`, then `pnpm publish:npm`.
+
+`artifacts/` is a local tarball directory and is not committed. The published tarball contains only `dist/bin.js`, `dist/web/**`, `README.md` and `LICENSE`.

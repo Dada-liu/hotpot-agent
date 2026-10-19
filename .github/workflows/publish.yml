@@ -1,0 +1,70 @@
+name: Publish npm package
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        run: pnpm check
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
+      - name: Build package
+        run: pnpm build
+
+      - name: Verify tag matches package version
+        run: |
+          VERSION=$(node -p "require('./packages/hotpot-agent/package.json').version")
+          if [ "v$VERSION" != "$GITHUB_REF_NAME" ]; then
+            echo "tag $GITHUB_REF_NAME does not match package version $VERSION" >&2
+            exit 1
+          fi
+
+      - name: Pack
+        run: |
+          mkdir -p "$RUNNER_TEMP/artifacts"
+          pnpm --dir packages/hotpot-agent pack --pack-destination "$RUNNER_TEMP/artifacts"
+
+      - name: Smoke test packed CLI
+        run: |
+          PREFIX="$RUNNER_TEMP/hotpot-prefix"
+          VERSION=$(node -p "require('./packages/hotpot-agent/package.json').version")
+          npm install -g --prefix "$PREFIX" "$RUNNER_TEMP"/artifacts/*.tgz
+          test "$(PATH="$PREFIX/bin:$PATH" hotpot --version)" = "$VERSION"
+          PATH="$PREFIX/bin:$PATH" hotpot --help
+
+      - name: Publish to npm
+        run: npm publish "$RUNNER_TEMP"/artifacts/*.tgz --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -3,4 +3,4 @@
 export const DEFAULT_TELEMETRY_ENDPOINT = "";
 
 // 与 package.json 的 version 保持一致；运行时可通过 createTelemetryClient 的 appVersion 覆盖。
-export const APP_VERSION = "0.0.0";
+export const APP_VERSION = "0.1.0";

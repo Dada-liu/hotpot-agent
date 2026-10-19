@@ -10,6 +10,14 @@
 
 基于 Node + TypeScript 的 code agent。目标：更低的成本、更好的效果。
 
+## 安装
+
+```bash
+npm install -g hotpot-agent
+```
+
+npm 包名是 `hotpot-agent`，安装后的命令是 `hotpot`。要求 Node >= 22。
+
 ## 架构
 
 ```
@@ -58,6 +66,7 @@
 │   ├── server/        # @hotpot/server：REST + SSE 服务层（会话管理、日志补发、审批桥、静态托管）
 │   ├── web/           # @hotpot/web：React SPA（三栏界面、agent 状态面板）
 │   ├── cli/           # @hotpot/cli：行式交互入口
+│   ├── hotpot-agent/  # hotpot-agent：npm 发布包（hotpot 命令 + Web 产物）
 │   ├── telemetry/     # @hotpot/telemetry：M5 匿名遥测客户端（事件 schema、脱敏、批量上报）
 │   └── benchmarks/    # @hotpot/benchmarks：M5 benchmark runner（SWE-bench 官方评测 + 自建三题）
 └── scripts/           # 开发辅助脚本（pnpm dev 等）
@@ -67,8 +76,11 @@
 
 ```bash
 pnpm install          # 安装依赖
+pnpm build            # 构建 Web 并打包 npm 发布包
 pnpm test             # 跑全部测试（vitest，packages/*/test/**/*.test.ts）
 pnpm typecheck        # 所有包 tsc 类型检查
+pnpm pack:npm         # 在 artifacts/ 生成 npm tarball
+pnpm publish:npm      # 发布 npm tarball（需先 npm login）
 pnpm bench --help     # benchmark runner：SWE-bench 官方评测 / 自建三题
 pnpm dev <pkg> [args] # tsx 直跑包入口，如 pnpm dev cli chat
 pnpm dev web          # 构建并启动 Web 端（默认 4573 端口，启动后自动打开浏览器）
@@ -108,6 +120,24 @@ M5 已完成（本仓库部分）：`packages/telemetry` 匿名遥测客户端�
 
    内置目录模型的协议自动选择（anthropic→anthropic-messages，其余→openai-completions）；`baseUrl` 可省略，缺省走各家官方端点（openai 系缺省 `https://api.openai.com/v1`，deepseek/moonshot 等第三方端点需显式填写）。项目级可在 cwd 向上任一目录放 `.hotpot/settings.json` 覆盖非凭证白名单字段（`mainAgentTier`/`maxParallelTasks`/`planMaxRevisions`/`approval.policy`），凭证只从用户级读取。
 
-2. 命令行入口为 `hotpot`（源码仓库开发态：`pnpm dev cli chat`），启动行式对话：`/exit` 退出，Ctrl-C 中断当前回合；高危命令与覆盖写会询问 `y/n` 审批（默认 n）。
+2. 命令行入口为 `hotpot`（安装后直接可用；源码仓库开发态：`pnpm dev cli chat`），启动行式对话：`/exit` 退出，Ctrl-C 中断当前回合；高危命令与覆盖写会询问 `y/n` 审批（默认 n）。
 3. 会话以 JSONL 落盘在 `~/.hotpot/sessions/`；`hotpot chat --session <会话文件路径>` 恢复历史继续对话（源码仓库开发态：`pnpm dev cli chat --session <会话文件路径>`）。
-4. Web 端：源码仓库运行 `pnpm dev web` 一键构建并启动（默认 http://localhost:4573，就绪后自动打开浏览器；同一 settings 配置，会话与 CLI 互通）；安装后也可先 `pnpm --filter @hotpot/web build` 再运行 `hotpot-server`。开发态改前端时另开 `pnpm --filter @hotpot/web dev`，Vite 将 `/api` 代理到 4573。
+4. Web 端：安装后运行 `hotpot web` 一键启动（默认 http://127.0.0.1:4573，就绪后自动打开浏览器；同一 settings 配置，会话与 CLI 互通）；源码仓库开发态运行 `pnpm dev web`。开发态改前端时另开 `pnpm --filter @hotpot/web dev`，Vite 将 `/api` 代理到 4573。
+
+## 发布 npm 包
+
+发布包位于 `packages/hotpot-agent`，构建后只包含 `dist/`（单文件 CLI + Web 产物）。发版步骤：
+
+1. 同步版本号：`packages/hotpot-agent/package.json` 与 `packages/telemetry/src/defaults.ts` 的 `APP_VERSION`。
+2. 在 GitHub 仓库 Settings → Secrets and variables → Actions 添加 `NPM_TOKEN`（npm granular access token，具备 publish 权限）。
+3. 提交后打 tag 并推送：
+
+   ```bash
+   git tag v0.1.0
+   git push origin main --tags
+   ```
+
+   `.github/workflows/publish.yml` 会校验 tag 与包版本一致，依次运行 check / typecheck / test / build，然后带 provenance 发布到 npm。
+4. 本地手动发布：先 `npm login`，再执行 `pnpm publish:npm`。
+
+`artifacts/` 是本地 tarball 目录，不提交。发布产物只包含 `dist/bin.js`、`dist/web/**`、`README.md` 与 `LICENSE`。

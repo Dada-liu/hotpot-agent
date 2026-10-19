@@ -1,0 +1,48 @@
+{
+	"name": "hotpot-agent",
+	"version": "0.1.0",
+	"description": "A low-cost code agent with a terminal REPL and a local web UI.",
+	"private": false,
+	"type": "module",
+	"engines": {
+		"node": ">=22"
+	},
+	"bin": {
+		"hotpot": "./dist/bin.js"
+	},
+	"files": [
+		"dist",
+		"LICENSE"
+	],
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/Dada-liu/hotpot-agent.git",
+		"directory": "packages/hotpot-agent"
+	},
+	"homepage": "https://github.com/Dada-liu/hotpot-agent#readme",
+	"bugs": {
+		"url": "https://github.com/Dada-liu/hotpot-agent/issues"
+	},
+	"keywords": [
+		"agent",
+		"code-agent",
+		"cli",
+		"llm"
+	],
+	"license": "MIT",
+	"scripts": {
+		"build": "tsup"
+	},
+	"dependencies": {
+		"@hono/node-server": "^2.1.5",
+		"@modelcontextprotocol/sdk": "^1.32.1",
+		"hono": "^4.13.13",
+		"zod": "^4.6.5"
+	},
+	"devDependencies": {
+		"@hotpot/cli": "workspace:*",
+		"@hotpot/server": "workspace:*",
+		"tsup": "^8.5.1",
+		"typescript": "^5.9.3"
+	}
+}

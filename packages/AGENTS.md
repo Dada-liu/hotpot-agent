@@ -1,6 +1,7 @@
 # Working in packages/
 
-- One directory per package; package names are `@hotpot/<dir>`. Cross-package dependencies use `workspace:*`.
+- One directory per package; package names are `@hotpot/<dir>`, with one exception: `packages/hotpot-agent` is the unscoped npm distribution package (`hotpot-agent`, installed binary `hotpot`). Cross-package dependencies use `workspace:*`.
+- `packages/hotpot-agent` is the only published artifact: tsup bundles `@hotpot/cli` and `@hotpot/server` (plus all `@hotpot/*` sources) into `dist/bin.js`, copies `packages/web/dist` to `dist/web`, and ships only `dist/` with README/LICENSE. Never publish the `@hotpot/*` packages separately. `hotpot` enters chat, `hotpot web` starts the local server. See the root README's publishing section for the release flow.
 - Every package carries its own `package.json` (`"type": "module"`), `tsconfig.json` (extends `../../tsconfig.base.json`), `README.md` (Simplified Chinese) and `AGENTS.md` (English).
 - Source lives in `<pkg>/src/`, tests in `<pkg>/test/**/*.test.ts`; run `pnpm test` and `pnpm exec biome check` from the repo root.
 - In `packages/core` and `packages/orchestrator`, `src/` is one subdirectory per feature. Each feature folder owns an `index.ts` barrel, implementation files, `README.md` (Chinese) and `AGENTS.md` (English). `src/` root keeps only `index.ts` (re-exports, no logic) plus `node-builtins.d.ts`; cross-feature imports use concrete file paths, not another feature's barrel.

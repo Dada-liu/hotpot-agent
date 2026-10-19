@@ -34,3 +34,8 @@ All prompts passed to the LLM and the AGENTS.md file are written in English. Add
 - Do not preserve backward compatibility unless the user asks for it.
 - Never hardcode key checks (e.g. `matchesKey(keyData, "ctrl+x")`). Add defaults to `DEFAULT_EDITOR_KEYBINDINGS` or `DEFAULT_APP_KEYBINDINGS` so they stay configurable.
 - Never modify `packages/ai/src/models.generated.ts` directly; update `packages/ai/scripts/generate-models.ts` instead, then regenerate. Including the resulting `models.generated.ts` diff is always OK, even if regeneration includes unrelated upstream model metadata changes.
+
+## Packaging
+
+- `packages/hotpot-agent` is the only npm-published artifact (`hotpot-agent`, installed binary `hotpot`). tsup bundles workspace sources into `dist/bin.js` and copies `packages/web/dist` into `dist/web`; publish only through the root `pnpm build` / `pnpm pack:npm` / `pnpm publish:npm` scripts.
+- Release by pushing a `v*` tag after syncing `packages/hotpot-agent/package.json` and `APP_VERSION` in `packages/telemetry/src/defaults.ts`. The GitHub workflow requires an `NPM_TOKEN` secret with publish permission.

@@ -24,7 +24,8 @@ M3 服务层：在 cli 与 orchestrator 之上提供 REST + SSE API，负责会�
   - publicDir（默认 `<仓库根>/public`）：`/<文件名>` 原样直出；
   - 两个目录都不存在时不挂任何路由（纯 API 模式）；`/api` 前缀永不进静态路由，URL 路径规范化后拒绝逃逸根目录。
 - **REST + SSE 路由**（`src/app.ts`）：全部路由挂 `/api/sessions*`；`GET /:id` 与 `events`（SSE）等单会话路由经共享的 `requireSession` 解析——内存 managed 表未命中时降级 `attachById` 恢复磁盘会话（CLI 创建的会话同样可打开），attach 也未命中才 404。
-- **`hotpot-server` bin**（`src/bin.ts`）：装配 SessionManager + Hono app，经 `@hono/node-server` 监听（端口取 `HOTPOT_PORT`，缺省 4573）；启动时挂载静态托管，`HOTPOT_WEB_DIST`/`HOTPOT_PUBLIC_DIR` 可覆盖默认目录，目录不存在则纯 API 模式。
+- **`startServer` 启动装配**（`src/serve.ts`）：SessionManager + Hono app + 静态托管 + `@hono/node-server` 监听的可复用接线；`hotpot-server` bin 与发布包 `hotpot web` 共用。端口取参数或 `HOTPOT_PORT`（缺省 4573），静态目录可用参数或 `HOTPOT_WEB_DIST`/`HOTPOT_PUBLIC_DIR` 覆盖。
+- **`hotpot-server` bin**（`src/bin.ts`）：调用 `startServer` 并打印启动地址，供源码仓库开发态使用。
 
 ## M4 增量
 
@@ -48,6 +49,7 @@ M3 服务层：在 cli 与 orchestrator 之上提供 REST + SSE API，负责会�
 src/
   index.ts             包入口：re-export 全部公开模块
   bin.ts               hotpot-server 启动入口（REST + SSE + 静态托管）
+  serve.ts             startServer 启动装配（bin 与发布包 hotpot web 共用）
   app.ts               HTTP 路由（REST + SSE，requireSession 共享解析）
   tailer.ts            JSONL 会话日志 tailer（createTailer）
   wire.ts              UI 事件协议（WireEvent）与 seq 总线（createWireHub）

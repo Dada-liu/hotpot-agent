@@ -1,6 +1,7 @@
 node_modules/
 dist/
 lib/
+artifacts/
 # 源码目录例外：shadcn/ui 的 cn 工具位于 web 包 src/lib（lib/ 规则会误伤同名源码目录）
 !packages/web/src/lib/
 .superpowers/

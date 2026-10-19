@@ -1,0 +1,8 @@
+{
+	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		// 依赖 @hotpot/cli 与 @hotpot/server；两边源码用到 AbortController/AbortSignal 等 DOM 全局类型
+		"lib": ["es2023", "dom"]
+	},
+	"include": ["src", "test"]
+}

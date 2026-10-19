@@ -31,3 +31,8 @@
 - 除非用户要求，否则不保留向后兼容。
 - 绝不硬编码按键判断（例如 `matchesKey(keyData, "ctrl+x")`）。应将默认值加入 `DEFAULT_EDITOR_KEYBINDINGS` 或 `DEFAULT_APP_KEYBINDINGS`，使其保持可配置。
 - 绝不直接修改 `packages/ai/src/models.generated.ts`；应修改 `packages/ai/scripts/generate-models.ts`，然后重新生成。提交时附带生成的 `models.generated.ts` 的 diff 总是可以的，即使重新生成带入了无关的上游模型元数据变更。
+
+## 打包与发布
+
+- `packages/hotpot-agent` 是唯一发布到 npm 的产物（包名 `hotpot-agent`，安装后的命令 `hotpot`）。tsup 把 workspace 源码打成 `dist/bin.js`，并把 `packages/web/dist` 复制到 `dist/web`；只通过根目录的 `pnpm build` / `pnpm pack:npm` / `pnpm publish:npm` 发布。
+- 发版前同步 `packages/hotpot-agent/package.json` 与 `packages/telemetry/src/defaults.ts` 中的 `APP_VERSION`，然后推送 `v*` tag。GitHub workflow 需要具备 publish 权限的 `NPM_TOKEN` secret。
