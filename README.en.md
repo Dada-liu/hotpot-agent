@@ -139,6 +139,7 @@ The distribution package lives in `packages/hotpot-agent` and contains only `dis
    ```
 
    `.github/workflows/publish.yml` verifies that the tag matches the package version, runs check / typecheck / test / build, then publishes to npm with provenance.
+   If the token can only stage publishes, or the npm account has staged publishing enabled, the workflow puts the version in Staged Packages; a maintainer must approve it on npmjs.com with 2FA before it becomes public.
 4. Manual local publish: run `npm login`, then `pnpm publish:npm`.
 
 `artifacts/` is a local tarball directory and is not committed. The published tarball contains only `dist/bin.js`, `dist/web/**`, `README.md` and `LICENSE`.

@@ -138,6 +138,7 @@ M5 已完成（本仓库部分）：`packages/telemetry` 匿名遥测客户端�
    ```
 
    `.github/workflows/publish.yml` 会校验 tag 与包版本一致，依次运行 check / typecheck / test / build，然后带 provenance 发布到 npm。
+   如果 token 只能 staged publish，或 npm 账号启用了 staged publishing，工作流会先把版本放入 Staged Packages；需要维护者在 npmjs.com 用 2FA 点击 Approve 后才会公开。
 4. 本地手动发布：先 `npm login`，再执行 `pnpm publish:npm`。
 
 `artifacts/` 是本地 tarball 目录，不提交。发布产物只包含 `dist/bin.js`、`dist/web/**`、`README.md` 与 `LICENSE`。
