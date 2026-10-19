@@ -135,8 +135,16 @@ function runCommand(
 		});
 
 		if (child.stdin) {
-			child.stdin.write(`${JSON.stringify(payload)}\n`);
-			child.stdin.end();
+			// hook 进程可能不读 stdin 就退出（如 `true` / 直接写文件的命令），
+			// 此时 write/end 会异步触发 EPIPE。必须吞掉该流错误，否则会变成
+			// Vitest 的未处理异常；结果仍以子进程 exit code 为准。
+			child.stdin.on("error", () => {});
+			try {
+				child.stdin.write(`${JSON.stringify(payload)}\n`);
+				child.stdin.end();
+			} catch {
+				// 同步写失败同样不影响退出码判定
+			}
 		}
 	});
 }

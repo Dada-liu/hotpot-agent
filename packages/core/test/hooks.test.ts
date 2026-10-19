@@ -156,7 +156,7 @@ describe("命令执行约定", () => {
 		// 只断言事件名与目录尾段，避免符号链接前缀差异
 		const text = await readFile(out, "utf8");
 		expect(text.startsWith("post_tool|")).toBe(true);
-		expect(text.endsWith(`/T/${cwd.split("/").at(-1)}`)).toBe(true);
+		expect(text.endsWith(`/${cwd.split("/").at(-1)}`)).toBe(true);
 	});
 
 	it("多条命令按配置顺序执行", async () => {

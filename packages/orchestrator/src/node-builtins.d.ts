@@ -55,7 +55,11 @@ declare module "node:fs" {
 declare module "node:child_process" {
 	export interface HotpotChildProcess {
 		pid?: number;
-		stdin: { write(data: string): unknown; end(): void } | null;
+		stdin: {
+			write(data: string): unknown;
+			end(): void;
+			on(event: "error", listener: (err: Error) => void): void;
+		} | null;
 		stdout: HotpotChildStream | null;
 		stderr: HotpotChildStream | null;
 		kill(signal?: string): boolean;
