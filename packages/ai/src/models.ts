@@ -31,6 +31,38 @@ export const MODELS: ModelInfo[] = [
 		cost: { input: 0.28, output: 0.42 },
 	},
 	{
+		// DeepSeek 官方定价页（2026-10-19 复核）非高峰人民币价：缓存未命中输入 ¥1/M、输出 ¥4/M；
+		// 高峰翻倍为 ¥2/¥8。按 7.1 CNY/USD 折算为 $0.14/$0.56（非高峰）；
+		// contextWindow/maxTokens 沿用 DeepSeek 现有 128K/8K 规格（官方 V4 文档未另行明示）
+		id: "deepseek-flash",
+		provider: "deepseek",
+		api: "openai-completions",
+		contextWindow: 131_072,
+		maxTokens: 8_192,
+		cost: { input: 0.14, output: 0.56 },
+	},
+	{
+		// DeepSeek 官方定价页（2026-10-19 复核）非高峰人民币价：缓存未命中输入 ¥4.5/M、输出 ¥13.5/M；
+		// 高峰 ¥9/¥27。按 7.1 CNY/USD 折算为 $0.63/$1.90（非高峰）；
+		// contextWindow/maxTokens 沿用 DeepSeek 现有 128K/8K 规格
+		id: "deepseek-v4-pro",
+		provider: "deepseek",
+		api: "openai-completions",
+		contextWindow: 131_072,
+		maxTokens: 8_192,
+		cost: { input: 0.63, output: 1.9 },
+	},
+	{
+		// deepseek-v4-flash 按 Flash 计费：官方人民币价与 deepseek-flash 相同（¥1/¥4 非高峰，高峰翻倍）；
+		// 按 7.1 CNY/USD 折算为 $0.14/$0.56（非高峰）
+		id: "deepseek-v4-flash",
+		provider: "deepseek",
+		api: "openai-completions",
+		contextWindow: 131_072,
+		maxTokens: 8_192,
+		cost: { input: 0.14, output: 0.56 },
+	},
+	{
 		// Moonshot 官方海外定价：$0.60/$2.50（2026-06 第三方复核约 $0.57/$2.30，以官方为准）；
 		// 128K 上下文；maxTokens 官方未明示，取第三方聚合值 16384（2026-10 复核，待官方文档确认）
 		id: "kimi-k2",

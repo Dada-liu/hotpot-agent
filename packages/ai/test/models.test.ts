@@ -12,10 +12,22 @@ describe("MODELS", () => {
 		["anthropic", "claude-sonnet-4-5"],
 		["openai", "gpt-4.1"],
 		["deepseek", "deepseek-chat"],
+		["deepseek", "deepseek-flash"],
+		["deepseek", "deepseek-v4-pro"],
+		["deepseek", "deepseek-v4-flash"],
 		["moonshot", "kimi-k2"],
 	])("包含 %s/%s", (provider, id) => {
 		const model = MODELS.find((m) => m.provider === provider && m.id === id);
 		expect(model).toBeDefined();
+	});
+
+	it.each([
+		["deepseek-flash", 0.14, 0.56],
+		["deepseek-v4-flash", 0.14, 0.56],
+		["deepseek-v4-pro", 0.63, 1.9],
+	])("%s 使用非高峰人民币价折算后的美元单价", (id, input, output) => {
+		const model = findModel("deepseek", id);
+		expect(model?.cost).toEqual({ input, output });
 	});
 
 	it("每个模型 contextWindow > 0 且 cost.input >= 0", () => {
