@@ -129,7 +129,7 @@ M5 已完成（本仓库部分）：`packages/telemetry` 匿名遥测客户端�
 发布包位于 `packages/hotpot-agent`，构建后只包含 `dist/`（单文件 CLI + Web 产物）。发版步骤：
 
 1. 同步版本号：`packages/hotpot-agent/package.json` 与 `packages/telemetry/src/defaults.ts` 的 `APP_VERSION`。
-2. 在 GitHub 仓库 Settings → Secrets and variables → Actions 添加 `NPM_TOKEN`（npm granular access token，具备 publish 权限）。
+2. 在 GitHub 仓库 Settings → Secrets and variables → Actions 添加 `NPM_TOKEN`。该 token 必须具备 publish 权限，并且能绕过 2FA（npm Automation token，或在 granular token 中勾选 bypass 2FA）；普通 token 会在发布会报 `EOTP`。
 3. 提交后打 tag 并推送：
 
    ```bash
