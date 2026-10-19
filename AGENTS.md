@@ -2,7 +2,7 @@ You are a software architect engineer proficient in AI Infra, frontend and backe
 
 You will discuss the solution with the user to build a code agent.
 
-All code comments and `README.md` must be written in Simplified Chinese.
+All code comments and `README.md` must be written in Simplified Chinese. `README.en.md` is the English version. Whenever `README.md` or `README.en.md` changes, update the other file in the same change so both stay in sync.
 
 All prompts passed to the LLM and the AGENTS.md file are written in English. Add Chinese comments to the prompts, and create a backup document AGENTS\_zh-CN.md for AGENTS.md.All prompts passed to LLMs and `AGENTS.md` are written in English. Add Chinese comments for them, or create a separate backup document `AGENTS_zh-CN.md`.
 

@@ -1,0 +1,114 @@
+<p align="center">
+  <img src="public/logo.png" alt="hotpot-code logo" width="160" />
+</p>
+
+<h1 align="center">hotpot-code</h1>
+
+<p align="center">
+  <a href="README.md">中文</a> | English
+</p>
+
+A code agent built on Node + TypeScript. Goal: lower cost, better results.
+
+## Architecture
+
+```
+┌────────────────────────────────────────────────────────────────────────────────────┐
+│[Access Layer]                                                                      │
+│  packages/web     React SPA: sessions / chat stream / agent panel                  │
+│  packages/cli     line-based interactive entry                                     │
+├────────────────────────────────────────────────────────────────────────────────────┤
+│[Service Layer]                                                                     │
+│  packages/server  REST + SSE (sessions, log replay, static hosting)                │
+├────────────────────────────────────────────────────────────────────────────────────┤
+│[Orchestration Layer]                                                               │
+│  packages/orchestrator                                                             │
+│    three-tier agents: main routes difficulty -> worker runs/splits                 │
+│    -> task executes atomic tasks; plan review; steer/queue queues                  │
+├────────────────────────────────────────────────────────────────────────────────────┤
+│[Core Layer]                                                                        │
+│  packages/core                                                                     │
+│    turn/step two-level loop, tool three-face separation, approvals                 │
+│    session JSONL event log as the single source of truth                           │
+├────────────────────────────────────────────────────────────────────────────────────┤
+│[Adapter Layer]                                                                     │
+│  packages/ai                                                                       │
+│    api x provider protocol adaptation                                              │
+│    (anthropic-messages / openai-completions)                                       │
+│    SSE streaming, model catalog, usage accounting                                  │
+└────────────────────────────────────────────────────────────────────────────────────┘
+```
+
+Dependencies flow strictly top-down (`server → orchestrator → core → ai`; `cli` and `server` are both entry points above orchestrator, and `web` imports no workspace packages — its build output is served by server). Reverse dependencies are forbidden. There is also a side package `packages/telemetry` (`cli`/`server` → `telemetry` → `core`) that only reports anonymous metrics and stays off the agent main path; the dev tool `packages/benchmarks` reuses core/orchestrator/telemetry for batch runs, but is not referenced by `cli`/`server` and is not shipped in the tool artifact.
+
+Data flow of one user message: cli → `runMainTurn` (`delegate` difficulty routing) → worker / task inline-runs core `runTurn` → each step's history is derived by `deriveMessages` from the session log → `ai.streamChat` → tool batches execute through the approval waterfall → all events are appended to JSONL and streamed back to the cli renderer.
+
+## Directory Structure
+
+```
+├── AGENTS.md          # development conventions (English)
+├── AGENTS_zh-CN.md    # development conventions (Chinese backup)
+├── docs/              # project docs (markdown as code)
+│   ├── PRD.md         # finalized product requirements (authoritative source)
+│   ├── archive/       # design archive: requirements / architecture / orchestration / milestones
+│   └── superpowers/   # implementation plans
+├── packages/          # code (pnpm monorepo)
+│   ├── ai/            # @hotpot/ai: LLM protocol adaptation and model catalog
+│   ├── core/          # @hotpot/core: session log, turn loop, tools and approvals
+│   ├── orchestrator/  # @hotpot/orchestrator: three-tier orchestration (delegate/spawn_workers/spawn_tasks, plan approval, inbox)
+│   ├── server/        # @hotpot/server: REST + SSE service (sessions, log replay, approval bridge, static hosting)
+│   ├── web/           # @hotpot/web: React SPA (three-column UI, agent status panel)
+│   ├── cli/           # @hotpot/cli: line-based interactive entry
+│   ├── telemetry/     # @hotpot/telemetry: M5 anonymous telemetry client (event schema, redaction, batching)
+│   └── benchmarks/    # @hotpot/benchmarks: M5 benchmark runner (official SWE-bench evaluation + three built-in tasks)
+└── scripts/           # development helper scripts (pnpm dev, etc.)
+```
+
+## Common Commands
+
+```bash
+pnpm install          # install dependencies
+pnpm test             # run all tests (vitest, packages/*/test/**/*.test.ts)
+pnpm typecheck        # tsc typecheck for all packages
+pnpm bench --help     # benchmark runner: official SWE-bench / three built-in tasks
+pnpm dev <pkg> [args] # run a package entry directly with tsx, e.g. pnpm dev cli chat
+pnpm dev server       # start REST + SSE service (default port 4573, serves the web build)
+pnpm exec biome check # lint + format check
+```
+
+Web build and development: `pnpm --filter @hotpot/web build`, then server serves the output directly; for frontend development run `pnpm --filter @hotpot/web dev` (Vite dev, proxies `/api` to 4573).
+
+## Current Status
+
+M1 done: the minimal loop "conversation → tool calls → task completion" works in the terminal (scripted acceptance in `packages/cli/test/acceptance.test.ts`; criteria in the M1 section of `docs/archive/04-roadmap.md`).
+
+M2 done: three-tier orchestration (main difficulty routing → worker execution/parallel split → task atomic tasks), plan review before execution, steer/queue dual queues (scenario acceptance in `packages/orchestrator/test/m2-acceptance.test.ts`; criteria in the M2 section of `docs/archive/04-roadmap.md`).
+
+M3 done: web delivery — `packages/server` (REST + SSE, default port 4573, reconnect replay from the log, CLI and web can observe the same session) + `packages/web` (React SPA: session list, streaming chat, tool cards, plan review, approvals, steer/interrupt, usage display, right-side agent status panel). Tests in `packages/server/test/` (api / session-manager / tailer / static) and `packages/web/test/`; criteria in the M3 section of `docs/archive/04-roadmap.md`).
+
+M5 done (this repo's part): `packages/telemetry` anonymous telemetry client (cli/server integration, event allowlist, redaction, batch retry) + `packages/benchmarks` benchmark runner (SWE-bench instance export/selection, plain checkout + worktree, non-interactive agent, predictions, official `swebench` harness orchestration, reports, `benchmark_run` telemetry, three built-in tasks). Usage in `packages/benchmarks/README.md`; authoring flow in `docs/benchmark-authoring.md`; Lite 10-task acceptance record in the M5 section of `docs/archive/04-roadmap.md`. The telemetry backend is a separate project outside this repo at `../hotpot-telemetry/` and is not shipped in the tool artifact.
+
+How to run:
+
+1. Configure `~/.hotpot/settings.json` (all three model tiers are required; `apiKey` can be a literal value or `"$VAR"` referencing an environment variable):
+
+   ```json
+   {
+     "models": {
+       "high": { "provider": "anthropic", "model": "claude-sonnet-4-5", "apiKey": "$ANTHROPIC_API_KEY" },
+       "medium": { "provider": "openai", "model": "gpt-4.1", "apiKey": "$OPENAI_API_KEY" },
+       "low": {
+         "provider": "deepseek",
+         "model": "deepseek-chat",
+         "apiKey": "$DEEPSEEK_API_KEY",
+         "baseUrl": "https://api.deepseek.com/v1"
+       }
+     }
+   }
+   ```
+
+   Protocol selection for catalog models is automatic (anthropic → anthropic-messages, others → openai-completions); `baseUrl` is optional and defaults to each provider's official endpoint (the OpenAI family defaults to `https://api.openai.com/v1`; third-party endpoints such as deepseek/moonshot must be set explicitly). At project level, a `.hotpot/settings.json` in cwd or any parent directory can override non-credential allowlisted fields (`mainAgentTier`/`maxParallelTasks`/`planMaxRevisions`/`approval.policy`); credentials are read only from the user level.
+
+2. `pnpm dev cli chat` starts line-based chat: `/exit` quits, Ctrl-C interrupts the current turn; high-risk commands and overwrites ask for `y/n` approval (default n).
+3. Sessions are persisted as JSONL under `~/.hotpot/sessions/`; `pnpm dev cli chat --session <session file path>` resumes history and continues the conversation.
+4. Web: build with `pnpm --filter @hotpot/web build`, then run `pnpm dev server` and open http://localhost:4573 (same settings, sessions shared with CLI); when developing the frontend, run `pnpm --filter @hotpot/web dev` in another terminal and Vite proxies `/api` to 4573.

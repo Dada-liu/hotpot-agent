@@ -1,4 +1,12 @@
-# hotpot-code
+<p align="center">
+  <img src="public/logo.png" alt="hotpot-code logo" width="160" />
+</p>
+
+<h1 align="center">hotpot-code</h1>
+
+<p align="center">
+  中文 | <a href="README.en.md">English</a>
+</p>
 
 基于 Node + TypeScript 的 code agent。目标：更低的成本、更好的效果。
 
