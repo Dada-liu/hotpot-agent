@@ -43,7 +43,7 @@ cli / server
 
 ## 遥测后台（仓库外）
 
-- 位置：`../hotpot-telemetry/`（与 hotpot-code 同级），Node 22 + Hono + SQLite + React 管理界面。
+- 位置：`../hotpot-telemetry/`（与 hotpot-agent 同级），Node 22 + Hono + SQLite + React 管理界面。
 - 默认部署：`sell_system`（Ubuntu 24.04，公网 IP），监听 `0.0.0.0:4580`，数据在 `./data/hotpot-telemetry.db`。
 - 接口：`POST /api/v1/ingest`（Bearer token、按 event_id 幂等、schema 二次校验）、总览/成本/性能/成功率/错误/安装/会话/告警规则/投递记录/导出。
 - 告警：SMTP、通用 webhook、飞书自定义机器人；规则进程内每 60s 评估，冷却期内不重复投递，失败重试 3 次并记录。
@@ -136,5 +136,5 @@ M5 的 benchmark agent 只生成 patch：普通 checkout，不装 repo 依赖、
 - 不安装 repo 依赖、不跑 repo 测试，因此不覆盖「需要构建/测试反馈」的能力。
 - Apple Silicon 上 amd64 镜像模拟可能显著慢于原生 x86_64；swebench 5.x 还需手动 `docker pull --platform linux/amd64` 预拉镜像。
 - 默认只跑 Lite 10 题；完整 300 题是手动跑批，需要更多磁盘与时间。
-- 官方 report 路径随 harness 版本变化：swebench 5.x 实际写到 `<report_dir>/<model_name>.<runId>.json`；runner 按 `<runId>.json`、`hotpot-code.<runId>.json`、`<runId>/report.json`、浅层扫描依次查找。
+- 官方 report 路径随 harness 版本变化：swebench 5.x 实际写到 `<report_dir>/<model_name>.<runId>.json`；runner 按 `<runId>.json`、`hotpot-agent.<runId>.json`、`<runId>/report.json`、浅层扫描依次查找。
 - swebench 5.x 必须使用 `SWE-bench/SWE-bench_Lite`（数据集自带 `image` 字段）；旧名 `princeton-nlp/SWE-bench_Lite` 会让 harness 抛 `KeyError: 'image'`。

@@ -302,7 +302,7 @@ export async function findReportFile(
 ): Promise<string | null> {
 	const candidates = [
 		join(reportDir, `${runId}.json`),
-		join(reportDir, `hotpot-code.${runId}.json`),
+		join(reportDir, `hotpot-agent.${runId}.json`),
 		join(reportDir, runId, "report.json"),
 		join(reportDir, "report.json"),
 	];

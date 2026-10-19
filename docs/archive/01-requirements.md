@@ -4,7 +4,7 @@
 
 ## 1. 项目目标
 
-构建一个基于 Node + TypeScript 的 code agent，项目名 **hotpot-code**。
+构建一个基于 Node + TypeScript 的 code agent，项目名 **hotpot-agent**。
 
 核心原则：**更低的成本、更好的效果**。这句话需要可量化，否则无法指导设计决策：
 
@@ -131,5 +131,5 @@ bash / read / write / edit 四个（已确认）。理由：这是 code agent �
 | 四个基础工具 | bash / read / write / edit |
 | 会话存储位置 | `~/.hotpot/sessions/` |
 | 首批 LLM provider | Anthropic + OpenAI 兼容协议（api × provider 二维适配，见 `docs/02-architecture.md`） |
-| 项目名 | hotpot-code |
+| 项目名 | hotpot-agent |
 | 自建 benchmark 题目来源 | 金融、软件开发、自媒体运营三个领域各先出 1 题（由设计者出题打底），后续从日常使用本 agent 的历史任务中沉淀 |

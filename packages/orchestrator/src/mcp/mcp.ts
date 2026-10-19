@@ -209,7 +209,7 @@ async function defaultCreateClient(
 		});
 	}
 	const client = new Client(
-		{ name: "hotpot-code", version: "0.0.0" },
+		{ name: "hotpot-agent", version: "0.0.0" },
 		{
 			capabilities: {},
 		},

@@ -276,7 +276,7 @@ export function App() {
 							className="min-w-0 flex-1 truncate text-sm text-muted-foreground"
 							title={current?.cwd}
 						>
-							{current ? currentName : pending ? "新会话" : "hotpot code"}
+							{current ? currentName : pending ? "新会话" : "hotpot-agent"}
 						</span>
 						<span
 							className={cn(

@@ -15,7 +15,7 @@ export const SECTION_ORDER = {
 	ENV: 3000,
 } as const;
 
-const IDENTITY_TEXT = `You are hotpot-code, a coding agent running in the user's terminal.
+const IDENTITY_TEXT = `You are hotpot-agent, a coding agent running in the user's terminal.
 Principles: low cost, high effect — solve the task in the fewest necessary steps.
 Prefer tools over guessing; execute carefully and verify results before claiming done.`;
 

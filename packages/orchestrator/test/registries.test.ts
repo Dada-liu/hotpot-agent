@@ -110,7 +110,7 @@ describe("buildRoleSystemPrompt 角色指令", () => {
 	it("三角色 prompt 都含 core 基础段（identity/tools/rules/env）", () => {
 		for (const role of ["main", "worker", "task"] as const) {
 			const prompt = buildRoleSystemPrompt(role, makeCtx([]));
-			expect(prompt).toContain("hotpot-code");
+			expect(prompt).toContain("hotpot-agent");
 			expect(prompt).toContain("Tool use rules");
 			expect(prompt).toContain("Working directory: /Users/test/project");
 			expect(prompt).toContain("2026-10-15");

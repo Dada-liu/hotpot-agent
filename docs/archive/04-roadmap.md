@@ -139,7 +139,7 @@ macmini 环境：Node v24.21.0（fnm）、pnpm 10.33.0、Python 3.12.15（uv）�
 - 平均时长：**185.2s**（agent 阶段单题均值；agent 阶段总计约 30 分钟）。官方评测阶段另约 17 分钟（max_workers=1，amd64 模拟）。
 - 估算成本：按非高峰价、缓存未命中，并按会话日志中的实际档位统计（high=deepseek-flash ¥1/¥4 per M，medium=deepseek-v4-pro ¥4.5/¥13.5 per M），合计 **¥32.83 ≈ $4.62**；高峰翻倍约 **$9.25**。DeepSeek 缓存命中价更低，实际账单可能低于该估算。
 - 备注：`django__django-15695` 的 agent 回合以 `max_tokens` 结束，但 patch 仍被官方 resolve；`sympy__sympy-17655` agent 阶段接近 600s 超时上限。patch-only 基线不变：agent 未安装 repo 依赖、未运行 repo 测试；题目来自公开 benchmark，模型训练语料可能覆盖相关内容。
-- 产物（macmini，不提交仓库）：`~/hotpot-code/benchmark-runs/lite10/report.json`、`report.md`、`predictions.jsonl`、`official/hotpot-code.bench-20261019-125546-e439bbf3-eval.json`、`~/hotpot-code/logs/lite10-run.log`、`logs/lite10-eval.log`。
+- 产物（macmini，不提交仓库）：`~/hotpot-agent/benchmark-runs/lite10/report.json`、`report.md`、`predictions.jsonl`、`official/hotpot-agent.bench-20261019-125546-e439bbf3-eval.json`、`~/hotpot-agent/logs/lite10-run.log`、`logs/lite10-eval.log`。
 
 运行中发现并修复的问题：
 

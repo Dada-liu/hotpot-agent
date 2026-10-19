@@ -74,7 +74,7 @@ describe("default sections", () => {
 		registerDefaultSections();
 		const prompt = buildSystemPrompt(CTX);
 
-		const identityIdx = prompt.indexOf("hotpot-code");
+		const identityIdx = prompt.indexOf("hotpot-agent");
 		const toolsIdx = prompt.indexOf("Available tools");
 		const rulesIdx = prompt.indexOf("Tool use rules");
 		const envIdx = prompt.indexOf("Environment");
@@ -103,11 +103,11 @@ describe("default sections", () => {
 		expect(prompt).toContain("2026-10-10");
 	});
 
-	it("identity 段声明 hotpot-code 身份与核心原则（英文）", () => {
+	it("identity 段声明 hotpot-agent 身份与核心原则（英文）", () => {
 		registerDefaultSections();
 		const prompt = buildSystemPrompt(CTX);
 
-		expect(prompt).toContain("hotpot-code");
+		expect(prompt).toContain("hotpot-agent");
 		expect(prompt).toMatch(/coding agent/i);
 	});
 

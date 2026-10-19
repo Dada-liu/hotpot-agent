@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 在终端跑通 hotpot-code 的「对话 → 工具调用 → 完成任务」最小闭环：LLM 双协议适配、turn/step 循环、四个基础工具、JSONL 会话日志、CLI 入口。
+**Goal:** 在终端跑通 hotpot-agent 的「对话 → 工具调用 → 完成任务」最小闭环：LLM 双协议适配、turn/step 循环、四个基础工具、JSONL 会话日志、CLI 入口。
 
 **Architecture:** pnpm monorepo，三个包：`packages/ai`（api×provider 二维适配，anthropic-messages + openai-completions 两个协议）、`packages/core`（append-only JSONL 事件日志为唯一事实源，deriveMessages 折叠历史；turn/step 两级循环；工具三面分离 execute/render/present；审批 waterfall）、`packages/cli`（行式交互入口）。详见架构文档。
 

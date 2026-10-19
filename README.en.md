@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="public/logo.png" alt="hotpot-code logo" width="160" />
+  <img src="public/logo.png" alt="hotpot-agent logo" width="160" />
 </p>
 
-<h1 align="center">hotpot-code</h1>
+<h1 align="center">hotpot-agent</h1>
 
 <p align="center">
   <a href="README.md">中文</a> | English
@@ -72,7 +72,7 @@ pnpm test             # run all tests (vitest, packages/*/test/**/*.test.ts)
 pnpm typecheck        # tsc typecheck for all packages
 pnpm bench --help     # benchmark runner: official SWE-bench / three built-in tasks
 pnpm dev <pkg> [args] # run a package entry directly with tsx, e.g. pnpm dev cli chat
-pnpm dev server       # start REST + SSE service (default port 4573, serves the web build)
+pnpm dev web          # build and start the web app (default port 4573, opens the browser)
 pnpm exec biome check # lint + format check
 ```
 
@@ -109,6 +109,6 @@ How to run:
 
    Protocol selection for catalog models is automatic (anthropic → anthropic-messages, others → openai-completions); `baseUrl` is optional and defaults to each provider's official endpoint (the OpenAI family defaults to `https://api.openai.com/v1`; third-party endpoints such as deepseek/moonshot must be set explicitly). At project level, a `.hotpot/settings.json` in cwd or any parent directory can override non-credential allowlisted fields (`mainAgentTier`/`maxParallelTasks`/`planMaxRevisions`/`approval.policy`); credentials are read only from the user level.
 
-2. `pnpm dev cli chat` starts line-based chat: `/exit` quits, Ctrl-C interrupts the current turn; high-risk commands and overwrites ask for `y/n` approval (default n).
-3. Sessions are persisted as JSONL under `~/.hotpot/sessions/`; `pnpm dev cli chat --session <session file path>` resumes history and continues the conversation.
-4. Web: build with `pnpm --filter @hotpot/web build`, then run `pnpm dev server` and open http://localhost:4573 (same settings, sessions shared with CLI); when developing the frontend, run `pnpm --filter @hotpot/web dev` in another terminal and Vite proxies `/api` to 4573.
+2. The CLI command is `hotpot` (source-repo dev equivalent: `pnpm dev cli chat`); it starts line-based chat: `/exit` quits, Ctrl-C interrupts the current turn; high-risk commands and overwrites ask for `y/n` approval (default n).
+3. Sessions are persisted as JSONL under `~/.hotpot/sessions/`; `hotpot chat --session <session file path>` resumes history and continues the conversation (source-repo dev equivalent: `pnpm dev cli chat --session <session file path>`).
+4. Web: run `pnpm dev web` in the source repo to build and start the web app (http://localhost:4573 by default, opens the browser once ready; same settings, sessions shared with CLI); after installation you can also build with `pnpm --filter @hotpot/web build` and run `hotpot-server`. When developing the frontend, run `pnpm --filter @hotpot/web dev` in another terminal and Vite proxies `/api` to 4573.

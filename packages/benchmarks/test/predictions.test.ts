@@ -38,7 +38,7 @@ describe("writePredictions", () => {
 		]);
 		expect(first).toEqual({
 			instance_id: "django__django-11099",
-			model_name_or_path: "hotpot-code",
+			model_name_or_path: "hotpot-agent",
 			model_patch: "diff --git a/x b/x\n+1\n",
 		});
 		const second = JSON.parse(lines[1] ?? "") as Record<string, unknown>;

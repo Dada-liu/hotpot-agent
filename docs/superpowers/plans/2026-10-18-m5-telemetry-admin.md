@@ -4,7 +4,7 @@
 
 **Goal:** Build the standalone telemetry admin service in `../hotpot-telemetry/`: ingest anonymous events, store them in SQLite, expose aggregation APIs, render a single-operator dashboard, and deliver threshold alerts via SMTP, generic webhook, and Feishu.
 
-**Architecture:** One Node 22 process hosts a Hono API, a SQLite database, a scheduler that evaluates alert rules every 60 seconds, and a Vite-built React SPA. It is a separate project outside the pnpm workspace and is never imported or bundled by hotpot-code. The ingest API validates the strict event whitelist, deduplicates by `event_id`, and only stores metadata.
+**Architecture:** One Node 22 process hosts a Hono API, a SQLite database, a scheduler that evaluates alert rules every 60 seconds, and a Vite-built React SPA. It is a separate project outside the pnpm workspace and is never imported or bundled by hotpot-agent. The ingest API validates the strict event whitelist, deduplicates by `event_id`, and only stores metadata.
 
 **Tech Stack:** Node 22, TypeScript, Hono, `@hono/node-server`, `better-sqlite3`, zod, nodemailer, React 18, Vite, Tailwind, vitest.
 

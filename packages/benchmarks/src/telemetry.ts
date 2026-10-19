@@ -41,7 +41,7 @@ export async function reportBenchmarkRun(
 		eventId: randomUUID(),
 		ts: new Date().toISOString(),
 		type: "benchmark_run",
-		benchmark: result.benchmark ?? "hotpot-code",
+		benchmark: result.benchmark ?? "hotpot-agent",
 		dataset: result.dataset,
 		split: result.split,
 		instanceId: result.instanceId,

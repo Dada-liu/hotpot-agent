@@ -1,10 +1,10 @@
-# hotpot-code 产品需求文档（PRD）
+# hotpot-agent 产品需求文档（PRD）
 
-> 本文档是 hotpot-code 的定稿需求。探讨过程文档归档在 `docs/archive/`（01 需求细化、02 总体架构、03 编排设计、04 里程碑），细节以归档文档为准，本文档只保留决议后的结论。
+> 本文档是 hotpot-agent 的定稿需求。探讨过程文档归档在 `docs/archive/`（01 需求细化、02 总体架构、03 编排设计、04 里程碑），细节以归档文档为准，本文档只保留决议后的结论。
 
 ## 1. 项目定位
 
-基于 Node + TypeScript 的 code agent，项目名 **hotpot-code**。
+基于 Node + TypeScript 的 code agent，项目名 **hotpot-agent**。
 
 核心原则：**更低的成本、更好的效果**，可量化：
 

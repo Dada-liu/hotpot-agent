@@ -1,6 +1,6 @@
 # @hotpot/web
 
-hotpot-code 的 Web UI（React SPA）。M3 产物：通过 server 的 REST + SSE API 观察与驱动会话。
+hotpot-agent 的 Web UI（React SPA）。M3 产物：通过 server 的 REST + SSE API 观察与驱动会话。
 
 ## 定位
 

@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="public/logo.png" alt="hotpot-code logo" width="160" />
+  <img src="public/logo.png" alt="hotpot-agent logo" width="160" />
 </p>
 
-<h1 align="center">hotpot-code</h1>
+<h1 align="center">hotpot-agent</h1>
 
 <p align="center">
   中文 | <a href="README.en.md">English</a>
@@ -71,7 +71,7 @@ pnpm test             # 跑全部测试（vitest，packages/*/test/**/*.test.ts�
 pnpm typecheck        # 所有包 tsc 类型检查
 pnpm bench --help     # benchmark runner：SWE-bench 官方评测 / 自建三题
 pnpm dev <pkg> [args] # tsx 直跑包入口，如 pnpm dev cli chat
-pnpm dev server       # 启动 REST + SSE 服务（默认 4573 端口，托管 web 构建产物）
+pnpm dev web          # 构建并启动 Web 端（默认 4573 端口，启动后自动打开浏览器）
 pnpm exec biome check # lint + format 检查
 ```
 
@@ -108,6 +108,6 @@ M5 已完成（本仓库部分）：`packages/telemetry` 匿名遥测客户端�
 
    内置目录模型的协议自动选择（anthropic→anthropic-messages，其余→openai-completions）；`baseUrl` 可省略，缺省走各家官方端点（openai 系缺省 `https://api.openai.com/v1`，deepseek/moonshot 等第三方端点需显式填写）。项目级可在 cwd 向上任一目录放 `.hotpot/settings.json` 覆盖非凭证白名单字段（`mainAgentTier`/`maxParallelTasks`/`planMaxRevisions`/`approval.policy`），凭证只从用户级读取。
 
-2. `pnpm dev cli chat` 启动行式对话：`/exit` 退出，Ctrl-C 中断当前回合；高危命令与覆盖写会询问 `y/n` 审批（默认 n）。
-3. 会话以 JSONL 落盘在 `~/.hotpot/sessions/`；`pnpm dev cli chat --session <会话文件路径>` 恢复历史继续对话。
-4. Web 端：`pnpm --filter @hotpot/web build` 构建产物后 `pnpm dev server`，浏览器打开 http://localhost:4573（同一 settings 配置，会话与 CLI 互通）；开发态改前端时另开 `pnpm --filter @hotpot/web dev`，Vite 将 `/api` 代理到 4573。
+2. 命令行入口为 `hotpot`（源码仓库开发态：`pnpm dev cli chat`），启动行式对话：`/exit` 退出，Ctrl-C 中断当前回合；高危命令与覆盖写会询问 `y/n` 审批（默认 n）。
+3. 会话以 JSONL 落盘在 `~/.hotpot/sessions/`；`hotpot chat --session <会话文件路径>` 恢复历史继续对话（源码仓库开发态：`pnpm dev cli chat --session <会话文件路径>`）。
+4. Web 端：源码仓库运行 `pnpm dev web` 一键构建并启动（默认 http://localhost:4573，就绪后自动打开浏览器；同一 settings 配置，会话与 CLI 互通）；安装后也可先 `pnpm --filter @hotpot/web build` 再运行 `hotpot-server`。开发态改前端时另开 `pnpm --filter @hotpot/web dev`，Vite 将 `/api` 代理到 4573。

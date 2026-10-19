@@ -272,7 +272,7 @@ Expected: FAIL.
 
 - [x] **Step 3: Implement**
 
-`writePredictions` writes `{instance_id, model_name_or_path:"hotpot-code", model_patch}` per line. `buildEvaluationCommand` returns the exact argv. `runOfficialEvaluation`:
+`writePredictions` writes `{instance_id, model_name_or_path:"hotpot-agent", model_patch}` per line. `buildEvaluationCommand` returns the exact argv. `runOfficialEvaluation`:
 - local: spawn the command in `cwd`, stream output to a log file, wait for exit, then parse the report;
 - remote: `rsync` the predictions and a small runner script to `host`, run it in `tmux new -d -s <runId>`, poll `tmux has-session`, then `rsync` the report back. macmini does not have tmux preinstalled; install it with Homebrew or use `nohup` as the fallback.
 Both paths return non-zero when the report is missing or the exit code is non-zero. Tests only cover command construction and report parsing; do not run SSH/Docker.
@@ -456,7 +456,7 @@ git commit -m "test(ai): add record and replay adapter"
 
 - [x] **Step 1: Install the toolchain on macmini**
 
-Install Node 22 + pnpm (nvm or Homebrew). Sync the repo with `rsync -avzP --exclude node_modules --exclude .git ./ macmini:~/hotpot-code/`, then run `pnpm install` and `pnpm test`.
+Install Node 22 + pnpm (nvm or Homebrew). Sync the repo with `rsync -avzP --exclude node_modules --exclude .git ./ macmini:~/hotpot-agent/`, then run `pnpm install` and `pnpm test`.
 
 - [x] **Step 2: Install the SWE-bench venv**
 

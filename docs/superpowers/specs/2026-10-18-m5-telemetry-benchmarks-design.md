@@ -7,8 +7,8 @@
 
 M5 要回答两个问题：
 
-1. 用户在实际使用 hotpot-code 时，成本、性能、成功率、系统错误是什么状态，能否据此做告警并持续优化项目。
-2. hotpot-code 在标准化 benchmark 和自建领域任务上的通过率与 token 成本是多少，改动后是否变好。
+1. 用户在实际使用 hotpot-agent 时，成本、性能、成功率、系统错误是什么状态，能否据此做告警并持续优化项目。
+2. hotpot-agent 在标准化 benchmark 和自建领域任务上的通过率与 token 成本是多少，改动后是否变好。
 
 对应 `docs/archive/04-roadmap.md` M5 验收：
 
@@ -22,7 +22,7 @@ M5 要回答两个问题：
 |---|---|
 | 上报方式 | 工具主动上报到中心服务 |
 | 中心服务归属 | 只由用户一个人部署 |
-| 后台服务位置 | 仓库外，`../hotpot-telemetry/`（与 hotpot-code 同级） |
+| 后台服务位置 | 仓库外，`../hotpot-telemetry/`（与 hotpot-agent 同级） |
 | 后台与工具关系 | 独立项目，不打进工具的构建产物 |
 | 上报地址 | 可配置；用户打包工具前配置好。解析顺序：settings > `HOTPOT_TELEMETRY_ENDPOINT` > 源码常量 |
 | 数据边界 | 只上报匿名使用指标与脱敏后的系统错误；禁止任务文本、对话内容、代码、文件路径等用户隐私数据 |
@@ -59,7 +59,7 @@ anti-goals（做了就算失败）：
 
 ```text
 ┌──────────────────────────────┐
-│ hotpot-code (用户机器)        │
+│ hotpot-agent (用户机器)       │
 │  cli / server                 │
 │    └─ @hotpot/telemetry 客户端 │
 │         · 事件采集与脱敏       │
