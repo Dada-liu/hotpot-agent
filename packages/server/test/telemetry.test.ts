@@ -216,8 +216,8 @@ describe("server telemetry", () => {
 		expect(turnEnd.inputTokens).toBe(EXPECTED_INPUT_TOKENS);
 		expect(turnEnd.outputTokens).toBe(EXPECTED_OUTPUT_TOKENS);
 		expect(turnEnd.byModel["test-high"]).toEqual({
-			input: EXPECTED_INPUT_TOKENS,
-			output: EXPECTED_OUTPUT_TOKENS,
+			inputTokens: EXPECTED_INPUT_TOKENS,
+			outputTokens: EXPECTED_OUTPUT_TOKENS,
 		});
 
 		// 线路上没有任何对话文本

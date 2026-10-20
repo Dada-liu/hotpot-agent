@@ -570,9 +570,9 @@ function addTotals(
 	input: number,
 	output: number,
 ): void {
-	const current = totals.get(key) ?? { input: 0, output: 0 };
-	current.input += input;
-	current.output += output;
+	const current = totals.get(key) ?? { inputTokens: 0, outputTokens: 0 };
+	current.inputTokens += input;
+	current.outputTokens += output;
 	totals.set(key, current);
 }
 

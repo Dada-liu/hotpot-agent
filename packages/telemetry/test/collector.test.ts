@@ -172,13 +172,15 @@ describe("createTelemetryCollector", () => {
 			workerCount: 0,
 			taskCount: 0,
 		});
-		expect(turnEnd.byTier.high.input).toBe(10);
-		expect(turnEnd.byTier.medium.input).toBe(7);
+		expect(turnEnd.byTier.high.inputTokens).toBe(10);
+		expect(turnEnd.byTier.medium.inputTokens).toBe(7);
 		expect(turnEnd.byTier).toEqual({
-			high: { input: 10, output: 5 },
-			medium: { input: 7, output: 3 },
+			high: { inputTokens: 10, outputTokens: 5 },
+			medium: { inputTokens: 7, outputTokens: 3 },
 		});
-		expect(turnEnd.byModel).toEqual({ m: { input: 17, output: 8 } });
+		expect(turnEnd.byModel).toEqual({
+			m: { inputTokens: 17, outputTokens: 8 },
+		});
 
 		const llmCalls = eventsOfType(emitted, "llm_call");
 		expect(llmCalls).toHaveLength(2);
@@ -304,8 +306,8 @@ describe("createTelemetryCollector", () => {
 			outputTokens: 2,
 		});
 		expect(turnEnd.byModel).toEqual({
-			"worker-model": { input: 2, output: 1 },
-			"task-model": { input: 3, output: 1 },
+			"worker-model": { inputTokens: 2, outputTokens: 1 },
+			"task-model": { inputTokens: 3, outputTokens: 1 },
 		});
 
 		const taskCall = eventsOfType(emitted, "llm_call").find(

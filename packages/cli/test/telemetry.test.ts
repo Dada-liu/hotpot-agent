@@ -231,6 +231,9 @@ describe("runChat telemetry", () => {
 
 	it("endpoint 为空时不发任何请求", async () => {
 		const { fetchImpl, requests } = createFakeFetch();
+		// 空串环境变量遮挡源码常量：即使 DEFAULT_TELEMETRY_ENDPOINT 被替换为真实地址，
+		// 空白 endpoint 仍表示「未配置」，不得回退出发请求
+		process.env.HOTPOT_TELEMETRY_ENDPOINT = "";
 		await runOneTurn(
 			{
 				...SETTINGS,

@@ -22,10 +22,12 @@ export interface TelemetryFeatureFlags {
 	mcp?: boolean;
 }
 
-// token 汇总：byTier/byModel 的值，以及 turn_end 的拆分维度
+// token 汇总：byTier/byModel 的值，以及 turn_end 的拆分维度。
+// 字段名与服务端 schema 严格对齐：服务端按 inputTokens/outputTokens 校验，
+// 漂移会导致整批 400 invalid_batch
 export interface TokenTotals {
-	input: number;
-	output: number;
+	inputTokens: number;
+	outputTokens: number;
 }
 
 interface EventBase {
@@ -166,8 +168,8 @@ const featureFlagsSchema = z
 
 const tokenTotalsSchema = z
 	.object({
-		input: countSchema,
-		output: countSchema,
+		inputTokens: countSchema,
+		outputTokens: countSchema,
 	})
 	.strict();
 

@@ -106,7 +106,10 @@ describe("createTelemetryRuntime endpoint", () => {
 		expect(runtime).toBeNull();
 	});
 
-	it("settings 与环境变量都未设置时（源码常量为空）runtime 为 null", () => {
+	it("settings 未设置且环境变量显式置空时 runtime 为 null", () => {
+		// 空串环境变量按设计遮挡源码常量：即使打包者把 DEFAULT_TELEMETRY_ENDPOINT
+		// 替换成了真实地址，空串仍表示「显式关闭」，结果与常量为空时一致
+		process.env.HOTPOT_TELEMETRY_ENDPOINT = "";
 		const runtime = createTelemetryRuntime(SETTINGS, {
 			home,
 			appVersion: "0.0.0",
