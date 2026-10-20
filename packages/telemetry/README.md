@@ -14,7 +14,7 @@ M5.1 匿名遥测客户端。`@hotpot/cli` 与 `@hotpot/server` 在启动时装�
 | `src/client.ts` | 内存队列、阈值/定时 flush、批量 POST、指数退避重试 |
 | `src/collector.ts` | 单 turn 采集：观察编排事件 + 从会话 JSONL 折叠整棵 agent 树 |
 | `src/runtime.ts` | cli/server 共用装配：settings + install ID + client + collector 工厂 |
-| `src/defaults.ts` | `DEFAULT_TELEMETRY_ENDPOINT`（源码常量，默认空）与 `APP_VERSION` |
+| `src/defaults.ts` | `DEFAULT_TELEMETRY_ENDPOINT`（源码常量，默认为部署的 telemetry server）与 `APP_VERSION` |
 
 ## 上报链路
 
@@ -72,7 +72,7 @@ endpoint 解析顺序（`src/runtime.ts`）：
 
 1. `settings.telemetry.endpoint`（空串或纯空白视为「本机未配置」，继续向后回退）
 2. 环境变量 `HOTPOT_TELEMETRY_ENDPOINT`
-3. `src/defaults.ts` 的 `DEFAULT_TELEMETRY_ENDPOINT`（仓库内默认为空）
+3. `src/defaults.ts` 的 `DEFAULT_TELEMETRY_ENDPOINT`（仓库内默认为部署的 telemetry server 地址）
 
 `settings.telemetry.endpoint` 是可选字符串，schema 不要求非空：空值/空白表示「本机未配置」，交给环境变量与源码常量。空的环境变量会遮挡源码常量（`??` 只跳过 `undefined`），即 `HOTPOT_TELEMETRY_ENDPOINT=""` 等于显式关闭遥测，不会再回退到源码常量。运行时对最终取值做校验：空串、非绝对 URL、非 `http(s)` 协议都视为「未配置」，`createTelemetryRuntime` 返回 `null`；遥测是旁路，无效配置退化为 no-op，不会让 `loadSettings` 抛错或拖垮进程启动。启用后客户端向 `<endpoint>/api/v1/ingest` POST JSON。
 
