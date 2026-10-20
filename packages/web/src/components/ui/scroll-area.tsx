@@ -13,9 +13,12 @@ function ScrollArea({
 			className={cn("relative", className)}
 			{...props}
 		>
+			{/* Radix 在 Viewport 内隐式包一层 display:table 的内容 div：表格盒宽有 min-content
+			    下限（nowrap 文本撑到全文宽），顶断下游 min-w-0 + truncate 的省略链；且 display
+			    是内联样式，普通类压不过，必须用 !important 改回 block（v4 后缀写法） */}
 			<ScrollAreaPrimitive.Viewport
 				data-slot="scroll-area-viewport"
-				className="size-full rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-1"
+				className="size-full rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 focus-visible:outline-1 [&>div]:block!"
 			>
 				{children}
 			</ScrollAreaPrimitive.Viewport>
