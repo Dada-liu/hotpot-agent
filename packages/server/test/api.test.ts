@@ -48,10 +48,15 @@ const gate = vi.hoisted(() => {
 
 vi.mock("@hotpot/core", async (importOriginal) => {
 	const mod = await importOriginal<typeof CoreMod>();
+	// 只闸住第一个 armed 调用者（SSE 重放的 loadSession）。turn 收尾时遥测采集器
+	// 也会经本模块读会话日志折叠 turn_end（collector.ts），不能让它一起被闸住，
+	// 否则窗口内回合无法结束、turn(end) 永远广播不出去
+	let held = false;
 	return {
 		...mod,
 		loadSession: async (filePath: string) => {
-			if (gate.armed) {
+			if (gate.armed && !held) {
+				held = true;
 				gate.markEntered();
 				await new Promise<void>((resolve) => {
 					gate.release = resolve;
