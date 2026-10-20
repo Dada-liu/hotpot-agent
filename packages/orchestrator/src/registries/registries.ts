@@ -35,8 +35,8 @@ import { createSpawnTasksTool } from "../tools/spawn-tasks.ts";
 import type { AgentRole } from "../types/types.ts";
 
 // feature 派生的基础外工具（worker/task 追加；main 永远只有元工具，不进这里）。
-// 开关一律经 featureEnabled（`?? true` 缺省全开）；todo（Task 2）、web_fetch（Task 3）、
-// web_search（Task 4，尚需 runtime.webSearchBackend 已解析，缺省由 createRuntime 装配）、
+// 开关一律经 featureEnabled（`?? true` 默认全开）；todo（Task 2）、web_fetch（Task 3）、
+// web_search（Task 4，尚需 runtime.webSearchBackend 已解析，默认由 createRuntime 装配）、
 // mcpTools（Task 5 样板，已并入）。
 // 返回的工具裸注册：不套 decorateWorkerTool（policy 包装只包四件套）
 function featureDerivedTools(
@@ -64,7 +64,7 @@ function featureDerivedTools(
 // —— M4 Feature④ skill 加载追踪 ——
 // read 工具的追踪包装：模型 read 的路径（相对 ctx.cwd 解析后）命中已知 skill 的
 // SKILL.md 时，经 ctx.session.append 落盘一条 skill/loaded。两个前置条件：开关
-// features.skills 打开（featureEnabled 缺省开）且 runtime.skills 非空——装配层在
+// features.skills 打开（featureEnabled 默认开）且 runtime.skills 非空——装配层在
 // 开关关闭时根本不扫描、不传 skills，这里是第二道门，保证「关闭双无」。
 // seen 集合按 session 归组（WeakMap<Session, Set<path>>）：注册表每次装配 worker/task
 // 都新建，每会话每文件只记一次必须跨注册表存活；session 回收后集合随之释放。

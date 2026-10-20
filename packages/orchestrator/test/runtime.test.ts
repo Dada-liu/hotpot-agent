@@ -1,4 +1,4 @@
-// 运行时测试：createRuntime 的 spawn 落盘、档位模型解析与缺省参数
+// 运行时测试：createRuntime 的 spawn 落盘、档位模型解析与默认参数
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -172,7 +172,7 @@ describe("createRuntime / spawn", () => {
 		);
 	});
 
-	it("maxParallelTasks / planMaxRevisions 缺省 10 / 3，可显式覆盖", async () => {
+	it("maxParallelTasks / planMaxRevisions 默认 10 / 3，可显式覆盖", async () => {
 		const session = await createSession("/tmp/proj", home);
 		const defaults = createRuntime({
 			session,
@@ -243,7 +243,7 @@ describe("createRuntime webSearchBackend 解析（Task 4）", () => {
 		};
 	};
 
-	it("webSearch 配置缺省 → 挂 DuckDuckGo 缺省后端（非 undefined）", async () => {
+	it("webSearch 配置默认 → 挂 DuckDuckGo 默认后端（非 undefined）", async () => {
 		const rt = createRuntime(await baseOpts());
 		expect(rt.webSearchBackend).toBeDefined();
 	});

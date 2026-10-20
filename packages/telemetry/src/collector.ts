@@ -501,7 +501,7 @@ function normalizeRole(role: string | undefined): AgentRole | undefined {
 }
 
 // 优先用 agent_spawn 里记录的 role；旧日志没有 spawn 时按 agentId 前缀推断；
-// tool_result 缺省 agentId 的 v1 语义视为主 agent
+// tool_result 默认 agentId 的 v1 语义视为主 agent
 function resolveAgentRole(
 	agentId: string | undefined,
 	roleByAgent: Map<string, AgentRole>,

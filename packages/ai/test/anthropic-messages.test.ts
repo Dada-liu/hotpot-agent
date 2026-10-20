@@ -298,7 +298,7 @@ describe("createAnthropicMessagesAdapter 请求构造", () => {
 		]);
 	});
 
-	it("缺省 baseUrl 走 Anthropic 官方端点；无 tools 时请求体不带 tools 字段", async () => {
+	it("默认 baseUrl 走 Anthropic 官方端点；无 tools 时请求体不带 tools 字段", async () => {
 		const bytes = await readFixture("anthropic-text.sse.txt");
 		const { fetchImpl, requests } = fakeFetch([bytes]);
 		const adapter = createAnthropicMessagesAdapter(fetchImpl);

@@ -18,7 +18,7 @@ import { jsonSchemaToZod } from "../json-schema-to-zod/json-schema-to-zod.ts";
 
 // 单次 callTool 超时（AbortSignal.timeout 硬上限，与 ctx.signal 经 AbortSignal.any 组合）
 export const MCP_TOOL_TIMEOUT_MS = 60_000;
-// 单个 server connect 的缺省超时（npx 冷启动也要兜住）
+// 单个 server connect 的默认超时（npx 冷启动也要兜住）
 export const MCP_CONNECT_TIMEOUT_MS = 30_000;
 
 // MCP server 配置（config.ts mcpServersSchema 的 union 成员：stdio | http）
@@ -70,7 +70,7 @@ export function sanitizeServerName(name: string): string {
 
 // 桥接 listTools 结果 → ToolDefinition 列表（连接无关的纯桥接，单测直接打桩 tools）。
 // server 名含非法字符时替换为 _ 并 warn；MCP 工具名按 spec 限定 [a-zA-Z0-9_-]，直接透传。
-// toolTimeoutMs 为测试注入口（缺省 60s 生产值），超时路径用短超时 hermetic 验证
+// toolTimeoutMs 为测试注入口（默认 60s 生产值），超时路径用短超时 hermetic 验证
 export function bridgeMcpTools(
 	server: string,
 	tools: readonly McpToolInfo[],
@@ -185,7 +185,7 @@ function extractContentText(content: unknown): string {
 	return parts.join("\n");
 }
 
-// 默认连接实现：stdio 起子进程（stderr 走 inherit，SDK 缺省，server 日志直落终端便于排障），
+// 默认连接实现：stdio 起子进程（stderr 走 inherit，SDK 默认，server 日志直落终端便于排障），
 // http 走 streamable HTTP（headers 经 requestInit 传入）；connect 与中止信号竞速，
 // 超时/中止后关闭 transport（stdio 会 SIGKILL 子进程，防泄漏）
 async function defaultCreateClient(

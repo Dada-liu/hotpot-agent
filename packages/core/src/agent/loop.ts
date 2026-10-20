@@ -337,7 +337,7 @@ export async function* runTurn(
 			return;
 		}
 
-		// assistant 消息完整接收后落盘（含 usage / model / agentId / tier；tier 缺省 high）
+		// assistant 消息完整接收后落盘（含 usage / model / agentId / tier；tier 默认 high）
 		const assistantMsg: SessionEvent = {
 			type: "assistant_msg",
 			id: randomUUID(),

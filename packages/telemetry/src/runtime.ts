@@ -105,7 +105,7 @@ function resolveEndpoint(configured: string | undefined): string | null {
 	return endpoint;
 }
 
-// token 缺省或引用为空都不算错误：上报照常进行，只是不带 Authorization 头
+// token 默认或引用为空都不算错误：上报照常进行，只是不带 Authorization 头
 function resolveToken(configured: string | undefined): string | undefined {
 	if (configured === undefined || configured === "") {
 		return undefined;

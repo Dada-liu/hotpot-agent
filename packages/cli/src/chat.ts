@@ -66,15 +66,15 @@ export interface RunChatOptions {
 	settings: Settings;
 	home?: string;
 	sessionPath?: string;
-	// tier 缺省取 settings.mainAgentTier，再缺省 "high"
+	// tier 默认取 settings.mainAgentTier，再默认 "high"
 	tier?: ModelTier;
-	// 测试注入点：缺省时按 ModelRef 解析真实适配器（orchestrator 的 resolveModel）
+	// 测试注入点：默认时按 ModelRef 解析真实适配器（orchestrator 的 resolveModel）
 	llm?: { adapter: LlmAdapter; model: ModelInfo };
 	input: ChatInput;
 	output: ChatOutput;
-	// 告警通道（如未知模型兜底）；缺省写 output
+	// 告警通道（如未知模型兜底）；默认写 output
 	warn?: (text: string) => void;
-	// 测试注入点：遥测上报用的 fetch，缺省走全局 fetch
+	// 测试注入点：遥测上报用的 fetch，默认走全局 fetch
 	telemetryFetch?: typeof fetch;
 }
 
@@ -228,7 +228,7 @@ export async function runChat(opts: RunChatOptions): Promise<void> {
 	let telemetryTurns = 0;
 	let telemetryErrors = 0;
 
-	// M4 Feature⑦ MCP：开关（features.mcp，缺省开）打开且配置了 server 才连接。
+	// M4 Feature⑦ MCP：开关（features.mcp，默认开）打开且配置了 server 才连接。
 	// 单 server 失败由 connectMcpServers 内部告警跳过，不阻塞启动；连接成功逐个
 	// 落盘 mcp/attached（会话级事件，不进模型历史），REPL 结束 finally 统一关闭
 	const mcpConnections: McpConnection[] = [];
@@ -284,7 +284,7 @@ export async function runChat(opts: RunChatOptions): Promise<void> {
 						: withApproval(tool, tool.name === "bash" ? "command" : "write")
 			: undefined;
 
-	// M4 Feature④ skill：开关（features.skills，缺省开）打开时扫描
+	// M4 Feature④ skill：开关（features.skills，默认开）打开时扫描
 	// skillsDirs（相对 cwd 解析）→ <home>/skills → <cwd>/.hotpot/skills。
 	// discoverSkills 同名去重、后扫描者胜，因此优先级 项目级 > home > skillsDirs；
 	// 项目级只查 cwd 一级、不向上逐级（已知边界，见 orchestrator README）。
@@ -308,7 +308,7 @@ export async function runChat(opts: RunChatOptions): Promise<void> {
 			])
 		: [];
 
-	// M4 Feature③ hooks：开关（features.hooks，缺省开）打开时构造生命周期链。
+	// M4 Feature③ hooks：开关（features.hooks，默认开）打开时构造生命周期链。
 	// 配置只来自用户级 settings（项目级白名单不含 hooks）；session_start 在
 	// runtime 装配完成后触发一次，pre/post tool 由 runTurn 触发，turn_end 由回合包装层触发
 	const hooks = featureEnabled(settings.features, "hooks")

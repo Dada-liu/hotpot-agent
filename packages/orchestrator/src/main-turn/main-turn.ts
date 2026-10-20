@@ -3,9 +3,9 @@
 // → 透传全部事件。complex 流（Task 8）：delegate 判定 complex 后进入 runPlanPhase
 // 修订/审批循环（初始轮产出的计划直接复用）；批准后换用只挂 spawn_workers 的注册表
 // 跑执行 turn 并透传事件；拒绝/修订耗尽时 plan 阶段已收尾，回合直接结束。
-// onPlanApproval 缺省时 plan 阶段 fail-closed（拒绝并收尾），见 plan.ts。
+// onPlanApproval 默认时 plan 阶段 fail-closed（拒绝并收尾），见 plan.ts。
 // 传入 inbox 时，core runTurn 的每个 step 顶部经 pollInbox 拉取 next-step 消息
-// （steer/inject 注入），plan 起草/修订轮与执行轮同样生效；缺省不轮询。
+// （steer/inject 注入），plan 起草/修订轮与执行轮同样生效；默认不轮询。
 // worker/task 的 spawn 经包装 runtime.spawn 记录进本回合待产队列，主循环先 drain
 // 再透传 —— agent_spawn 流事件先于对应 tool_result 到达、与调用序一致。
 
@@ -38,7 +38,7 @@ export async function* runMainTurn(opts: {
 	mainTier: ModelTier;
 	onPlanApproval?: (plan: string) => Promise<PlanDecision>;
 	// steer/queue 双队列的 next-step 注入（可选）：存在时 core runTurn 每个 step
-	// 顶部经 pollInbox 拉取已排队消息，逐条落盘为 user_msg 进入模型历史；缺省不轮询
+	// 顶部经 pollInbox 拉取已排队消息，逐条落盘为 user_msg 进入模型历史；默认不轮询
 	inbox?: Inbox;
 }): AsyncIterable<OrchestrationEvent> {
 	const { runtime, userMessage, signal, mainTier } = opts;

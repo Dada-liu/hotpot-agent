@@ -183,7 +183,7 @@ anti-goals（做了就算失败）：
 }
 ```
 
-- `enabled` 缺省 true（遵循 docs）；endpoint 解析顺序：settings > `HOTPOT_TELEMETRY_ENDPOINT` > `DEFAULT_TELEMETRY_ENDPOINT`。
+- `enabled` 默认 true（遵循 docs）；endpoint 解析顺序：settings > `HOTPOT_TELEMETRY_ENDPOINT` > `DEFAULT_TELEMETRY_ENDPOINT`。
 - `telemetry` 仅用户级，项目级 schema 不接受，防止恶意仓库把数据引到别处。
 
 接入点：

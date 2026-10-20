@@ -26,7 +26,7 @@ import type { AgentRole } from "../types/types.ts";
 
 // worker/task 注册表工具装饰器：CLI 侧注入 policy 包装（如 approval=always 时
 // 给 bash/write/edit 包一层预审批）的唯一通道 —— 下层注册表由编排层内部装配，
-// 调用方只能经 runtime 闭包把包装带进来；缺省原样返回（无装饰）。
+// 调用方只能经 runtime 闭包把包装带进来；默认原样返回（无装饰）。
 // 语义钉死（M4 Review Focus）：只包四件套基础工具，feature 派生的外工具不包
 export type WorkerToolDecorator = (
 	tool: ToolDefinition<unknown>,
@@ -39,15 +39,15 @@ export interface OrchestrationRuntime {
 	readonly maxParallelTasks: number;
 	readonly planMaxRevisions: number;
 	readonly decorateWorkerTool?: WorkerToolDecorator;
-	// —— M4 可选透传（createRuntime 缺省空；Task 2-6 逐步消费）——
+	// —— M4 可选透传（createRuntime 默认空；Task 2-6 逐步消费）——
 	// features：功能开关（读取侧一律经 core 的 featureEnabled `?? true`）
 	readonly features?: Settings["features"];
 	// skills：扫描到的 skill 清单（Task 6 注入 prompt + read 追踪）
 	readonly skills?: Skill[];
 	// mcpTools：MCP 桥接工具（Task 5 连接后注入；features.mcp 关闭则不并入注册表）
 	readonly mcpTools?: readonly ToolDefinition<unknown>[];
-	// webSearchBackend：web_search 工具后端；缺省由 createRuntime 依 opts.webSearch
-	// 经 core 的 createWebSearchBackendFromConfig 解析（缺省 duckduckgo），
+	// webSearchBackend：web_search 工具后端；默认由 createRuntime 依 opts.webSearch
+	// 经 core 的 createWebSearchBackendFromConfig 解析（默认 duckduckgo），
 	// 显式注入（webSearchBackend opt）优先，是 hermetic 测试的注入缝
 	readonly webSearchBackend?: WebSearchBackend;
 	// hooks：生命周期钩子链（M4 Feature③）；装配层按 features.hooks 门控注入，

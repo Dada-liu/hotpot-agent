@@ -104,7 +104,7 @@ async function makeRuntime(
 	});
 }
 
-// 便捷：建带 skills 的 runtime（开关缺省全开）
+// 便捷：建带 skills 的 runtime（开关默认全开）
 async function makeSkilledRuntime(
 	features?: Settings["features"],
 ): Promise<OrchestrationRuntime> {
@@ -135,7 +135,7 @@ describe("buildRoleSystemPrompt skills 段（三角色注入）", () => {
 		}
 	});
 
-	it("skills 缺省/为空不出段（默认行为不变）", () => {
+	it("skills 默认/为空不出段（默认行为不变）", () => {
 		expect(buildRoleSystemPrompt("worker", ctx)).not.toContain(
 			"Available skills",
 		);
@@ -247,7 +247,7 @@ describe("read 工具的 skill 追踪包装", () => {
 		expect(skillLoadedEvents(events)).toHaveLength(0);
 	});
 
-	it("runtime.skills 缺省不追踪（外工具数据缺省不报错）", async () => {
+	it("runtime.skills 默认不追踪（外工具数据默认不报错）", async () => {
 		const runtime = await makeRuntime();
 		const registry = createRoleRegistry(runtime, "worker", []);
 		const out = await registry

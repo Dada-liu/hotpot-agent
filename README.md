@@ -118,7 +118,7 @@ M5 已完成（本仓库部分）：`packages/telemetry` 匿名遥测客户端�
    }
    ```
 
-   内置目录模型的协议自动选择（anthropic→anthropic-messages，其余→openai-completions）；`baseUrl` 可省略，缺省走各家官方端点（openai 系缺省 `https://api.openai.com/v1`，deepseek/moonshot 等第三方端点需显式填写）。项目级可在 cwd 向上任一目录放 `.hotpot/settings.json` 覆盖非凭证白名单字段（`mainAgentTier`/`maxParallelTasks`/`planMaxRevisions`/`approval.policy`），凭证只从用户级读取。
+   内置目录模型的协议自动选择（anthropic→anthropic-messages，其余→openai-completions）；`baseUrl` 可省略，默认走各家官方端点（openai 系默认 `https://api.openai.com/v1`，deepseek/moonshot 等第三方端点需显式填写）。项目级可在 cwd 向上任一目录放 `.hotpot/settings.json` 覆盖非凭证白名单字段（`mainAgentTier`/`maxParallelTasks`/`planMaxRevisions`/`approval.policy`），凭证只从用户级读取。
 
 2. 命令行入口为 `hotpot`（安装后直接可用；源码仓库开发态：`pnpm dev cli chat`），启动行式对话：`/exit` 退出，Ctrl-C 中断当前回合；高危命令与覆盖写会询问 `y/n` 审批（默认 n）。
 3. 会话以 JSONL 落盘在 `~/.hotpot/sessions/`；`hotpot chat --session <会话文件路径>` 恢复历史继续对话（源码仓库开发态：`pnpm dev cli chat --session <会话文件路径>`）。

@@ -51,7 +51,7 @@
 
 ### `node:os`（操作系统信息）
 
-- `homedir()`：用户主目录；`session/store.ts` 的 `resolveHome` 缺省回退到 `~/.hotpot`。
+- `homedir()`：用户主目录；`session/store.ts` 的 `resolveHome` 默认回退到 `~/.hotpot`。
 - `tmpdir()`：系统临时目录；仅测试（搭配 `mkdtemp` 建临时目录）。
 
 ### `node:path`（路径处理）

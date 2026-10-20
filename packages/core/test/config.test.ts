@@ -141,7 +141,7 @@ describe("loadSettings", () => {
 		expect(() => loadSettings({ home, cwd: home })).toThrow(/settings\.json/);
 	});
 
-	it("home 缺省时读 HOTPOT_HOME 环境变量", async () => {
+	it("home 默认时读 HOTPOT_HOME 环境变量", async () => {
 		await writeSettings(validSettings());
 		const oldEnv = process.env.HOTPOT_HOME;
 		process.env.HOTPOT_HOME = home;
@@ -305,7 +305,7 @@ describe("loadSettings M4 字段", () => {
 		expect(settings.promptsDirs).toEqual(["/home/u/extra-prompts"]);
 	});
 
-	it("M4 字段缺省为 undefined（schema optional）", async () => {
+	it("M4 字段默认为 undefined（schema optional）", async () => {
 		const minimal = {
 			models: {
 				high: { provider: "anthropic", model: "m1", apiKey: "k1" },
@@ -393,7 +393,7 @@ describe("loadSettings telemetry 字段", () => {
 		});
 	});
 
-	it("telemetry 缺省为 undefined（schema optional）", async () => {
+	it("telemetry 默认为 undefined（schema optional）", async () => {
 		await writeSettings(validSettings());
 		const settings = loadSettings({ home, cwd: home });
 		expect(settings.telemetry).toBeUndefined();
@@ -454,7 +454,7 @@ describe("loadSettings telemetry 字段", () => {
 });
 
 describe("featureEnabled", () => {
-	it("features 为 undefined 时一律 true（缺省全开）", () => {
+	it("features 为 undefined 时一律 true（默认全开）", () => {
 		expect(featureEnabled(undefined, "todo")).toBe(true);
 		expect(featureEnabled(undefined, "mcp")).toBe(true);
 	});
@@ -464,7 +464,7 @@ describe("featureEnabled", () => {
 		expect(featureEnabled({ todo: false }, "todo")).toBe(false);
 	});
 
-	it("未提及的键缺省 true", () => {
+	it("未提及的键默认 true", () => {
 		expect(featureEnabled({ todo: false }, "hooks")).toBe(true);
 	});
 });

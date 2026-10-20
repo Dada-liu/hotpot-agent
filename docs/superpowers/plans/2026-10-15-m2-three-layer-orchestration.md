@@ -16,7 +16,7 @@
 - 代码注释与 README 用简体中文；LLM 系统提示词用英文（配中文注释）
 - 无 `any`；zod v4；测试从根目录 `pnpm test`（vitest run）；每任务跑 `pnpm check`（biome）
 - 配置只加白名单字段消费：`maxParallelTasks` 默认 10、`planMaxRevisions` 默认 3（config.ts schema 已有，本计划只加消费者）
-- 事件格式 v1 已定稿（events.ts 已含 `agent_spawn`/`approval/*`/`inbox/spliced` 变体）：M2 只实现生产者，不改已有变体语义；唯一允许的类型修补：`tool_result` 增加可选 `agentId`（旧日志缺省视为 `"main"`）、`approval/decided` 增加可选 `note`
+- 事件格式 v1 已定稿（events.ts 已含 `agent_spawn`/`approval/*`/`inbox/spliced` 变体）：M2 只实现生产者，不改已有变体语义；唯一允许的类型修补：`tool_result` 增加可选 `agentId`（旧日志默认视为 `"main"`）、`approval/decided` 增加可选 `note`
 - 依赖方向 cli → orchestrator → core → ai，禁止反向
 - 提交信息用中文、conventional 前缀（如 `feat(core): ...`），不带 emoji
 
@@ -63,7 +63,7 @@ Expected: FAIL（agentId 过滤未实现 / 新文件无对应实现）
 
 - [ ] **Step 3: 实现**
 
-events.ts tool_result 变体加 `agentId?: string`（带中文注释说明缺省 "main" 的兼容语义）；loop.ts persistToolResult 落盘时写 `agentId: cfg.agentId`；derive.ts 过滤 `(e.agentId ?? "main") === agentId`；store.ts 确认 append 每次以 `fs.appendFile`（O_APPEND 语义）单行写入，若不是则改为打开时带 `a` 标志。修既有测试中断言 tool_result 形状的地方。
+events.ts tool_result 变体加 `agentId?: string`（带中文注释说明默认 "main" 的兼容语义）；loop.ts persistToolResult 落盘时写 `agentId: cfg.agentId`；derive.ts 过滤 `(e.agentId ?? "main") === agentId`；store.ts 确认 append 每次以 `fs.appendFile`（O_APPEND 语义）单行写入，若不是则改为打开时带 `a` 标志。修既有测试中断言 tool_result 形状的地方。
 
 - [ ] **Step 4: 跑测试确认通过**
 
@@ -88,7 +88,7 @@ git commit -m "feat(core): tool_result 归属 agentId，derive 按 agent 过滤�
 
 **Interfaces:**
 - Consumes: Task 1 的 append/derive
-- Produces: `LoopConfig.tier?: ModelTier`（缺省 `"high"`）；`LoopConfig.pollInbox?: () => Promise<string[]>`——返回的字符串在下一 step 前作为 `user_msg` 事件落盘并进入模型历史；assistant_msg 事件 `tier` 字段反映 `cfg.tier`。
+- Produces: `LoopConfig.tier?: ModelTier`（默认 `"high"`）；`LoopConfig.pollInbox?: () => Promise<string[]>`——返回的字符串在下一 step 前作为 `user_msg` 事件落盘并进入模型历史；assistant_msg 事件 `tier` 字段反映 `cfg.tier`。
 
 - [ ] **Step 1: 写失败测试**
 
@@ -224,7 +224,7 @@ git commit -m "feat(orchestrator): M2 包脚手架"
 runtime.test.ts：
 - `spawn` 落盘 agent_spawn 事件，字段完整、agentId 为 `worker-1`/`task-1`；同 role 二次 spawn 编号递增
 - `resolveModel("low")` 返回 low 档配置对应的 model id 与适配器；目录外 provider 推断协议且不抛错
-- `maxParallelTasks`/`planMaxRevisions` 缺省 10/3
+- `maxParallelTasks`/`planMaxRevisions` 默认 10/3
 
 - [ ] **Step 2: 跑测试确认失败**
 
@@ -359,7 +359,7 @@ git commit -m "feat(orchestrator): delegate 工具与 trivial/simple 主流"
   ```ts
   export function createSpawnWorkersTool(runtime: OrchestrationRuntime, state: TurnState): ToolDefinition<{ workers: { task: string; context?: string; modelTier: ModelTier }[] }>
   ```
-  spawn_workers execute 守卫：`state.planApproved === false` 时返回 isError「plan 未批准」；批准后 spawn 各 worker（role=worker，tier 取参数 modelTier）内联跑 turn，聚合摘要为 content。plan.ts：`runPlanPhase(runtime, state, signal, onPlanApproval)`——修订循环：runTurn 起草（user_msg 提示起草 plan）→ 取 main 最后 assistant 文本为 plan → yield `{type:"plan", phase:"drafted", plan}` → `onPlanApproval(plan)`（缺省 fail-closed 返回 `{kind:"reject", note:"no approval handler"}`）→ 落盘 `approval/asked`（payload `{kind:"plan", plan}`）与 `approval/decided`（含 note）；approve → `state.planApproved = true`，yield approved，追加 user_msg「Plan approved...」返回；annotate → `state.revisions++`，`revisions > planMaxRevisions` 时 yield `revision_exhausted`、追加 user_msg 说明并结束（不再询问）；reject → yield denied、追加 user_msg、跑一轮收尾 runTurn 后结束。main-turn.ts：complex 分支调 runPlanPhase，批准后 runTurn 执行阶段（registry 装 delegate + spawn_workers）。
+  spawn_workers execute 守卫：`state.planApproved === false` 时返回 isError「plan 未批准」；批准后 spawn 各 worker（role=worker，tier 取参数 modelTier）内联跑 turn，聚合摘要为 content。plan.ts：`runPlanPhase(runtime, state, signal, onPlanApproval)`——修订循环：runTurn 起草（user_msg 提示起草 plan）→ 取 main 最后 assistant 文本为 plan → yield `{type:"plan", phase:"drafted", plan}` → `onPlanApproval(plan)`（默认 fail-closed 返回 `{kind:"reject", note:"no approval handler"}`）→ 落盘 `approval/asked`（payload `{kind:"plan", plan}`）与 `approval/decided`（含 note）；approve → `state.planApproved = true`，yield approved，追加 user_msg「Plan approved...」返回；annotate → `state.revisions++`，`revisions > planMaxRevisions` 时 yield `revision_exhausted`、追加 user_msg 说明并结束（不再询问）；reject → yield denied、追加 user_msg、跑一轮收尾 runTurn 后结束。main-turn.ts：complex 分支调 runPlanPhase，批准后 runTurn 执行阶段（registry 装 delegate + spawn_workers）。
 
 - [ ] **Step 1: 写失败测试**（= M2 验收 #2）
 

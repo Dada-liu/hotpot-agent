@@ -31,7 +31,7 @@ export function resetSections(): void {
 }
 
 // 按 order 升序拼接各段文本，段间以空行分隔
-// sections 缺省时读模块级注册表；传入局部段列表则绕过全局单例
+// sections 默认时读模块级注册表；传入局部段列表则绕过全局单例
 // （orchestrator 按角色组装 prompt 时用后者，避免多角色在同进程构建时互相污染注册表）
 export function buildSystemPrompt(
 	ctx: PromptContext,

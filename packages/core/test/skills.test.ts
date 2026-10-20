@@ -46,7 +46,7 @@ describe("frontmatter 解析", () => {
 		});
 	});
 
-	it("name 缺省取所在目录名 basename，description 缺省空串", async () => {
+	it("name 默认取所在目录名 basename，description 默认空串", async () => {
 		const path = await makeSkill("my-skill", "description: 一些说明\n");
 		const [skill] = await discoverSkills([root]);
 		expect(skill?.name).toBe("my-skill");
@@ -54,7 +54,7 @@ describe("frontmatter 解析", () => {
 		expect(skill?.path).toBe(path);
 	});
 
-	it("无 frontmatter（首行不是 ---）时 name/description 全走缺省", async () => {
+	it("无 frontmatter（首行不是 ---）时 name/description 全走默认", async () => {
 		await makeSkill("plain", null, "随便什么内容\nname: 不在围栏里不生效\n");
 		const [skill] = await discoverSkills([root]);
 		expect(skill?.name).toBe("plain");

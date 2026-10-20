@@ -31,7 +31,7 @@ const DEFAULT_TIMEOUT_MS = 600000;
 export interface RunAgentTurnOptions {
 	cwd: string;
 	prompt: string;
-	// 缺省加载用户级 settings（真实跑批）；测试注入内存配置
+	// 默认加载用户级 settings（真实跑批）；测试注入内存配置
 	settings?: Settings;
 	modelTier: ModelTier;
 	timeoutMs?: number;

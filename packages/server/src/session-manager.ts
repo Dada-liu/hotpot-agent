@@ -23,6 +23,7 @@
 // live 事件按 seq 序推送——每订阅者的 FIFO 序由单线程同步交付天然保证。
 
 import { randomUUID } from "node:crypto";
+import { rm } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { LlmAdapter, ModelInfo } from "@hotpot/ai";
 import {
@@ -113,14 +114,14 @@ export class PromptCommandError extends Error {
 
 export interface SessionManagerOptions {
 	home?: string;
-	// 测试注入点：缺省时按 settings 的 ModelRef 解析真实适配器（orchestrator 的 resolveModel）；
+	// 测试注入点：默认时按 settings 的 ModelRef 解析真实适配器（orchestrator 的 resolveModel）；
 	// 存在时覆盖 runtime.resolveModel（main/worker 共用同一录制适配器），同 chat.ts opts.llm
 	llm?: { adapter: LlmAdapter; model: ModelInfo };
-	// 未知模型兜底等告警通道；缺省静默
+	// 未知模型兜底等告警通道；默认静默
 	warn?: (text: string) => void;
-	// 测试注入点：MCP 连接层打桩（缺省走真实 SDK client），配 mcpServers 配置做 attach 用例
+	// 测试注入点：MCP 连接层打桩（默认走真实 SDK client），配 mcpServers 配置做 attach 用例
 	mcpCreateClient?: McpClientFactory;
-	// 测试注入点：遥测上报用的 fetch，缺省走全局 fetch
+	// 测试注入点：遥测上报用的 fetch，默认走全局 fetch
 	telemetryFetch?: typeof fetch;
 }
 
@@ -164,6 +165,14 @@ export interface SessionManager {
 	): Promise<() => void>;
 	usage(id: string): Promise<UsageSummary>;
 	close(id: string): Promise<void>;
+	// 删除会话：先按 close 收尾（拒决未决审批/停 tailer/摘 managed/关 MCP），
+	// 再删磁盘日志文件；未命中（含纯磁盘会话已不存在）返回 false。
+	// 运行中的会话由 REST 层 409 拦截，调用方需保证非运行态
+	delete(id: string): Promise<boolean>;
+	// 归档会话：结束运行中的回合（abort + 拒决未决审批 + 不再消费队列），
+	// 等回合链落定（日志与遥测全部落盘）后按 close 收尾摘托管；
+	// 会话保留在磁盘列表中，可随时重新打开。未托管/未知返回 false
+	archive(id: string): Promise<boolean>;
 }
 
 interface ManagedSession {
@@ -192,6 +201,8 @@ interface ManagedSession {
 	telemetryStartedAt: number;
 	telemetryTurns: number;
 	telemetryErrors: number;
+	// 归档置位：followup 补发循环见到即停（归档不再消费队列里的消息）
+	closing: boolean;
 	// turn 串行链尾
 	turnTail: Promise<void>;
 	subscribers: Map<number, (e: WireEvent) => void>;
@@ -405,7 +416,7 @@ export function createSessionManager(
 							: withApproval(tool, tool.name === "bash" ? "command" : "write")
 				: undefined;
 
-		// M4 Feature⑦ MCP：开关（features.mcp，缺省开）打开且配置了 server 才连接。
+		// M4 Feature⑦ MCP：开关（features.mcp，默认开）打开且配置了 server 才连接。
 		// 单 server 失败由 connectMcpServers 内部告警跳过，不阻塞装配；连接成功逐个经
 		// watermark.session 落盘 mcp/attached（此时 tailer 未 start，初始补读会把它与
 		// 历史事件一起交付，markBaseline 清计数，无水位悬挂）。mcpCreateClient 为测试注入缝
@@ -436,7 +447,7 @@ export function createSessionManager(
 			}
 		}
 
-		// M4 Feature④ skill：开关（features.skills，缺省开）打开时扫描
+		// M4 Feature④ skill：开关（features.skills，默认开）打开时扫描
 		// skillsDirs（相对 cwd 解析）→ <home>/skills → <cwd>/.hotpot/skills
 		// （只查 cwd 一级、不向上逐级，已知边界见 orchestrator README）；
 		// discoverSkills 同名去重、后扫描者胜：项目级 > home > skillsDirs
@@ -545,6 +556,7 @@ export function createSessionManager(
 			telemetryStartedAt: init.startedAt,
 			telemetryTurns: 0,
 			telemetryErrors: 0,
+			closing: false,
 			turnTail: Promise.resolve(),
 			subscribers,
 			nextSubscriberId: 1,
@@ -665,14 +677,15 @@ export function createSessionManager(
 		m.emit({ kind: "turn", phase: "end", stopReason, error });
 	}
 
-	// 一回合 + followup 补发循环（同 CLI：turn 结束后 drain next-turn 逐个补发为新回合）
+	// 一回合 + followup 补发循环（同 CLI：turn 结束后 drain next-turn 逐个补发为新回合）；
+	// closing（归档）置位后不再消费队列：归档语义是结束会话，排队消息留给重新打开时处理
 	async function runTurnWithFollowups(
 		m: ManagedSession,
 		content: string,
 	): Promise<void> {
 		await runOneTurn(m, content);
 		let followups: InboxMessage[] = await m.inbox.drainNextTurn();
-		while (followups.length > 0) {
+		while (followups.length > 0 && !m.closing) {
 			for (const followup of followups) {
 				await runOneTurn(m, followup.content);
 			}
@@ -733,6 +746,42 @@ export function createSessionManager(
 			content: expanded,
 		});
 		return expanded;
+	}
+
+	// 会话销毁收尾（close 与 delete 共用）：未决审批一律拒绝（tool 型 deny；plan 型 reject），
+	// 让 parked promise 落盘 decided 并释放等待中的回合链
+	async function closeManaged(id: string): Promise<void> {
+		const m = requireManaged(id);
+		for (const requestId of m.bridge.pending()) {
+			if (!m.bridge.answer(requestId, "deny")) {
+				m.bridge.answer(requestId, {
+					kind: "reject",
+					note: "session closed",
+				});
+			}
+		}
+		m.tailer.stop();
+		// session_end 必须在 managed 摘除前入队：turns/errors 取本会话累计值。
+		// flush 不 await：关闭路径不能被网络重试拖住，失败由客户端内部吞掉
+		if (telemetry !== null) {
+			try {
+				telemetry.client.enqueue(
+					sessionEndEvent({
+						sessionId: m.id,
+						startedAt: m.telemetryStartedAt,
+						turns: m.telemetryTurns,
+						errors: m.telemetryErrors,
+					}),
+				);
+				void telemetry.client.flush();
+			} catch {
+				// 遥测是旁路：上报失败不影响会话关闭
+			}
+		}
+		// managed 同步摘除保持旧行为（close 不 await 时 get 立即为 null）；
+		// MCP 连接关闭是异步收尾，放最后不阻塞摘除
+		managed.delete(id);
+		await closeMcpConnections(m.mcpConnections);
 	}
 
 	return {
@@ -927,40 +976,44 @@ export function createSessionManager(
 			return summarizeUsage(events, m.features);
 		},
 
-		async close(id: string): Promise<void> {
-			const m = requireManaged(id);
-			// 会话销毁：未决审批一律拒绝（tool 型 deny；plan 型 reject），
-			// 让 parked promise 落盘 decided 并释放等待中的回合链
+		close: closeManaged,
+
+		async archive(id: string): Promise<boolean> {
+			const m = managed.get(id);
+			if (m === undefined) return false;
+			m.closing = true;
+			// 先拒决未决审批：parked promise 不释放，回合永远走不到收尾，
+			// turnTail 将一直挂起（closeManaged 里的同款拒决因此成为 no-op，语义不变）
 			for (const requestId of m.bridge.pending()) {
 				if (!m.bridge.answer(requestId, "deny")) {
 					m.bridge.answer(requestId, {
 						kind: "reject",
-						note: "session closed",
+						note: "session archived",
 					});
 				}
 			}
-			m.tailer.stop();
-			// session_end 必须在 managed 摘除前入队：turns/errors 取本会话累计值。
-			// flush 不 await：关闭路径不能被网络重试拖住，失败由客户端内部吞掉
-			if (telemetry !== null) {
-				try {
-					telemetry.client.enqueue(
-						sessionEndEvent({
-							sessionId: m.id,
-							startedAt: m.telemetryStartedAt,
-							turns: m.telemetryTurns,
-							errors: m.telemetryErrors,
-						}),
-					);
-					void telemetry.client.flush();
-				} catch {
-					// 遥测是旁路：上报失败不影响会话关闭
-				}
+			// abort 当前回合，随后等回合链落定：turn(end) 已发、遥测已入队并 flush、
+			// 日志 append 全部落盘——这是「所有内容落盘」的时点
+			m.inbox.cancel();
+			await m.turnTail;
+			await closeManaged(id);
+			return true;
+		},
+
+		async delete(id: string): Promise<boolean> {
+			const m = managed.get(id);
+			if (m !== undefined) {
+				// 托管会话：按 close 收尾（审批/尾随/遥测/MCP 全关停）后删磁盘日志
+				await closeManaged(id);
+				await rm(m.filePath, { force: true });
+				return true;
 			}
-			// managed 同步摘除保持旧行为（close 不 await 时 get 立即为 null）；
-			// MCP 连接关闭是异步收尾，放最后不阻塞摘除
-			managed.delete(id);
-			await closeMcpConnections(m.mcpConnections);
+			// 纯磁盘会话（未托管）：定位日志文件直接删除
+			const summaries = await listSessions(opts.home);
+			const summary = summaries.find((s) => s.id === id);
+			if (summary === undefined) return false;
+			await rm(summary.filePath, { force: true });
+			return true;
 		},
 	};
 }

@@ -3,7 +3,7 @@
 // 因此这里不触碰全局注册表 —— 本地组好段列表后调用 buildSystemPrompt(ctx, sections)，
 // 同一进程内连续构建 main/worker/task 三种 prompt 互不污染（core 为此给 buildSystemPrompt
 // 增加了可选 sections 入参）。角色指令段插在 rules(2000) 与 env(3000) 之间的 2500。
-// M4 动态段（可选 opts，缺省完全不出现、默认行为不变）：
+// M4 动态段（可选 opts，默认完全不出现、默认行为不变）：
 // skills 段 order 1400（Task 6 数据源：discoverSkills 扫描结果）、
 // todos 段 order 1500（Task 2 数据源：foldTodos fold 结果）；空列表不出段。
 // 文案内容对齐 docs/archive/03-agent-orchestration.md：
@@ -142,7 +142,7 @@ function todosSection(todos: TodoItem[]): PromptSection {
 }
 
 // 基础四段 + 角色指令段，全部本地组装，不走全局注册表；
-// opts.skills/opts.todos 为可选动态段数据源（缺省/空数组不出段，默认行为与 M2 一致）；
+// opts.skills/opts.todos 为可选动态段数据源（默认/空数组不出段，默认行为与 M2 一致）；
 // opts.instructions 覆盖角色指令段（main 的 plan / 执行阶段使用）
 export function buildRoleSystemPrompt(
 	role: AgentRole,

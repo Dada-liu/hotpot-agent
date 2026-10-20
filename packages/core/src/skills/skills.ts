@@ -1,7 +1,7 @@
 // skill 发现（M4 Feature④）：递归扫描给定目录下的 SKILL.md，解析 frontmatter
 // 里的 name/description（渐进式加载——清单只进 prompt，模型用 read 工具按 path 读正文）。
 // frontmatter 只支持最小 YAML 子集：`---` 围栏内的 `key: value` 行，只取 name/description
-// 两个键；name 缺省取 SKILL.md 所在目录名（basename），description 缺省空串。
+// 两个键；name 默认取 SKILL.md 所在目录名（basename），description 默认空串。
 // 目录不存在/不可读静默跳过；同名 skill 后扫描的目录优先（Map 后写覆盖先写，按 name 去重）。
 
 import { readdir, readFile } from "node:fs/promises";

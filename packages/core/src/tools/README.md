@@ -18,6 +18,6 @@
 
 后端契约 `WebSearchBackend`：`search(query, count, signal): Promise<{ title, url, snippet }[]>`，工具只依赖该接口，后端实现可替换：
 
-- `createDuckDuckGoBackend(deps?: { fetchImpl? })`：缺省后端，无需 key。POST `html.duckduckgo.com/html/`（form 参数 `q`），正则解析结果块（`.result` 内 `a.result__a` 的 href/title + `.result__snippet` 文本），`href` 可能是 `/l/?uddg=` 重定向包装，取 `uddg=` 参数解码出原始 URL。
+- `createDuckDuckGoBackend(deps?: { fetchImpl? })`：默认后端，无需 key。POST `html.duckduckgo.com/html/`（form 参数 `q`），正则解析结果块（`.result` 内 `a.result__a` 的 href/title + `.result__snippet` 文本），`href` 可能是 `/l/?uddg=` 重定向包装，取 `uddg=` 参数解码出原始 URL。
 - `createCustomBackend({ baseUrl, apiKey?, headers?, fetchImpl? })`：接自建搜索 API。GET `{baseUrl}?q={query}&count={count}`；`apiKey` 存在时以 `Authorization: Bearer` 发送，`headers` 为附加自定义头（同名键被 Authorization 覆盖）；响应 JSON 形状必须是 `{ results: [{ title, url, snippet }] }`，HTTP 非 2xx 或形状不符抛错，由工具层统一 isError 化。
-- `createWebSearchBackendFromConfig(settings.webSearch, deps?)`：settings 配置→后端的唯一解析口（assembly 层经它装配 runtime），`backend` 缺省/ `"duckduckgo"` 走 DuckDuckGo，`"custom"` 必须提供 `baseUrl`；`features.webSearch` 开关在注册层判读，关闭则不注册工具。
+- `createWebSearchBackendFromConfig(settings.webSearch, deps?)`：settings 配置→后端的唯一解析口（assembly 层经它装配 runtime），`backend` 默认/ `"duckduckgo"` 走 DuckDuckGo，`"custom"` 必须提供 `baseUrl`；`features.webSearch` 开关在注册层判读，关闭则不注册工具。

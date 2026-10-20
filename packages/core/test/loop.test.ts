@@ -529,7 +529,7 @@ describe("runTurn", () => {
 		expect(events.at(-1)).toEqual({ type: "done", stopReason: "stop" });
 	});
 
-	it("system 缺省时用默认 section 注册表组装（冒烟）", async () => {
+	it("system 默认时用默认 section 注册表组装（冒烟）", async () => {
 		const cfg = await makeConfig([
 			[
 				{ type: "text_delta", delta: "hi" },
@@ -643,7 +643,7 @@ describe("runTurn", () => {
 		expect(result.output.content).toContain('{"text":"hi');
 	});
 
-	it("tier 透传：cfg.tier 落盘到 assistant_msg，缺省为 high", async () => {
+	it("tier 透传：cfg.tier 落盘到 assistant_msg，默认为 high", async () => {
 		// M2 按 agent 路由档位（worker/task 走 medium/low），验收以日志记录为准
 		const lowCfg = await makeConfig([STOP_ROUND]);
 		lowCfg.tier = "low";
@@ -655,7 +655,7 @@ describe("runTurn", () => {
 		}
 		expect(lowAssistant.tier).toBe("low");
 
-		// 不传 tier：缺省 high，既有行为不变
+		// 不传 tier：默认 high，既有行为不变
 		const defaultCfg = await makeConfig([STOP_ROUND]);
 		await collectTurn(defaultCfg, new AbortController().signal);
 		const { events: defaultEvents } = await loadSession(
@@ -739,7 +739,7 @@ describe("runTurn hooks 接线", () => {
 			toolCallRound("probe", "tc-1", "{}"),
 			STOP_ROUND,
 		]);
-		// makeConfig 的缺省 cwd 是虚拟路径；hooks 以 cwd 启动子进程，改用真实临时目录
+		// makeConfig 的默认 cwd 是虚拟路径；hooks 以 cwd 启动子进程，改用真实临时目录
 		cfg.cwd = home;
 		cfg.registry.register({
 			name: "probe",

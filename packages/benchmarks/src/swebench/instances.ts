@@ -22,7 +22,7 @@ export type SwebenchInstance = z.infer<typeof instanceSchema>;
 export interface SelectInstancesOptions {
 	limit?: number;
 	instanceIds?: string[];
-	// 缺省 0：同一个实例文件与 limit 得到稳定子集
+	// 默认 0：同一个实例文件与 limit 得到稳定子集
 	seed?: number;
 }
 

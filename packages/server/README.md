@@ -5,7 +5,7 @@ M3 服务层：在 cli 与 orchestrator 之上提供 REST + SSE API，负责会�
 ## 当前已实现
 
 - **`createTailer` JSONL 日志 tailer**（`src/tailer.ts`）：事件总线的基础。
-  - `start()` 先补读历史（`fromOffset`，缺省 0）整批回调，再进入跟随模式；
+  - `start()` 先补读历史（`fromOffset`，默认 0）整批回调，再进入跟随模式；
   - 跟随：`fs.watch` 触发增量读 + `pollIntervalMs`（默认 250）轮询文件大小兜底；
   - 只读新增字节：空行与 `JSON.parse` 失败的坏行跳过；末尾无换行的半行留待下次拼接（写入中途被杀不掉数据）；
   - `offset()` 返回已消费字节数（半行不算），客户端断线重连时携带它即可从 tailer 续读补发；
@@ -23,8 +23,8 @@ M3 服务层：在 cli 与 orchestrator 之上提供 REST + SSE API，负责会�
   - webDist（默认按 `import.meta.url` 定位 `<仓库根>/packages/web/dist`）：产物文件（`/assets/*` 等）按扩展名给 Content-Type；`/` 与任意非 `/api` 路径的 GET 回退 `index.html`（SPA 兜底）；
   - publicDir（默认 `<仓库根>/public`）：`/<文件名>` 原样直出；
   - 两个目录都不存在时不挂任何路由（纯 API 模式）；`/api` 前缀永不进静态路由，URL 路径规范化后拒绝逃逸根目录。
-- **REST + SSE 路由**（`src/app.ts`）：全部路由挂 `/api/sessions*`；`GET /:id` 与 `events`（SSE）等单会话路由经共享的 `requireSession` 解析——内存 managed 表未命中时降级 `attachById` 恢复磁盘会话（CLI 创建的会话同样可打开），attach 也未命中才 404。
-- **`startServer` 启动装配**（`src/serve.ts`）：SessionManager + Hono app + 静态托管 + `@hono/node-server` 监听的可复用接线；`hotpot-server` bin 与发布包 `hotpot web` 共用。端口取参数或 `HOTPOT_PORT`（缺省 4573），静态目录可用参数或 `HOTPOT_WEB_DIST`/`HOTPOT_PUBLIC_DIR` 覆盖。
+- **REST + SSE 路由**（`src/app.ts`）：全部路由挂 `/api/sessions*`；`GET /:id` 与 `events`（SSE）等单会话路由经共享的 `requireSession` 解析——内存 managed 表未命中时降级 `attachById` 恢复磁盘会话（CLI 创建的会话同样可打开），attach 也未命中才 404。`DELETE /:id` 删除会话：运行中 409（先取消再删）；删除 = close 收尾（拒决未决审批/停 tailer/摘 managed/关 MCP）+ 删磁盘日志，之后任何入口均 404。`POST /:id/archive` 归档会话：结束运行中的回合（abort + 拒决未决审批 + 不再消费队列）并等回合链落定（日志与遥测全部落盘）后摘托管；会话保留在磁盘列表中，可随时重新打开。
+- **`startServer` 启动装配**（`src/serve.ts`）：SessionManager + Hono app + 静态托管 + `@hono/node-server` 监听的可复用接线；`hotpot-server` bin 与发布包 `hotpot web` 共用。端口取参数或 `HOTPOT_PORT`（默认 4573），静态目录可用参数或 `HOTPOT_WEB_DIST`/`HOTPOT_PUBLIC_DIR` 覆盖。
 - **`hotpot-server` bin**（`src/bin.ts`）：调用 `startServer` 并打印启动地址，供源码仓库开发态使用。
 
 ## M4 增量

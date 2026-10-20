@@ -2,7 +2,7 @@
 // 计划正文优先复用初始轮（main 在 delegate 之后产出的最终消息）：只有计划缺失、
 // 或 plan 开始时 next-step 队列非空（需要让模型看到用户 steer）时才跑一轮内部起草；
 // 批注修订仍走起草轮。每轮：整理 plan → yield drafted（携带作为计划落盘的 assistant
-// 消息 id，供 UI 隐藏正文气泡）→ await onPlanApproval（缺省 fail-closed 拒绝）→ 分流：
+// 消息 id，供 UI 隐藏正文气泡）→ await onPlanApproval（默认 fail-closed 拒绝）→ 分流：
 //   approve  → 落盘 asked/decided(approved)，state.planApproved/phase 翻转，yield approved，
 //              追加执行 kickoff internal_msg 后返回（main-turn 接着跑执行 turn）
 //   annotate → revisions++；revisions > planMaxRevisions 时 yield revision_exhausted、
@@ -130,7 +130,7 @@ export async function* runPlanPhase(
 ): AsyncIterable<OrchestrationEvent> {
 	// plan 阶段不挂任何工具：起草/修订只用模型能力，delegate/spawn_workers 都不可用
 	const registry = createRoleRegistry(runtime, MAIN_AGENT_ID, []);
-	// 起草轮沿用 delegate 判定的档位（complex 固定 high），缺省回退 high
+	// 起草轮沿用 delegate 判定的档位（complex 固定 high），默认回退 high
 	const tier: ModelTier = state.lastDelegate?.modelTier ?? "high";
 	const resolved = runtime.resolveModel(tier);
 	const inbox = options.inbox;

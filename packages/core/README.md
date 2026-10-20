@@ -44,4 +44,4 @@ agent 内核，不依赖任何 UI。
 - **hooks**（`src/hooks/hooks.ts`）：Claude Code 配置格式（SessionStart/PreToolUse/PostToolUse/Stop）；命令经 stdin 收 JSON、env 带 `HOTPOT_HOOK_EVENT`、60s 超时；PreToolUse 非零退出阻断工具，每条命令落 `hook/fired`。
 - **skill**（`src/skills/skills.ts`）：递归扫描 `SKILL.md`，最小 frontmatter 解析（`src/frontmatter/frontmatter.ts`，与 prompt templates 共用），只产出 name/description/path 清单。
 - **prompt templates**（`src/prompt-templates/prompt-templates.ts`）：`*.md` → `/命令`，支持 `$ARGUMENTS`/`$1..$9`；展开由 CLI / server 负责，落 `prompt/invoked`。
-- **设置扩展**（`src/config/config.ts`）：`features.*` 开关、`hooks`、`webSearch`、`mcpServers`、`skillsDirs`、`promptsDirs` 均仅用户级（安全理由见 schema 注释）；`featureEnabled` 为统一读取口（缺省全开）。
+- **设置扩展**（`src/config/config.ts`）：`features.*` 开关、`hooks`、`webSearch`、`mcpServers`、`skillsDirs`、`promptsDirs` 均仅用户级（安全理由见 schema 注释）；`featureEnabled` 为统一读取口（默认全开）。

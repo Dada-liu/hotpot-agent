@@ -1,7 +1,7 @@
 // JSON Schema → zod 子集转换（M4 Feature⑦ MCP 桥接用）。
 // 只支持 MCP 工具 inputSchema 的常见子集：object/properties/required、enum、
 // string/number/integer/boolean、array/items；additionalProperties 忽略
-// （zod object 缺省 strip 未知键，不拒绝，语义等价「不额外约束」）。
+// （zod object 默认 strip 未知键，不拒绝，语义等价「不额外约束」）。
 // 「不拦」原则：遇到不支持的结构性关键字（anyOf/oneOf/allOf/$ref/not）或未知
 // type 一律回退 z.unknown() 放行任意输入——声明层尽量保真，转换不了就把校验
 // 交还 MCP server，桥接层绝不把合法调用拦死。zod v4 的 z.enum 对空数组与非

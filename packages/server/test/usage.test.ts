@@ -86,7 +86,7 @@ describe("summarizeUsage", () => {
 		expect(summary.byAgent["worker-1"]).toEqual({ input: 30, output: 12 });
 	});
 
-	it("M4 功能用量：事件条数与工具调用数按功能归属，开关缺省全开", () => {
+	it("M4 功能用量：事件条数与工具调用数按功能归属，开关默认全开", () => {
 		const { features } = summarizeUsage(events);
 		expect(features.todo).toEqual({ enabled: true, events: 1, toolCalls: 1 });
 		expect(features.hooks).toEqual({ enabled: true, events: 1, toolCalls: 0 });
@@ -118,7 +118,7 @@ describe("summarizeUsage", () => {
 		expect(features.todo).toEqual({ enabled: false, events: 1, toolCalls: 1 });
 		expect(features.webSearch.enabled).toBe(false);
 		expect(features.mcp.enabled).toBe(false);
-		// 未显式关闭的缺省仍开
+		// 未显式关闭的默认仍开
 		expect(features.hooks.enabled).toBe(true);
 	});
 });

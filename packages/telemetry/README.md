@@ -81,7 +81,7 @@ token 来自 `settings.telemetry.token`，可以是字面值，也可以是整�
 ## 开关
 
 - `settings.telemetry.enabled: false` → runtime 为 `null`，全部 no-op。
-- 缺省为开启；但 endpoint 未配置时同样不启用。
+- 默认为开启；但 endpoint 未配置时同样不启用。
 - `settings.telemetry.flushIntervalMs` 取非负整数，默认 `30000`；`0` 表示不定时 flush，只靠阈值（默认 50 条）与 `close()` 触发。负数仍是配置校验错误。
 - `telemetry` 只从用户级 `~/.hotpot/settings.json` 读取。项目级 `.hotpot/settings.json` 的 schema 不接受该字段，防止恶意仓库改写上报地址或凭证。
 

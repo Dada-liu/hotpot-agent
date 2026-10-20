@@ -27,7 +27,7 @@ export const customTaskSchema = z
 		validation: z
 			.object({
 				command: z.string().min(1),
-				// 缺省 0；只比较退出码，不解析测试框架输出
+				// 默认 0；只比较退出码，不解析测试框架输出
 				expectedExitCode: z.number().int().optional(),
 				// 提供时用「stdout 包含该子串」判定，适配 node 校验脚本的一行结论
 				expectedStdout: z.string().optional(),

@@ -2,7 +2,7 @@
 // token：只累 assistant_msg.usage 的 input/output（cacheRead/cacheWrite 存在也不展示、不计入）；
 // byTier 额外记 assistant_msg 条数 count，byAgent 按 agentId 聚合。
 // features（M4 验收「遥测能看到该功能的开关与用量」）：按事件类型与工具名计数，
-// 开关取 settings.features（缺省全开）。M5 报表直接消费该结构。
+// 开关取 settings.features（默认全开）。M5 报表直接消费该结构。
 
 import { featureEnabled, type SessionEvent, type Settings } from "@hotpot/core";
 

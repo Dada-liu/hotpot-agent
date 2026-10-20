@@ -128,7 +128,7 @@ async function readBodyText(body: ReadableStream<Uint8Array>): Promise<string> {
 	return text + decoder.decode();
 }
 
-// 创建 Anthropic Messages 适配器。fetchImpl 为注入点：测试传 fake，生产缺省用全局 fetch
+// 创建 Anthropic Messages 适配器。fetchImpl 为注入点：测试传 fake，生产默认用全局 fetch
 export function createAnthropicMessagesAdapter(
 	fetchImpl?: FetchLike,
 ): LlmAdapter {
@@ -138,7 +138,7 @@ export function createAnthropicMessagesAdapter(
 		req: ChatRequest,
 		signal: AbortSignal,
 	): AsyncIterable<StreamEvent> {
-		// baseUrl 缺省走 Anthropic 官方端点；末尾斜杠归一化
+		// baseUrl 默认走 Anthropic 官方端点；末尾斜杠归一化
 		const baseUrl = (req.baseUrl ?? "https://api.anthropic.com").replace(
 			/\/+$/,
 			"",

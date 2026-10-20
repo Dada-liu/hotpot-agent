@@ -1,7 +1,7 @@
 // web_search 工具（M4 Feature ⑥b）：worker/task 的联网搜索，后端可换。
 // 后端契约 `WebSearchBackend`：search(query, count, signal) 返回 {title,url,snippet} 列表。
 // 两种内置实现：
-// - duckduckgo（缺省，无 key）：POST html.duckduckgo.com/html/（form 参数 q），正则解析结果块
+// - duckduckgo（默认，无 key）：POST html.duckduckgo.com/html/（form 参数 q），正则解析结果块
 //   （.result 内 a.result__a 的 href/title + .result__snippet 文本；href 可能是 /l/?uddg=
 //   重定向包装，取 uddg= 参数解码出原始 URL）；结果为空返回空列表（非错误）。不引 DOM 依赖。
 // - custom：GET {baseUrl}?q={query}&count={count}，apiKey 存在时以 `Authorization: Bearer`
@@ -249,7 +249,7 @@ export function createCustomBackend(opts: {
 	};
 }
 
-// 配置→后端的唯一解析口：缺省或 duckduckgo → DuckDuckGo（无 key）；custom 必须给 baseUrl，
+// 配置→后端的唯一解析口：默认或 duckduckgo → DuckDuckGo（无 key）；custom 必须给 baseUrl，
 // apiKey/headers 可选。assembly 层（orchestrator createRuntime）经此处装配 runtime.webSearchBackend
 export function createWebSearchBackendFromConfig(
 	config: WebSearchConfig | undefined,
@@ -280,7 +280,7 @@ export function createWebSearchTool(
 			"Search the web for a query and return a numbered list of results, each with title, URL and snippet. The number of results is controlled by count (default 5, maximum 10). The search backend is configurable (DuckDuckGo by default).",
 		parameters: z.object({
 			query: z.string().min(1).describe("the search query"),
-			// 声明层钉 min 1 / max 10（JSON Schema 可见），缺省由执行体兜 5；
+			// 声明层钉 min 1 / max 10（JSON Schema 可见），默认由执行体兜 5；
 			// 执行体再钳制一次，兜底直接调用 execute（未经 registry parse）的路径
 			count: z
 				.number()

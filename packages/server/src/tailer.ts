@@ -1,4 +1,4 @@
-// JSONL 会话日志 tailer：start 先补读历史（fromOffset，缺省 0）整批回调，再进入跟随模式。
+// JSONL 会话日志 tailer：start 先补读历史（fromOffset，默认 0）整批回调，再进入跟随模式。
 // 跟随由 fs.watch 触发增量读，pollIntervalMs（默认 250）轮询文件大小兜底；
 // 只读新增字节，按行 JSON.parse（坏行/空行跳过），末尾无换行的半行留待下次拼接。
 // offset() 暴露已消费字节数（完整行才推进，半行不算），供断线重连携带续读。
@@ -11,7 +11,7 @@ import type { SessionEvent } from "@hotpot/core";
 export type TailerOptions = {
 	// 每解析出一批事件回调一次；初始补读为单批
 	onEvents: (events: SessionEvent[]) => void;
-	// 起始字节偏移，缺省 0；断线重连时由客户端携带上次 offset 续读
+	// 起始字节偏移，默认 0；断线重连时由客户端携带上次 offset 续读
 	fromOffset?: number;
 	// 轮询兜底间隔；watch 不可靠的平台/文件系统上保证最终一致
 	pollIntervalMs?: number;

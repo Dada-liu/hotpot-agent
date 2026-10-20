@@ -248,7 +248,7 @@ cli / server
 | promptsDirs | [] | 仅用户级 | 额外 prompt template 扫描目录（相对 cwd） |
 | telemetry.enabled | true | 仅用户级 | 匿名遥测开关（M5.1） |
 | telemetry.endpoint | 未设置（源码常量为空） | 仅用户级 | 上报地址；settings 中的空串/纯空白表示「本机未配置」，回退到环境变量与源码常量（schema 不再要求非空）；解析顺序 settings > `HOTPOT_TELEMETRY_ENDPOINT` > 源码常量，空环境变量会遮挡源码常量，最终值为空或非 http(s) 时视为未启用 |
-| telemetry.token | 无 | 仅用户级 | ingest 的 Bearer token，支持整串 `$ENV` 引用；缺省时不带 Authorization 头 |
+| telemetry.token | 无 | 仅用户级 | ingest 的 Bearer token，支持整串 `$ENV` 引用；默认时不带 Authorization 头 |
 | telemetry.flushIntervalMs | 30000 | 仅用户级 | 定时批量上报间隔（毫秒），非负整数，`0` 表示不定时 flush；负数仍是校验错误 |
 
 项目级可覆盖白名单：`mainAgentTier`、`maxParallelTasks`、`planMaxRevisions`、`approval.policy`；其余字段（含 models）一律忽略。凭证只从用户级读取，规避恶意仓库注入风险（M4 再考虑 pi 式 project trust 提示）。M4 新增字段（features/hooks/webSearch/mcpServers/skillsDirs/promptsDirs）一律仅用户级：hooks/mcpServers 涉及任意命令执行，项目级注入即 RCE；扫描目录与外发流量同理。M5 的 `telemetry` 同样仅用户级：endpoint/token 决定数据与凭证去向，项目级可写等于允许仓库劫持上报。

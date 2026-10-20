@@ -189,9 +189,9 @@ describe("buildRoleSystemPrompt 角色指令", () => {
 // feature 派生外工具现有 todo（Task 2）、web_fetch（Task 3）、web_search（Task 4）
 // 与 mcpTools（Task 5 样板），矩阵钉死规则：
 // - 外工具只进 worker/task，main 永远只有元工具
-// - 开关缺省（undefined）= 开（featureEnabled `?? true`）；显式 false 才不注册
-// - web_search 尚需 runtime.webSearchBackend 已解析（真实 createRuntime 缺省 duckduckgo；
-//   桩 runtime 不注 backend 则不注册，外工具数据缺省不报错）
+// - 开关默认（undefined）= 开（featureEnabled `?? true`）；显式 false 才不注册
+// - web_search 尚需 runtime.webSearchBackend 已解析（真实 createRuntime 默认 duckduckgo；
+//   桩 runtime 不注 backend 则不注册，外工具数据默认不报错）
 // - decorateWorkerTool 只包四件套，外工具与元工具均不装饰
 describe("createRoleRegistry role×feature 矩阵", () => {
 	const mcpTool = stubMetaTool("mcp__demo__tool");
@@ -222,7 +222,7 @@ describe("createRoleRegistry role×feature 矩阵", () => {
 		"write",
 	];
 
-	it("worker + features 缺省 + mcpTools 提供 → 并入外工具（缺省全开）", () => {
+	it("worker + features 默认 + mcpTools 提供 → 并入外工具（默认全开）", () => {
 		const registry = createRoleRegistry(
 			stubRuntime({ mcpTools: [mcpTool] }),
 			"worker",
@@ -240,7 +240,7 @@ describe("createRoleRegistry role×feature 矩阵", () => {
 		]);
 	});
 
-	it("worker + features.mcp=false → 不注册 mcp 外工具，todo/web_fetch 缺省仍注册", () => {
+	it("worker + features.mcp=false → 不注册 mcp 外工具，todo/web_fetch 默认仍注册", () => {
 		const registry = createRoleRegistry(
 			stubRuntime({ features: { mcp: false }, mcpTools: [mcpTool] }),
 			"worker",
@@ -249,7 +249,7 @@ describe("createRoleRegistry role×feature 矩阵", () => {
 		expect(names(registry)).toEqual(WORKER_WITH_TODO);
 	});
 
-	it("worker + features.todo=false → 不注册 todo，mcp 缺省仍注册，web_fetch 缺省仍注册", () => {
+	it("worker + features.todo=false → 不注册 todo，mcp 默认仍注册，web_fetch 默认仍注册", () => {
 		const registry = createRoleRegistry(
 			stubRuntime({ features: { todo: false }, mcpTools: [mcpTool] }),
 			"worker",
@@ -266,7 +266,7 @@ describe("createRoleRegistry role×feature 矩阵", () => {
 		]);
 	});
 
-	it("worker + features.webFetch=false → 不注册 web_fetch，todo 缺省仍注册", () => {
+	it("worker + features.webFetch=false → 不注册 web_fetch，todo 默认仍注册", () => {
 		const registry = createRoleRegistry(
 			stubRuntime({ features: { webFetch: false } }),
 			"worker",
@@ -282,7 +282,7 @@ describe("createRoleRegistry role×feature 矩阵", () => {
 		]);
 	});
 
-	it("worker + webSearchBackend 提供 + 开关缺省 → 注册 web_search", () => {
+	it("worker + webSearchBackend 提供 + 开关默认 → 注册 web_search", () => {
 		const registry = createRoleRegistry(
 			stubRuntime({ webSearchBackend: searchBackend }),
 			"worker",
@@ -303,7 +303,7 @@ describe("createRoleRegistry role×feature 矩阵", () => {
 		expect(names(registry)).toEqual(WORKER_WITH_TODO);
 	});
 
-	it("worker + features.webSearch=true 但无 backend → 不注册 web_search（外工具数据缺省不报错）", () => {
+	it("worker + features.webSearch=true 但无 backend → 不注册 web_search（外工具数据默认不报错）", () => {
 		const registry = createRoleRegistry(
 			stubRuntime({ features: { webSearch: true } }),
 			"worker",
@@ -312,7 +312,7 @@ describe("createRoleRegistry role×feature 矩阵", () => {
 		expect(names(registry)).toEqual(WORKER_WITH_TODO);
 	});
 
-	it("worker + features 全开但外工具数据缺省（mcpTools 缺省）→ 空透传不报错、只加 todo", () => {
+	it("worker + features 全开但外工具数据默认（mcpTools 默认）→ 空透传不报错、只加 todo", () => {
 		const registry = createRoleRegistry(
 			stubRuntime({
 				features: {
@@ -359,7 +359,7 @@ describe("createRoleRegistry role×feature 矩阵", () => {
 		]);
 	});
 
-	it("task + features.todo=false → task 也无 todo，web_fetch 缺省仍注册", () => {
+	it("task + features.todo=false → task 也无 todo，web_fetch 默认仍注册", () => {
 		const registry = createRoleRegistry(
 			stubRuntime({ features: { todo: false } }),
 			"task",
@@ -374,7 +374,7 @@ describe("createRoleRegistry role×feature 矩阵", () => {
 		]);
 	});
 
-	it("task + features.webFetch=false → 不注册 web_fetch，todo 缺省仍注册", () => {
+	it("task + features.webFetch=false → 不注册 web_fetch，todo 默认仍注册", () => {
 		const registry = createRoleRegistry(
 			stubRuntime({ features: { webFetch: false } }),
 			"task",
@@ -383,7 +383,7 @@ describe("createRoleRegistry role×feature 矩阵", () => {
 		expect(names(registry)).toEqual(["bash", "edit", "read", "todo", "write"]);
 	});
 
-	it("task + webSearchBackend 提供 + 开关缺省 → task 同样注册 web_search", () => {
+	it("task + webSearchBackend 提供 + 开关默认 → task 同样注册 web_search", () => {
 		const registry = createRoleRegistry(
 			stubRuntime({ webSearchBackend: searchBackend }),
 			"task",
@@ -429,7 +429,7 @@ describe("createRoleRegistry role×feature 矩阵", () => {
 		expect(names(registry)).toEqual(["delegate", "spawn_workers"]);
 	});
 
-	it("main + features 缺省 → 同样只有元工具（todo 缺省全开也不进 main）", () => {
+	it("main + features 默认 → 同样只有元工具（todo 默认全开也不进 main）", () => {
 		const registry = createRoleRegistry(stubRuntime(), "main", MAIN_META);
 		expect(names(registry)).toEqual(["delegate", "spawn_workers"]);
 	});
@@ -460,7 +460,7 @@ describe("createRoleRegistry role×feature 矩阵", () => {
 	});
 });
 
-// M4：buildRoleSystemPrompt 可选 opts（skills/todos 动态段）——缺省行为不变、空列表不出段
+// M4：buildRoleSystemPrompt 可选 opts（skills/todos 动态段）——默认行为不变、空列表不出段
 describe("buildRoleSystemPrompt M4 动态段", () => {
 	it("不传 opts 与传空列表都不出 skills/todos 段（默认行为与 M2 一致）", () => {
 		const bare = buildRoleSystemPrompt("worker", makeCtx([]));

@@ -4,7 +4,7 @@
 // - duckduckgo 后端：注入 fetchImpl 回放 HTML 样例（POST form、uddg 重定向解码、
 //   实体解码、标签剥离、空结果页、count 截断、非 2xx 抛错）
 // - custom 后端：GET 查询串、Authorization Bearer、自定义头合并、JSON 形状映射与拒绝
-// - createWebSearchBackendFromConfig：缺省/duckduckgo/custom/baseUrl 缺失
+// - createWebSearchBackendFromConfig：默认/duckduckgo/custom/baseUrl 缺失
 
 import { describe, expect, it } from "vitest";
 import { ApprovalChain } from "../src/approval/chain.ts";
@@ -92,7 +92,7 @@ describe("createWebSearchTool 声明与执行", () => {
 		expect(schema.properties.count?.maximum).toBe(WEB_SEARCH_MAX_COUNT);
 	});
 
-	it("执行：query/count 透传 backend，count 缺省 5，结果渲染编号列表", async () => {
+	it("执行：query/count 透传 backend，count 默认 5，结果渲染编号列表", async () => {
 		const calls: { query: string; count: number; signal: AbortSignal }[] = [];
 		const tool = createWebSearchTool(fakeBackend(TWO_RESULTS, calls));
 
@@ -109,7 +109,7 @@ describe("createWebSearchTool 声明与执行", () => {
 		);
 	});
 
-	it("count 钳制：直接调用路径 0→1、99→10、缺省→5（不经 registry parse 的兜底）", async () => {
+	it("count 钳制：直接调用路径 0→1、99→10、默认→5（不经 registry parse 的兜底）", async () => {
 		const calls: { query: string; count: number; signal: AbortSignal }[] = [];
 		const tool = createWebSearchTool(fakeBackend([], calls));
 
@@ -416,7 +416,7 @@ describe("createCustomBackend", () => {
 });
 
 describe("createWebSearchBackendFromConfig", () => {
-	it("config 缺省或 duckduckgo → DuckDuckGo 后端（POST html 端点可证）", async () => {
+	it("config 默认或 duckduckgo → DuckDuckGo 后端（POST html 端点可证）", async () => {
 		for (const config of [undefined, { backend: "duckduckgo" }] as const) {
 			const { fetchImpl, requests } = stubFetch(
 				async () => new Response(DDG_HTML_PAGE, { status: 200 }),

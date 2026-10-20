@@ -22,7 +22,7 @@ const REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 export interface CheckoutWorkspaceProviderOptions {
 	cacheRoot: string;
 	workspaceRoot: string;
-	// 测试注入本地仓库路径；缺省按 GitHub HTTPS 地址拼
+	// 测试注入本地仓库路径；默认按 GitHub HTTPS 地址拼
 	repoUrl?: (repo: string) => string;
 	cloneTimeoutMs?: number;
 	commandTimeoutMs?: number;

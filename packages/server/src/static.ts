@@ -12,9 +12,9 @@ import { fileURLToPath } from "node:url";
 import type { Hono } from "hono";
 
 export interface MountStaticOptions {
-	// vite 构建产物目录；缺省按 import.meta.url 相对定位 <仓库根>/packages/web/dist
+	// vite 构建产物目录；默认按 import.meta.url 相对定位 <仓库根>/packages/web/dist
 	webDist?: string;
-	// 根 public 资产目录；缺省 <仓库根>/public
+	// 根 public 资产目录；默认 <仓库根>/public
 	publicDir?: string;
 }
 

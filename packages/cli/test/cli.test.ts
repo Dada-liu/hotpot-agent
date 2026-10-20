@@ -469,7 +469,7 @@ describe("runChat", () => {
 		expect(output.text).toContain("再见");
 	});
 
-	it("tier 缺省取 settings.mainAgentTier", async () => {
+	it("tier 默认取 settings.mainAgentTier", async () => {
 		const settings: Settings = {
 			...SETTINGS,
 			mainAgentTier: "medium",
