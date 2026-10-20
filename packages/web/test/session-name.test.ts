@@ -14,14 +14,9 @@ describe("sessionNameFromPrompt", () => {
 		expect(sessionNameFromPrompt("   spaced  ")).toBe("spaced");
 	});
 
-	it("超过 26 字符截断并加省略号", () => {
+	it("超长不截断，原样返回（截断交给展示侧 CSS 省略号）", () => {
 		const long = "a".repeat(30);
-		expect(sessionNameFromPrompt(long)).toBe(`${"a".repeat(26)}…`);
-	});
-
-	it("恰好 26 字符不截断", () => {
-		const exact = "b".repeat(26);
-		expect(sessionNameFromPrompt(exact)).toBe(exact);
+		expect(sessionNameFromPrompt(long)).toBe(long);
 	});
 
 	it("空与纯空白回退为“新会话”", () => {

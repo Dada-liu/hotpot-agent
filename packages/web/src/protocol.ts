@@ -51,7 +51,7 @@ export type SessionEvent =
 			agentId: string;
 			content: ContentBlock[];
 			// server 侧 usage/tier 恒有；镜像为可选以兼容历史日志与测试构造
-			// （tier 缺省语义与 core 一致：缺省视为 "high"）
+			// （tier 默认语义与 core 一致：默认视为 "high"）
 			usage?: { input: number; output: number };
 			tier?: string;
 	  }

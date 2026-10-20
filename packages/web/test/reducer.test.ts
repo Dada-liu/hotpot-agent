@@ -29,7 +29,7 @@ function assistantMsg(
 	return { type: "assistant_msg", id, ts, agentId, content };
 }
 
-// 带 usage/tier 的 assistant_msg（tier 缺省时构造体不含该字段，走缺省语义）
+// 带 usage/tier 的 assistant_msg（tier 默认时构造体不含该字段，走默认语义）
 function assistantUsageMsg(
 	id: string,
 	agentId: string,
@@ -527,7 +527,7 @@ describe("reduce：usage 按 tier 累计", () => {
 		});
 	});
 
-	it("tier 缺省的 assistant_msg 计入 high（与 core 缺省语义一致）", () => {
+	it("tier 默认的 assistant_msg 计入 high（与 core 默认语义一致）", () => {
 		let state = createInitialState();
 		state = reduce(
 			state,

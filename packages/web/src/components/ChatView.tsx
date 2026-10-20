@@ -14,6 +14,7 @@ import {
 } from "react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
 import type { PromptInfo } from "../api.ts";
 import {
 	findFinalAnswer,
@@ -100,14 +101,17 @@ function TranscriptItem({
 
 // 输入卡片：welcome 态与对话底部共用；空闲发送 = 新 turn，运行中发送 = steer + 停止钮。
 // M4 Feature⑤：draft 以 `/` 开头时列出可用的 prompt templates（点击补全为 `/name `）
+// tall：未选中会话的 welcome 态，输入框最小高度在默认基础上增加一半（76px → 114px）
 function Composer({
 	running,
 	prompts,
+	tall = false,
 	onSend,
 	onCancel,
 }: {
 	running: boolean;
 	prompts: PromptInfo[];
+	tall?: boolean;
 	onSend: (content: string) => void;
 	onCancel: () => void;
 }): ReactElement {
@@ -184,7 +188,10 @@ function Composer({
 							: "输入消息，Enter 发送"
 					}
 					rows={1}
-					className="min-h-[76px] flex-1 resize-none border-0 bg-transparent px-2 py-1.5 shadow-none focus-visible:ring-0"
+					className={cn(
+						"flex-1 resize-none border-0 bg-transparent px-2 py-1.5 shadow-none focus-visible:ring-0",
+						tall ? "min-h-[114px]" : "min-h-[76px]",
+					)}
 				/>
 				{running ? (
 					<Button
@@ -431,6 +438,7 @@ export function ChatView({
 				</div>
 				<div className="w-full max-w-2xl">
 					<Composer
+						tall
 						running={false}
 						prompts={prompts}
 						onSend={onSend}

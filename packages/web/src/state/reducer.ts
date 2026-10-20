@@ -107,7 +107,7 @@ export interface ChatState {
 	// agent 面板：首个 spawn 到达即展开
 	panelOpen: boolean;
 	// token 用量累计：log(assistant_msg) 时按 tier 分组累加
-	// （含历史重放，幂等去重保证不重复计；tier 缺省 "high"，与 core 一致）
+	// （含历史重放，幂等去重保证不重复计；tier 默认 "high"，与 core 一致）
 	usage: UsageTotals;
 	// steer/queue 两队列（inbox/spliced 折叠；REST 快照可覆盖修正消费后的残留）
 	inbox: InboxSnapshot;
