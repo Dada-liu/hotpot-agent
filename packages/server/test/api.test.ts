@@ -3,7 +3,8 @@
 // 每用例独立 manager + 独立 home + 独立端口，避免串扰。
 // SSE 连接用 AbortController 中断模拟断线；重连经 Last-Event-ID / ?after= 补发。
 
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { serve } from "@hono/node-server";
@@ -109,7 +110,8 @@ async function startApi(
 		home,
 		llm: { adapter, model: MODEL },
 	});
-	const app = createApp(manager);
+	// settings 路由指向同一 home（测试注入临时目录，避免读写真实 ~/.hotpot）
+	const app = createApp(manager, { home });
 	const server = serve({ fetch: app.fetch, port: 0 });
 	// address() 仅在 listening 后可用；挂在 listening 事件上取系统分配的实际端口
 	const port = await new Promise<number>((resolve, reject) => {
@@ -699,7 +701,7 @@ describe("HTTP API", () => {
 		).toBe(true);
 	}, 20000);
 
-	it("404/400 分支与 cwd 缺省", async () => {
+	it("404/400 分支与 cwd 默认", async () => {
 		const fx = await startApi(
 			scriptedAdapter([textRound("回答", { input: 10, output: 5 })]),
 			"never",
@@ -780,7 +782,7 @@ describe("HTTP API", () => {
 			(await postJson(`${fx.base}/api/sessions/${id}/cancel`)).status,
 		).toBe(202);
 
-		// cwd 缺省 process.cwd()
+		// cwd 默认 process.cwd()
 		const res = await postJson(`${fx.base}/api/sessions`);
 		expect(res.status).toBe(201);
 		const { id: defaultId } = (await res.json()) as { id: string };
@@ -919,4 +921,236 @@ describe("HTTP API", () => {
 			404,
 		);
 	}, 20000);
+
+	it("删除会话：DELETE 204 后列表/详情 404、磁盘日志移除；运行中 409；未知会话 404", async () => {
+		const fx = await startApi(
+			scriptedAdapter([
+				delegateRound(
+					'{"difficulty":"simple","modelTier":"low","task":"清理临时目录 x"}',
+				),
+				toolCallRound("bash", "w-tc-1", '{"command":"rm -rf x"}'),
+				textRound("清理完成。", { input: 50, output: 10 }),
+				textRound("临时目录已清理。", { input: 20, output: 5 }),
+			]),
+			"ask-on-dangerous",
+		);
+		const { id } = await createSession(fx, fx.proj);
+
+		// 未知会话 → 404
+		expect(
+			(await fetch(`${fx.base}/api/sessions/nope`, { method: "DELETE" }))
+				.status,
+		).toBe(404);
+
+		// 回合挂起（等审批）期间 running：DELETE → 409
+		const sse = await openSse(fx.base, id);
+		const msgRes = await postJson(`${fx.base}/api/sessions/${id}/messages`, {
+			content: "清理临时目录",
+		});
+		expect(msgRes.status).toBe(202);
+		await sse.waitFor(() => sse.events.some((e) => e.kind === "approval"));
+		const blocked = await fetch(`${fx.base}/api/sessions/${id}`, {
+			method: "DELETE",
+		});
+		expect(blocked.status).toBe(409);
+		const blockedBody = (await blocked.json()) as { error: string };
+		expect(blockedBody.error).toContain("运行中");
+
+		// 放行后回合收尾（idle）→ DELETE 204：列表/详情 404，磁盘日志移除
+		const approval = sse.events.find((e) => e.kind === "approval");
+		if (approval?.kind !== "approval") throw new Error("approval 事件缺失");
+		const allowRes = await postJson(
+			`${fx.base}/api/sessions/${id}/approvals/${approval.requestId}`,
+			{ decision: "allow" },
+		);
+		expect(allowRes.status).toBe(200);
+		await sse.waitFor(() => sse.events.some(isTurnEnd));
+		sse.close();
+
+		const summaries = await fx.manager.list();
+		const filePath = summaries.find((s) => s.id === id)?.filePath;
+		expect(filePath).toBeDefined();
+		expect(existsSync(filePath ?? "")).toBe(true);
+
+		const del = await fetch(`${fx.base}/api/sessions/${id}`, {
+			method: "DELETE",
+		});
+		expect(del.status).toBe(204);
+
+		const list = (await (await fetch(`${fx.base}/api/sessions`)).json()) as {
+			sessions: { id: string }[];
+		};
+		expect(list.sessions.map((s) => s.id)).not.toContain(id);
+		expect((await fetch(`${fx.base}/api/sessions/${id}`)).status).toBe(404);
+		expect(existsSync(filePath ?? "")).toBe(false);
+
+		// 纯磁盘会话（不经 HTTP create，等价 CLI 创建）同样可删
+		const disk = await createDiskSession(fx.proj, fx.home);
+		const diskDel = await fetch(`${fx.base}/api/sessions/${disk.id}`, {
+			method: "DELETE",
+		});
+		expect(diskDel.status).toBe(204);
+		expect(existsSync(disk.filePath)).toBe(false);
+	}, 20000);
+
+	it("归档会话：运行中归档→回合中止收尾、会话保留在列表且日志落盘，之后可删除", async () => {
+		const fx = await startApi(
+			scriptedAdapter([
+				delegateRound(
+					'{"difficulty":"simple","modelTier":"low","task":"清理临时目录 x"}',
+				),
+				toolCallRound("bash", "w-tc-1", '{"command":"rm -rf x"}'),
+				textRound("清理完成。", { input: 50, output: 10 }),
+				textRound("临时目录已清理。", { input: 20, output: 5 }),
+			]),
+			"ask-on-dangerous",
+		);
+		const { id } = await createSession(fx, fx.proj);
+
+		// 未知会话 → 404
+		expect(
+			(await postJson(`${fx.base}/api/sessions/nope/archive`)).status,
+		).toBe(404);
+
+		// 回合挂起（等审批）期间归档：abort + 拒决未决审批 → 回合照常收尾
+		const sse = await openSse(fx.base, id);
+		const msgRes = await postJson(`${fx.base}/api/sessions/${id}/messages`, {
+			content: "清理临时目录",
+		});
+		expect(msgRes.status).toBe(202);
+		await sse.waitFor(() => sse.events.some((e) => e.kind === "approval"));
+
+		const res = await postJson(`${fx.base}/api/sessions/${id}/archive`);
+		expect(res.status).toBe(200);
+		await sse.waitFor(() => sse.events.some(isTurnEnd));
+		sse.close();
+
+		// 归档后：idle、仍在列表、磁盘日志保留（所有内容已落盘）
+		const detail = (await (
+			await fetch(`${fx.base}/api/sessions/${id}`)
+		).json()) as { turn: string };
+		expect(detail.turn).toBe("idle");
+		const list = (await (await fetch(`${fx.base}/api/sessions`)).json()) as {
+			sessions: { id: string }[];
+		};
+		expect(list.sessions.map((s) => s.id)).toContain(id);
+		const summaries = await fx.manager.list();
+		const filePath = summaries.find((s) => s.id === id)?.filePath;
+		expect(existsSync(filePath ?? "")).toBe(true);
+
+		// 归档后即可删除（204）
+		const del = await fetch(`${fx.base}/api/sessions/${id}`, {
+			method: "DELETE",
+		});
+		expect(del.status).toBe(204);
+	}, 20000);
+});
+
+// ---- 模型设置路由（web 设置弹窗）：只读写用户级 settings.json 的 models/mainAgentTier ----
+
+describe("settings 路由", () => {
+	it("GET 返回 models 与 mainAgentTier，$ENV 引用原文不插值", async () => {
+		const fx = await startApi(scriptedAdapter([]));
+		// 覆盖写：apiKey 用 $ENV 引用 + mainAgentTier
+		await writeFile(
+			join(fx.home, "settings.json"),
+			JSON.stringify({
+				models: {
+					high: {
+						provider: "openai",
+						model: "gpt-5",
+						apiKey: "$OPENAI_API_KEY",
+						baseUrl: "https://api.openai.com/v1",
+					},
+					medium: { provider: "deepseek", model: "ds", apiKey: "mk" },
+					low: { provider: "deepseek", model: "ds-lite", apiKey: "lk" },
+				},
+				mainAgentTier: "medium",
+			}),
+			"utf8",
+		);
+
+		const res = await fetch(`${fx.base}/api/settings`);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			models: Record<string, { apiKey: string; baseUrl?: string }>;
+			mainAgentTier?: string;
+		};
+		// $ENV 引用原样返回（编辑器要看到引用文本，不做插值）
+		expect(body.models.high?.apiKey).toBe("$OPENAI_API_KEY");
+		expect(body.models.high?.baseUrl).toBe("https://api.openai.com/v1");
+		expect(body.mainAgentTier).toBe("medium");
+	});
+
+	it("PUT 更新 models/mainAgentTier，文件其余字段原样保留", async () => {
+		const fx = await startApi(scriptedAdapter([]));
+		// 预置无关字段：PUT 后必须原样保留
+		await writeFile(
+			join(fx.home, "settings.json"),
+			JSON.stringify({
+				models: {
+					high: { provider: "p", model: "h", apiKey: "hk" },
+					medium: { provider: "p", model: "m", apiKey: "mk" },
+					low: { provider: "p", model: "l", apiKey: "lk" },
+				},
+				mainAgentTier: "high",
+				maxParallelTasks: 6,
+				features: { webSearch: false },
+			}),
+			"utf8",
+		);
+
+		const res = await fetch(`${fx.base}/api/settings`, {
+			method: "PUT",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({
+				models: {
+					high: { provider: "openai", model: "gpt-5", apiKey: "sk-new" },
+					medium: { provider: "p", model: "m", apiKey: "mk" },
+					low: { provider: "p", model: "l", apiKey: "lk" },
+				},
+				mainAgentTier: "low",
+			}),
+		});
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			models: { high: { model: string } };
+			mainAgentTier: string;
+		};
+		expect(body.models.high.model).toBe("gpt-5");
+		expect(body.mainAgentTier).toBe("low");
+
+		// 文件级校验：未触及的键保留、写入是合法 JSON
+		const raw = JSON.parse(
+			await readFile(join(fx.home, "settings.json"), "utf8"),
+		) as {
+			models: { high: { apiKey: string } };
+			mainAgentTier: string;
+			maxParallelTasks: number;
+			features: { webSearch: boolean };
+		};
+		expect(raw.models.high.apiKey).toBe("sk-new");
+		expect(raw.mainAgentTier).toBe("low");
+		expect(raw.maxParallelTasks).toBe(6);
+		expect(raw.features.webSearch).toBe(false);
+	});
+
+	it("PUT 非法 body → 400", async () => {
+		const fx = await startApi(scriptedAdapter([]));
+		const res = await fetch(`${fx.base}/api/settings`, {
+			method: "PUT",
+			headers: { "content-type": "application/json" },
+			body: JSON.stringify({ models: { high: { provider: "p" } } }),
+		});
+		expect(res.status).toBe(400);
+	});
+
+	it("settings.json 缺失 → GET 500 带路径错误", async () => {
+		const fx = await startApi(scriptedAdapter([]));
+		await rm(join(fx.home, "settings.json"));
+		const res = await fetch(`${fx.base}/api/settings`);
+		expect(res.status).toBe(500);
+		const body = (await res.json()) as { error: string };
+		expect(body.error).toContain("settings.json");
+	});
 });

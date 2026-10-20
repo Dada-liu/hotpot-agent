@@ -1,5 +1,6 @@
 // HTTP 外壳（M3）：Hono REST + SSE。
-// - 全部路由挂 /api/sessions*，错误统一 {error: string} 形态 + 合适状态码
+// - 会话路由挂 /api/sessions*，设置路由挂 /api/settings（用户级模型设置读写）；
+//   错误统一 {error: string} 形态 + 合适状态码
 // - SSE（GET /:id/events）：帧格式 `id: <seq>` + `data: <WireEvent JSON>`，每 15s 一条
 //   `: ping` 注释保活；断线（ReadableStream cancel）即退订
 // - 重连补发：?after= 优先于 Last-Event-ID 头，交给 manager.subscribeResuming——
@@ -13,6 +14,11 @@ import { type Context, Hono } from "hono";
 import { z } from "zod";
 import type { SessionManager } from "./session-manager.ts";
 import { PromptCommandError } from "./session-manager.ts";
+import {
+	putModelSettingsSchema,
+	readModelSettings,
+	writeModelSettings,
+} from "./settings-store.ts";
 import type { WireEvent } from "./wire.ts";
 
 const createSessionSchema = z.object({
@@ -41,7 +47,7 @@ async function readJsonBody(c: Context): Promise<unknown> {
 }
 
 // 解析 SSE 的 after：query 参数 ?after= 优先，其次 Last-Event-ID 头；
-// 非法值返回 NaN（调用方转 400），缺省为 null
+// 非法值返回 NaN（调用方转 400），默认为 null
 function resolveAfterSeq(c: Context): number | null {
 	const query = c.req.query("after");
 	const header = c.req.header("Last-Event-ID");
@@ -111,7 +117,15 @@ async function handleEvents(
 	return new Response(stream, { headers: SSE_HEADERS });
 }
 
-export function createApp(manager: SessionManager): Hono {
+export interface AppOptions {
+	// settings.json 所在 home（测试注入临时目录；缺省 resolveHome → ~/.hotpot）
+	home?: string;
+}
+
+export function createApp(
+	manager: SessionManager,
+	opts: AppOptions = {},
+): Hono {
 	const app = new Hono();
 
 	app.onError((err, c) => {
@@ -174,6 +188,27 @@ export function createApp(manager: SessionManager): Hono {
 			return c.json({ error: "after 需为非负整数" }, 400);
 		}
 		return handleEvents(manager, rec.id, afterSeq);
+	});
+
+	// 归档会话：结束运行中的回合并全部落盘，摘托管但保留磁盘日志（之后可重新打开/删除）
+	app.post("/api/sessions/:id/archive", async (c) => {
+		const rec = await requireSession(c.req.param("id"));
+		if (rec === null) return c.json({ error: "会话不存在" }, 404);
+		const ok = await manager.archive(rec.id);
+		if (!ok) return c.json({ error: "会话不存在" }, 404);
+		return c.json({});
+	});
+
+	// 删除会话：运行中 409（先取消再删）；删除 = close 收尾 + 删磁盘日志，之后任何入口均 404
+	app.delete("/api/sessions/:id", async (c) => {
+		const rec = await requireSession(c.req.param("id"));
+		if (rec === null) return c.json({ error: "会话不存在" }, 404);
+		if (rec.running) {
+			return c.json({ error: "会话运行中，请先取消再删除" }, 409);
+		}
+		const ok = await manager.delete(rec.id);
+		if (!ok) return c.json({ error: "会话不存在" }, 404);
+		return c.body(null, 204);
 	});
 
 	app.post("/api/sessions/:id/messages", async (c) => {
@@ -275,6 +310,28 @@ export function createApp(manager: SessionManager): Hono {
 		const rec = await requireSession(c.req.param("id"));
 		if (rec === null) return c.json({ error: "会话不存在" }, 404);
 		return c.json(await manager.usage(rec.id));
+	});
+
+	// 模型设置（web 设置弹窗）：只读写用户级 settings.json 的 models/mainAgentTier 切片，
+	// 其余字段原样保留；读失败（缺文件/坏 JSON/不合规）抛错走 onError 500
+	app.get("/api/settings", async (c) => {
+		return c.json(readModelSettings(opts.home));
+	});
+
+	app.put("/api/settings", async (c) => {
+		const body = await readJsonBody(c);
+		const parsed = putModelSettingsSchema.safeParse(body);
+		if (!parsed.success) {
+			return c.json(
+				{
+					error:
+						"body 需为 {models: {high|medium|low: {provider, model, apiKey, baseUrl?}}, mainAgentTier?}",
+				},
+				400,
+			);
+		}
+		writeModelSettings(parsed.data, opts.home);
+		return c.json(readModelSettings(opts.home));
 	});
 
 	return app;

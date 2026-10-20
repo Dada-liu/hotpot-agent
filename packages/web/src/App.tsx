@@ -10,8 +10,10 @@ import { cn } from "@/lib/utils";
 import {
 	answerApproval,
 	answerPlan,
+	archiveSession,
 	cancelTurn,
 	createSession,
+	deleteSession,
 	getInbox,
 	type InboxSnapshot,
 	listPrompts,
@@ -24,6 +26,7 @@ import {
 import { AgentPanel } from "./components/AgentPanel.tsx";
 import { ChatView } from "./components/ChatView.tsx";
 import { SessionList } from "./components/SessionList.tsx";
+import { SettingsDialog } from "./components/SettingsDialog.tsx";
 import { type ConnectionState, connect } from "./events.ts";
 import { sessionNameFromPrompt } from "./lib/session-name.ts";
 import type { WireEvent } from "./protocol.ts";
@@ -94,6 +97,7 @@ export function App() {
 	const [prompts, setPrompts] = useState<PromptInfo[]>([]);
 	// 面板收起是本地偏好：reducer 的 panelOpen 只负责首个 spawn 时自动展开
 	const [panelCollapsed, setPanelCollapsed] = useState(false);
+	const [settingsOpen, setSettingsOpen] = useState(false);
 
 	const refreshSessions = useCallback(async () => {
 		try {
@@ -116,7 +120,10 @@ export function App() {
 		void refreshSessions();
 	}, [refreshSessions]);
 
-	// 选中会话即连接 SSE；切换/卸载时关闭旧连接（effect cleanup）
+	// 选中会话即连接 SSE；切换/卸载时关闭旧连接（effect cleanup）。
+	// connEpoch 供「同一会话强制重建连接」（归档当前会话后服务端已摘托管，需重连恢复）
+	const [connEpoch, setConnEpoch] = useState(0);
+	// biome-ignore lint/correctness/useExhaustiveDependencies: connEpoch 是强制重建连接的计数信号，刻意不读具体值
 	useEffect(() => {
 		if (currentId === null) {
 			setConnState("idle");
@@ -143,7 +150,7 @@ export function App() {
 		return () => {
 			conn.close();
 		};
-	}, [currentId, refreshInbox]);
+	}, [currentId, connEpoch, refreshInbox]);
 
 	// 回合结束（含 abort/失败）后刷新队列快照：step 边界消费不落事件，
 	// 只有快照能清掉已消费的队列条；运行中的 steer/inject 变更由 inbox/spliced 折叠
@@ -169,6 +176,44 @@ export function App() {
 		setPending(false);
 		setCurrentId(id);
 		dispatch({ type: "reset" });
+	};
+
+	// 归档会话：结束运行中的回合并全部落盘，服务端摘托管（日志保留，可重新打开）。
+	// 归档的是当前会话：旧 SSE 订阅随托管摘除而失效，重置状态并重建连接（从磁盘恢复）
+	const handleArchive = async (id: string): Promise<void> => {
+		try {
+			await archiveSession(id);
+			if (id === currentId) {
+				dispatch({ type: "reset" });
+				setConnEpoch((e) => e + 1);
+			}
+			await refreshSessions();
+			setError(null);
+		} catch (e) {
+			setError(errorMessage(e));
+		}
+	};
+
+	// 删除会话：服务端删日志文件；本地显示名同步清理；删的是当前会话则回欢迎态
+	const handleDelete = async (id: string): Promise<void> => {
+		try {
+			await deleteSession(id);
+			setNames((prev) => {
+				const next = { ...prev };
+				delete next[id];
+				localStorage.setItem(SESSION_NAMES_KEY, JSON.stringify(next));
+				return next;
+			});
+			if (id === currentId) {
+				setCurrentId(null);
+				setPending(false);
+				dispatch({ type: "reset" });
+			}
+			await refreshSessions();
+			setError(null);
+		} catch (e) {
+			setError(errorMessage(e));
+		}
 	};
 
 	// 空闲发送 = 新 turn（POST messages）；运行中发送 = steer 注入（POST steer）
@@ -269,7 +314,17 @@ export function App() {
 					nameFor={(s) => names[s.id] ?? s.cwd}
 					onSelect={handleSelect}
 					onCreate={handleCreate}
+					onDelete={(id) => {
+						void handleDelete(id);
+					}}
+					onArchive={(id) => {
+						void handleArchive(id);
+					}}
+					onOpenSettings={() => {
+						setSettingsOpen(true);
+					}}
 				/>
+				<SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
 				<div className="flex min-w-0 flex-1 flex-col">
 					<header className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
 						<span

@@ -19,7 +19,15 @@ const modelRefSchema = z.object({
 	baseUrl: z.string().min(1).optional(),
 });
 
-// M4 功能开关：全部 optional boolean，读取侧统一经 featureEnabled 的 `?? true` 缺省全开
+// 三档模型配置 schema：server 设置弹窗读写用户级 settings.json 时复用，保持单一事实源
+export const modelsSchema = z.object({
+	high: modelRefSchema,
+	medium: modelRefSchema,
+	low: modelRefSchema,
+});
+export type ModelsSettings = z.infer<typeof modelsSchema>;
+
+// M4 功能开关：全部 optional boolean，读取侧统一经 featureEnabled 的 `?? true` 默认全开
 const featuresSchema = z.object({
 	todo: z.boolean().optional(),
 	hooks: z.boolean().optional(),
@@ -83,11 +91,7 @@ const telemetrySchema = z.object({
 });
 
 const settingsSchema = z.object({
-	models: z.object({
-		high: modelRefSchema,
-		medium: modelRefSchema,
-		low: modelRefSchema,
-	}),
+	models: modelsSchema,
 	mainAgentTier: z.enum(["high", "medium", "low"]).optional(),
 	maxParallelTasks: z.number().int().positive().optional(),
 	planMaxRevisions: z.number().int().positive().optional(),
@@ -130,7 +134,7 @@ export type McpServersConfig = z.infer<typeof mcpServersSchema>;
 export type TelemetryConfig = z.infer<typeof telemetrySchema>;
 type ProjectSettings = z.infer<typeof projectSettingsSchema>;
 
-// 功能开关统一读取口：缺省全开（`?? true`）。关闭开关 = 不注册工具/不挂钩子/不扫描目录，
+// 功能开关统一读取口：默认全开（`?? true`）。关闭开关 = 不注册工具/不挂钩子/不扫描目录，
 // 注册表与装配层一律经这里判读，不直接裸读 settings.features?.x
 export function featureEnabled(
 	features: Settings["features"] | undefined,
