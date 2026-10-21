@@ -12,4 +12,4 @@
 - `registries/` — 按角色装配工具注册表。
 - `runtime/` — `createRuntime`（spawn / resolveModel / decorateWorkerTool）。
 - `types/` — `AgentRole` 与 `OrchestrationEvent`。
-- `tools/` — delegate / spawn_workers / spawn_tasks / run-worker。
+- `tools/` — spawn_workers / spawn_tasks / run-worker（首轮难度路由由提示词承担，无独立 delegate 工具）。
