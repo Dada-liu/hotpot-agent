@@ -8,6 +8,7 @@ import {
 	applyInboxSnapshot,
 	createInitialState,
 	reduce,
+	reduceChatAction,
 } from "../src/state/reducer.ts";
 
 // 造一个 log wire 事件的简写
@@ -784,5 +785,71 @@ describe("inbox 队列（M4）", () => {
 		expect(state.transcript).toEqual([]);
 		expect(state.inbox).toEqual({ nextTurn: [], nextStep: [] });
 		expect(state.seenEventIds).toHaveLength(events.length);
+	});
+});
+
+describe("reduceChatAction：本地审批应答", () => {
+	// 构造带 pendingApproval 的状态（wire approval 事件登记）
+	function stateWithPendingApproval(requestId: string) {
+		let state = createInitialState();
+		state = reduce(state, {
+			seq: 1,
+			kind: "approval",
+			requestId,
+			approvalType: "tool",
+			summary: "Run potentially destructive command: rm -rf x",
+			detail: "rm -rf x",
+		});
+		return state;
+	}
+
+	it("approval-answered：不等 decided 日志，立即清除 pendingApproval 并回填决定", () => {
+		const state = stateWithPendingApproval("req-1");
+		expect(state.pendingApproval?.requestId).toBe("req-1");
+
+		const next = reduceChatAction(state, {
+			type: "approval-answered",
+			requestId: "req-1",
+			decision: "approved",
+		});
+
+		expect(next.pendingApproval).toBeNull();
+		const entry = next.transcript.find(
+			(t) => t.kind === "approval" && t.requestId === "req-1",
+		);
+		expect(entry?.kind === "approval" && entry.decision).toBe("approved");
+	});
+
+	it("服务端 decided 日志随后到达：幂等，状态不翻转", () => {
+		let state = stateWithPendingApproval("req-1");
+		state = reduceChatAction(state, {
+			type: "approval-answered",
+			requestId: "req-1",
+			decision: "approved",
+		});
+		state = reduce(
+			state,
+			log(2, {
+				type: "approval/decided",
+				id: "durable-1",
+				ts,
+				requestId: "req-1",
+				decision: "approved",
+			}),
+		);
+		expect(state.pendingApproval).toBeNull();
+	});
+
+	it("deny 应答回填 denied", () => {
+		const state = stateWithPendingApproval("req-2");
+		const next = reduceChatAction(state, {
+			type: "approval-answered",
+			requestId: "req-2",
+			decision: "denied",
+		});
+		const entry = next.transcript.find(
+			(t) => t.kind === "approval" && t.requestId === "req-2",
+		);
+		expect(entry?.kind === "approval" && entry.decision).toBe("denied");
 	});
 });

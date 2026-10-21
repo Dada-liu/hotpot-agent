@@ -41,7 +41,9 @@ class AuditedApprovalChain extends ApprovalChain {
 			payload: { kind: req.kind, summary: req.summary, detail: req.detail },
 		};
 		await this.session.append(asked);
-		const decision = await this.inner.ask(req);
+		// 把 asked 的 durable id 透传为广播级 requestId，内外 id 统一：
+		// 应答方按此 id 广播/受理，decided 落盘也经同一 id 关联
+		const decision = await this.inner.ask({ ...req, requestId: asked.id });
 		await this.session.append({
 			type: "approval/decided",
 			id: randomUUID(),

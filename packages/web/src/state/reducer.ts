@@ -138,6 +138,63 @@ export function createInitialState(): ChatState {
 	};
 }
 
+// approval/decided 折叠（decided 日志与本地乐观应答共用）：
+// 清除匹配 requestId 的 pendingApproval，回填审计条目的决定
+export function applyApprovalDecided(
+	state: ChatState,
+	decided: {
+		requestId: string;
+		decision: "approved" | "denied";
+		note?: string;
+	},
+): ChatState {
+	const transcript = state.transcript.map((t) =>
+		t.kind === "approval" && t.requestId === decided.requestId
+			? { ...t, decision: decided.decision, note: decided.note }
+			: t,
+	);
+	const pendingApproval =
+		state.pendingApproval?.requestId === decided.requestId
+			? null
+			: state.pendingApproval;
+	const pendingPlan =
+		state.pendingApproval?.requestId === decided.requestId &&
+		state.pendingApproval.approvalType === "plan"
+			? null
+			: state.pendingPlan;
+	return { ...state, transcript, pendingApproval, pendingPlan };
+}
+
+// 本地动作：事件折叠、队列快照覆盖、会话切换重置，以及审批应答的乐观收敛。
+// App 的 useReducer 以本函数为 reducer；与 reduce 一样保持纯函数、node 下可单测
+export type ChatAction =
+	| { type: "event"; event: WireEvent }
+	| { type: "inbox"; snapshot: InboxSnapshot }
+	| { type: "reset" }
+	| {
+			type: "approval-answered";
+			requestId: string;
+			decision: "approved" | "denied";
+	  };
+
+export function reduceChatAction(
+	state: ChatState,
+	action: ChatAction,
+): ChatState {
+	switch (action.type) {
+		case "reset":
+			return createInitialState();
+		case "inbox":
+			return applyInboxSnapshot(state, action.snapshot);
+		case "approval-answered":
+			// 应答已送达服务端：与 decided 日志走同一折叠路径立即关闭审批框，
+			// 不等 SSE 往返；服务端 decided 日志随后到达时幂等
+			return applyApprovalDecided(state, action);
+		default:
+			return reduce(state, action.event);
+	}
+}
+
 // 按消息 id 去重（同快照内重复不重复展示，保留首次出现次序）
 function dedupeMessages(messages: InboxMessage[]): InboxMessage[] {
 	const seen = new Set<string>();
@@ -408,24 +465,9 @@ function reduceLog(state: ChatState, event: SessionEvent): ChatState {
 			};
 			return { ...state, transcript: [...state.transcript, entry] };
 		}
-		case "approval/decided": {
+		case "approval/decided":
 			// 清除对应 pending；回填审批条目的决定
-			const transcript = state.transcript.map((t) =>
-				t.kind === "approval" && t.requestId === event.requestId
-					? { ...t, decision: event.decision, note: event.note }
-					: t,
-			);
-			const pendingApproval =
-				state.pendingApproval?.requestId === event.requestId
-					? null
-					: state.pendingApproval;
-			const pendingPlan =
-				state.pendingApproval?.requestId === event.requestId &&
-				state.pendingApproval.approvalType === "plan"
-					? null
-					: state.pendingPlan;
-			return { ...state, transcript, pendingApproval, pendingPlan };
-		}
+			return applyApprovalDecided(state, event);
 		case "inbox/spliced": {
 			// 每次变更动词落该队列的全量快照：整体替换并按 id 去重（last write wins）
 			const messages = dedupeMessages(event.messages);

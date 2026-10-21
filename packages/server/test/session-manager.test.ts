@@ -294,6 +294,19 @@ describe("createSessionManager", () => {
 		expect(askedIdx).toBeGreaterThan(-1);
 		expect(decidedIdx).toBeGreaterThan(askedIdx);
 		expect(endIdx).toBeGreaterThan(decidedIdx);
+
+		// id 统一：广播 approval 事件的 requestId 与落盘 asked/decided 的 id 相同，
+		// 前端 decided 日志才能按 requestId 清除 pending 审批
+		const asked = events[askedIdx];
+		const decided = events[decidedIdx];
+		if (asked?.kind !== "log" || asked.event.type !== "approval/asked") {
+			throw new Error("approval/asked 日志缺失");
+		}
+		if (decided?.kind !== "log" || decided.event.type !== "approval/decided") {
+			throw new Error("approval/decided 日志缺失");
+		}
+		expect(asked.event.id).toBe(approval.requestId);
+		expect(decided.event.requestId).toBe(approval.requestId);
 	});
 
 	it("complex：plan(drafted) → answerPlan approve → plan(approved) → 执行 turn 完成", async () => {

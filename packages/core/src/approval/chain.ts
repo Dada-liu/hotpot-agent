@@ -6,6 +6,9 @@ export type ApprovalRequest = {
 	kind: "command" | "write";
 	summary: string;
 	detail: string;
+	// 可选广播级 id：审计包装层落盘 asked 后把自己的 durable id 透传进来，
+	// 使广播/应答与落盘审计共用同一 id（缺省时由应答方自行生成）
+	requestId?: string;
 };
 
 export type ApprovalDecision = "allow" | "deny";

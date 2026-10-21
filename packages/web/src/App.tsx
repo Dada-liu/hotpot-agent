@@ -1,5 +1,5 @@
 // 根组件：三栏布局（会话列表 | 对话 | agent 面板）与全局状态。
-// 全局状态 = useReducer(chatReducer) 折叠 WireEvent 流；切换会话时重置并重建 SSE 连接。
+// 全局状态 = useReducer(reduceChatAction) 折叠 WireEvent 流；切换会话时重置并重建 SSE 连接。
 // 顶栏：会话目录名 + 重连指示 + 右侧面板开关。
 
 import { PanelRight } from "lucide-react";
@@ -15,7 +15,6 @@ import {
 	createSession,
 	deleteSession,
 	getInbox,
-	type InboxSnapshot,
 	listPrompts,
 	listSessions,
 	type PromptInfo,
@@ -29,13 +28,7 @@ import { SessionList } from "./components/SessionList.tsx";
 import { SettingsDialog } from "./components/SettingsDialog.tsx";
 import { type ConnectionState, connect } from "./events.ts";
 import { sessionNameFromPrompt } from "./lib/session-name.ts";
-import type { WireEvent } from "./protocol.ts";
-import {
-	applyInboxSnapshot,
-	type ChatState,
-	createInitialState,
-	reduce,
-} from "./state/reducer.ts";
+import { createInitialState, reduceChatAction } from "./state/reducer.ts";
 
 // 会话 id → 首轮提示词提取的显示名，持久化到 localStorage（服务端 SessionSummary 无 name 字段）
 const SESSION_NAMES_KEY = "hotpot.sessionNames";
@@ -60,22 +53,6 @@ function loadSessionNames(): Record<string, string> {
 	}
 }
 
-// reducer 动作：事件折叠、队列快照覆盖或会话切换时重置
-type ChatAction =
-	| { type: "event"; event: WireEvent }
-	| { type: "inbox"; snapshot: InboxSnapshot }
-	| { type: "reset" };
-
-function chatReducer(state: ChatState, action: ChatAction): ChatState {
-	if (action.type === "reset") {
-		return createInitialState();
-	}
-	if (action.type === "inbox") {
-		return applyInboxSnapshot(state, action.snapshot);
-	}
-	return reduce(state, action.event);
-}
-
 function errorMessage(e: unknown): string {
 	return e instanceof Error ? e.message : String(e);
 }
@@ -87,12 +64,14 @@ export function App() {
 	const [pending, setPending] = useState(false);
 	const [names, setNames] = useState<Record<string, string>>(loadSessionNames);
 	const [chat, dispatch] = useReducer(
-		chatReducer,
+		reduceChatAction,
 		undefined,
 		createInitialState,
 	);
 	const [connState, setConnState] = useState<ConnectionState | "idle">("idle");
 	const [error, setError] = useState<string | null>(null);
+	// 审批应答提交中：单飞锁 + 审批条按钮 loading，防重复点击产生二次应答 404
+	const [approvalBusy, setApprovalBusy] = useState(false);
 	// M4 Feature⑤：当前会话可用的 prompt templates（`/` 补全）
 	const [prompts, setPrompts] = useState<PromptInfo[]>([]);
 	// 面板收起是本地偏好：reducer 的 panelOpen 只负责首个 spawn 时自动展开
@@ -272,14 +251,25 @@ export function App() {
 	};
 
 	const handleApproval = async (decision: "allow" | "deny"): Promise<void> => {
-		if (currentId === null || chat.pendingApproval === null) {
+		// 单飞锁：提交期间忽略重复点击（重复应答会被服务端判 404 未知 requestId）
+		if (currentId === null || chat.pendingApproval === null || approvalBusy) {
 			return;
 		}
+		const requestId = chat.pendingApproval.requestId;
+		setApprovalBusy(true);
 		try {
-			await answerApproval(currentId, chat.pendingApproval.requestId, decision);
+			await answerApproval(currentId, requestId, decision);
+			// 乐观收敛：不等 SSE 的 decided 日志，立即关闭审批框并回填决定
+			dispatch({
+				type: "approval-answered",
+				requestId,
+				decision: decision === "allow" ? "approved" : "denied",
+			});
 			setError(null);
 		} catch (e) {
 			setError(errorMessage(e));
+		} finally {
+			setApprovalBusy(false);
 		}
 	};
 
@@ -373,6 +363,7 @@ export function App() {
 						onApproval={(decision) => {
 							void handleApproval(decision);
 						}}
+						approvalBusy={approvalBusy}
 						onPlanDecision={(decision, note) => {
 							void handlePlanDecision(decision, note);
 						}}

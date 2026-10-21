@@ -128,6 +128,37 @@ describe("createAuditedApprovalChain", () => {
 		expect(decided.requestId).toBe(asked.id);
 	});
 
+	it("asked id 透传为 requestId：内层 handler 与落盘审计共用同一 id", async () => {
+		const session = await createSession("/Users/test/project", home);
+		const inner = new ApprovalChain();
+		let seenRequestId: string | undefined;
+		inner.use(async (req) => {
+			seenRequestId = req.requestId;
+			return "allow";
+		});
+		const chain = createAuditedApprovalChain(inner, {
+			session,
+			agentId: "main",
+		});
+
+		await chain.ask({
+			kind: "command",
+			summary: "运行测试",
+			detail: "pnpm test",
+		});
+
+		const { events } = await loadSession(session.filePath);
+		const asked = approvalEvents(events).find(
+			(e) => e.type === "approval/asked",
+		);
+		if (asked?.type !== "approval/asked") {
+			throw new Error("expected approval/asked event");
+		}
+		// 广播级 requestId 与落盘 asked id 统一，decided 才能经同一 id 关联，
+		// 前端按 requestId 匹配 decided 日志清除 pending 审批
+		expect(seenRequestId).toBe(asked.id);
+	});
+
 	it("use 委托给 inner：包装层注册的 handler 参与裁决", async () => {
 		const session = await createSession("/Users/test/project", home);
 		const inner = new ApprovalChain();

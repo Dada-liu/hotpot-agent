@@ -230,6 +230,7 @@ function TurnView({
 	pendingApproval,
 	pendingPlan,
 	onApproval,
+	approvalBusy,
 	onPlanDecision,
 }: {
 	group: TurnGroup;
@@ -238,6 +239,7 @@ function TurnView({
 	pendingApproval: ChatState["pendingApproval"];
 	pendingPlan: ChatState["pendingPlan"];
 	onApproval: (decision: "allow" | "deny") => void;
+	approvalBusy: boolean;
 	onPlanDecision: (
 		decision: "approve" | "reject" | "annotate",
 		note?: string,
@@ -331,6 +333,7 @@ function TurnView({
 									summary={pendingApproval.summary}
 									detail={pendingApproval.detail}
 									onAnswer={onApproval}
+									busy={approvalBusy}
 								/>
 							)}
 					</div>
@@ -395,6 +398,8 @@ interface ChatViewProps {
 	onSend: (content: string) => void;
 	onCancel: () => void;
 	onApproval: (decision: "allow" | "deny") => void;
+	// 审批应答提交中：审批条按钮转 loading 并禁用，防重复点击
+	approvalBusy?: boolean;
 	onPlanDecision: (
 		decision: "approve" | "reject" | "annotate",
 		note?: string,
@@ -409,6 +414,7 @@ export function ChatView({
 	onSend,
 	onCancel,
 	onApproval,
+	approvalBusy = false,
 	onPlanDecision,
 }: ChatViewProps): ReactElement {
 	const scrollRef = useRef<HTMLDivElement>(null);
@@ -465,6 +471,7 @@ export function ChatView({
 							pendingApproval={state.pendingApproval}
 							pendingPlan={state.pendingPlan}
 							onApproval={onApproval}
+							approvalBusy={approvalBusy}
 							onPlanDecision={onPlanDecision}
 						/>
 					))}

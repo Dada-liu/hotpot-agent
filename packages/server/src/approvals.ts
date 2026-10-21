@@ -2,8 +2,8 @@
 // 语义：registerToolAsk/registerPlanAsk 先创建 requestId 与 parked promise 入 pending 表，
 // 再经注入的 notify 回调广播 approval 事件（由调用方接到 wire hub 的 emit），
 // 最后返回 promise 挂起等待 UI 应答；answer 按 requestId resolve，未命中（或类型不符）
-// 返回 false。requestId 是桥内部的广播级 id，与会话日志里 approval/asked 的 durable
-// id 相互独立（落盘路径不经过本桥）。
+// 返回 false。requestId 即会话日志里 approval/asked 的 durable id（由审计包装层透传），
+// 广播/应答/落盘 decided 共用同一 id。
 
 import { randomUUID } from "node:crypto";
 import type { PlanDecision } from "@hotpot/orchestrator";
@@ -62,8 +62,11 @@ export function createApprovalBridge(notify: ApprovalNotifier): ApprovalBridge {
 			kind: "command" | "write";
 			summary: string;
 			detail: string;
+			requestId?: string;
 		}): Promise<ToolApprovalDecision> {
-			const requestId = randomUUID();
+			// 审计包装层已透传 asked 的 durable id 时直接采用，与落盘 decided 共用同一 id；
+			// 缺省（如纯内存链）才自行生成
+			const requestId = req.requestId ?? randomUUID();
 			const promise = new Promise<ToolApprovalDecision>((resolve) => {
 				pendingMap.set(requestId, { type: "tool", resolve });
 			});
