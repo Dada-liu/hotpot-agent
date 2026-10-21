@@ -1,8 +1,9 @@
 // plan 审批流（complex 任务的 human-in-the-loop 修订循环，编排文档 §3）。
-// 计划正文优先复用初始轮（main 在 delegate 之后产出的最终消息）：只有计划缺失、
-// 或 plan 开始时 next-step 队列非空（需要让模型看到用户 steer）时才跑一轮内部起草；
-// 批注修订仍走起草轮。每轮：整理 plan → yield drafted（携带作为计划落盘的 assistant
-// 消息 id，供 UI 隐藏正文气泡）→ await onPlanApproval（默认 fail-closed 拒绝）→ 分流：
+// 计划正文优先复用初始轮（main 首轮直接产出的、带 # Plan 标记的最终消息）：
+// 只有计划缺失、或 plan 开始时 next-step 队列非空（需要让模型看到用户 steer）
+// 时才跑一轮内部起草；批注修订仍走起草轮。每轮：整理 plan → yield drafted
+// （携带作为计划落盘的 assistant 消息 id，供 UI 隐藏正文气泡）→ await onPlanApproval
+// （默认 fail-closed 拒绝）→ 分流：
 //   approve  → 落盘 asked/decided(approved)，state.planApproved/phase 翻转，yield approved，
 //              追加执行 kickoff internal_msg 后返回（main-turn 接着跑执行 turn）
 //   annotate → revisions++；revisions > planMaxRevisions 时 yield revision_exhausted、
@@ -11,9 +12,7 @@
 //   reject   → asked/decided(denied, note=拒绝理由) 落盘，yield denied，追加拒绝提示，
 //              跑一轮收尾 runTurn（main 回复用户）后结束
 // 内部提示统一写 internal_msg（进入模型历史、UI 不渲染），plan 阶段注册表为空，
-// 避免模型把它当成新用户消息再次调用 delegate。
-// asked/decided 在拿到决定后落盘：asked payload {kind:"plan", plan}，
-// 超限场景 asked 总数 == planMaxRevisions（第 planMaxRevisions+1 次起草不再询问）。
+// 避免模型把它当成新用户消息去执行。main-turn 仅在首轮 detectPlanDraft 命中时进入本阶段。
 
 import { randomUUID } from "node:crypto";
 import {
@@ -29,8 +28,7 @@ import {
 } from "../prompts/prompts.ts";
 import { createRoleRegistry } from "../registries/registries.ts";
 import type { OrchestrationRuntime } from "../runtime/runtime.ts";
-import type { TurnState } from "../tools/delegate.ts";
-import type { OrchestrationEvent } from "../types/types.ts";
+import type { OrchestrationEvent, TurnState } from "../types/types.ts";
 
 export type PlanDecision =
 	| { kind: "approve" }
@@ -126,16 +124,36 @@ async function readLastMainAssistantText(
 }
 
 // 检测当前回合是否产出了计划草稿（首轮流路由与 spawn_workers 门禁共用）：
-// 同一扫描窗口 + 计划标记结构校验。漏标/缺段落一律视为普通回答——
-// 宁可 complex 被当 trivial 静默跳过审批，不可把闲聊误判成计划拿去审批。
+// 窗口内从新到旧找第一条带 # Plan 标记与必备段落的 assistant 消息。
+// 取「最新一条带标记的」而非「最后一条文本」：首轮流允许「计划正文 + 同轮工具调用
+// 被守卫拦截后的补充说明」形态，计划标记在较早消息里。漏标/缺段落一律视为
+// 普通回答——宁可 complex 被当 trivial 静默跳过审批，不可把闲聊误判成计划拿去审批。
 export async function detectPlanDraft(
 	runtime: OrchestrationRuntime,
 ): Promise<PlanDraft | null> {
-	const candidate = await readLastMainAssistantText(runtime);
-	if (candidate === null || !isPlanDraftText(candidate.text)) {
-		return null;
+	const { events } = await loadSession(runtime.session.filePath);
+	let start = 0;
+	for (let i = events.length - 1; i >= 0; i--) {
+		const event = events[i];
+		if (event?.type === "user_msg" && event.agentId === MAIN_AGENT_ID) {
+			start = i + 1;
+			break;
+		}
 	}
-	return candidate;
+	for (let i = events.length - 1; i >= start; i--) {
+		const event = events[i];
+		if (event?.type !== "assistant_msg" || event.agentId !== MAIN_AGENT_ID) {
+			continue;
+		}
+		const text = event.content
+			.filter((b) => b.type === "text")
+			.map((b) => b.text)
+			.join("");
+		if (isPlanDraftText(text)) {
+			return { id: event.id, text };
+		}
+	}
+	return null;
 }
 
 // 内部延续提示：进入模型历史但不进入 UI transcript
@@ -158,10 +176,10 @@ export async function* runPlanPhase(
 	signal: AbortSignal,
 	options: PlanPhaseOptions = {},
 ): AsyncIterable<OrchestrationEvent> {
-	// plan 阶段不挂任何工具：起草/修订只用模型能力，delegate/spawn_workers 都不可用
+	// plan 阶段不挂任何工具：起草/修订只用模型能力，spawn_workers 同样不可用
 	const registry = createRoleRegistry(runtime, MAIN_AGENT_ID, []);
-	// 起草轮沿用 delegate 判定的档位（complex 固定 high），默认回退 high
-	const tier: ModelTier = state.lastDelegate?.modelTier ?? "high";
+	// 起草轮档位：complex 流固定 high（首轮提示词规定 complex 用 high 档）
+	const tier: ModelTier = "high";
 	const resolved = runtime.resolveModel(tier);
 	const inbox = options.inbox;
 	const pollInbox = inbox ? () => inbox.pollNextStep() : undefined;

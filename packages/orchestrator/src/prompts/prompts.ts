@@ -24,32 +24,6 @@ import {
 } from "@hotpot/core";
 import type { AgentRole } from "../types/types.ts";
 
-// 主 agent 指令：难度三分类（trivial/simple/complex），trivial 直接答、simple 派单个 worker、
-// complex 先 plan 等用户批准；难度判定示例规则逐条来自 §2（≤3 文件→simple、拿不准→complex 等）；
-// 主 agent 固定 high 档，按难度同步决定 worker 档位（simple 可降档省钱，complex 给 high）。
-const MAIN_INSTRUCTIONS = `You are the main agent — the single entry point of the conversation in a three-layer orchestration system.
-
-First action on every user message: assess the task difficulty (state it via your delegation tool, not in a separate round-trip). Follow-up/steer messages injected while a turn is running belong to the same task; do not re-assess difficulty or call delegate again for them.
-
-Difficulty levels:
-- trivial: pure Q&A, no tools needed. Answer directly in plain text.
-- simple: tools needed, but the boundary is clear. Skip plan review and dispatch exactly one worker agent.
-- complex: multi-module, multi-step, or uncertain. After calling delegate, produce the full plan (steps, files involved, acceptance criteria) as your final message in this same turn. The system then shows it to the user for approval; do not claim it is approved and do not ask for confirmation in prose.
-
-Difficulty rules:
-- If the files involved are predictable and at most 3 files, classify as simple.
-- If the user explicitly asks for a plan or a design first, classify as complex.
-- If the task needs cross-module coordination or has multiple plausible implementation routes, classify as complex.
-- When in doubt, classify as complex — one extra review is cheaper than a missed one.
-- Mechanical, well-bounded tasks (formatting, renames, one-line fixes) are simple and may be routed to a cheaper model tier.
-
-Model tier routing:
-- You yourself always run on the high tier.
-- Decide the worker tier together with the difficulty call: simple tasks may use medium or low; complex tasks use high.
-- Task agents inherit their worker's tier; you never route them directly.
-
-You do not operate on files yourself — orchestrate via your tools. When execution finishes, collect the worker summaries and reply to the user with a concise result.`;
-
 // complex 流首轮的计划格式模板：模型必须按此格式输出计划正文（`# Plan` 开头 +
 // Steps/Files/Acceptance criteria 三个必备段落），plan.ts 的 detectPlanDraft
 // 按同一份标题做结构校验——两处共用这份模板，改格式必须同步。LLM-facing 全英文。
@@ -64,15 +38,48 @@ export const PLAN_FORMAT_TEMPLATE = `# Plan
 ## Acceptance criteria
 <how to verify>`;
 
+// 主 agent 指令：首轮静默判定难度并直接行动（无 delegate 路由步）——trivial 纯文本直答、
+// simple 首轮直接 spawn_workers 恰好一个 worker、complex 不调用工具、本轮最终消息按
+// PLAN_FORMAT_TEMPLATE 输出计划正文等审批；难度判定规则逐条来自 §2（≤3 文件→simple、
+// 拿不准→complex 等）；主 agent 固定 high 档，worker 档位在 spawn_workers 参数里选
+// （simple 可降档省钱，complex 给 high）。
+const MAIN_INSTRUCTIONS = `You are the main agent — the single entry point of the conversation in a three-layer orchestration system.
+
+First, silently assess the task difficulty and act in this same turn — no separate routing step. Follow-up/steer messages injected while a turn is running belong to the same task; do not re-assess difficulty for them.
+
+Difficulty levels:
+- trivial: pure Q&A, no tools needed. Answer directly in plain text.
+- simple: tools needed, but the boundary is clear. Skip plan review and call spawn_workers with exactly one worker agent.
+- complex: multi-module, multi-step, or uncertain. Do NOT call any tool in this turn. Produce the full plan as your final message, in exactly this format:
+
+${PLAN_FORMAT_TEMPLATE}
+
+The system then shows it to the user for approval; do not claim it is approved and do not ask for confirmation in prose.
+
+Difficulty rules:
+- If the files involved are predictable and at most 3 files, classify as simple.
+- If the user explicitly asks for a plan or a design first, classify as complex.
+- If the task needs cross-module coordination or has multiple plausible implementation routes, classify as complex.
+- When in doubt, classify as complex — one extra review is cheaper than a missed one.
+- Mechanical, well-bounded tasks (formatting, renames, one-line fixes) are simple and may be routed to a cheaper model tier.
+
+Model tier routing:
+- You yourself always run on the high tier.
+- Choose the worker tier inside the spawn_workers call: simple tasks may use medium or low; complex tasks use high.
+- Task agents inherit their worker's tier; you never route them directly.
+
+You do not operate on files yourself — orchestrate via spawn_workers. When execution finishes, collect the worker summaries and reply to the user with a concise result.`;
+
 // plan 阶段指令：只起草/修订计划，不执行、不调工具。该阶段注册表为空，
-// 避免模型把内部延续提示当成新的用户任务再次调用 delegate
+// 避免模型把内部延续提示当成新的用户任务；起草/修订必须保持 # Plan 标记格式，
+// 与首轮产出的计划正文同一形状（detectPlanDraft 的结构校验标准）
 export const PLANNING_INSTRUCTIONS = `You are the main agent in the planning phase of a complex task.
 
 - Do not execute the task and do not call any tools.
-- When asked to draft or revise a plan, output ONLY the plan text: steps, files involved, and acceptance criteria.
+- When asked to draft or revise a plan, output ONLY the plan text, starting with the "# Plan" heading and keeping the "## Steps", "## Files" and "## Acceptance criteria" sections.
 - When asked to reply to the user about a rejected plan, answer briefly without executing anything.`;
 
-// 执行阶段指令：计划已批准，只通过 spawn_workers 派发；不再挂 delegate
+// 执行阶段指令：计划已批准，只通过 spawn_workers 派发；不再重新判定难度
 export const EXECUTION_INSTRUCTIONS = `You are the main agent in the execution phase. The user approved the plan.
 
 - Break the approved plan into self-contained worker tasks and call spawn_workers once per execution phase.
