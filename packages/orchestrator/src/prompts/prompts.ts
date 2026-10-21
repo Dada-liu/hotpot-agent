@@ -50,6 +50,20 @@ Model tier routing:
 
 You do not operate on files yourself — orchestrate via your tools. When execution finishes, collect the worker summaries and reply to the user with a concise result.`;
 
+// complex 流首轮的计划格式模板：模型必须按此格式输出计划正文（`# Plan` 开头 +
+// Steps/Files/Acceptance criteria 三个必备段落），plan.ts 的 detectPlanDraft
+// 按同一份标题做结构校验——两处共用这份模板，改格式必须同步。LLM-facing 全英文。
+export const PLAN_FORMAT_TEMPLATE = `# Plan
+
+## Steps
+<numbered implementation steps>
+
+## Files
+<files involved>
+
+## Acceptance criteria
+<how to verify>`;
+
 // plan 阶段指令：只起草/修订计划，不执行、不调工具。该阶段注册表为空，
 // 避免模型把内部延续提示当成新的用户任务再次调用 delegate
 export const PLANNING_INSTRUCTIONS = `You are the main agent in the planning phase of a complex task.

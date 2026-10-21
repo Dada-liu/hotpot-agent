@@ -73,14 +73,31 @@ const REJECTED_PROMPT =
 const EMPTY_PLAN_PROMPT =
 	"No plan text was produced. Stop and tell the user that you could not produce a plan.";
 
-interface PlanDraft {
+// 计划草稿的标记与必备段落：complex 首轮流要求模型按 PLAN_FORMAT_TEMPLATE
+// （prompts.ts）输出计划正文，本处按同一份标题做结构校验——两处共用模板。
+const PLAN_HEADING = "# Plan";
+const PLAN_REQUIRED_SECTIONS = [
+	"## Steps",
+	"## Files",
+	"## Acceptance criteria",
+];
+
+function isPlanDraftText(text: string): boolean {
+	const trimmed = text.trimStart();
+	if (trimmed !== PLAN_HEADING && !trimmed.startsWith(`${PLAN_HEADING}\n`)) {
+		return false;
+	}
+	return PLAN_REQUIRED_SECTIONS.every((section) => trimmed.includes(section));
+}
+
+export interface PlanDraft {
 	id: string;
 	text: string;
 }
 
 // 读当前回合（最后一条 main user_msg 之后）最后一条带文本的 main assistant_msg。
 // internal_msg 不算用户输入，因此批注修订/steer 注入后仍能定位到最新草稿。
-async function readLastPlanDraft(
+async function readLastMainAssistantText(
 	runtime: OrchestrationRuntime,
 ): Promise<PlanDraft | null> {
 	const { events } = await loadSession(runtime.session.filePath);
@@ -106,6 +123,19 @@ async function readLastPlanDraft(
 		}
 	}
 	return null;
+}
+
+// 检测当前回合是否产出了计划草稿（首轮流路由与 spawn_workers 门禁共用）：
+// 同一扫描窗口 + 计划标记结构校验。漏标/缺段落一律视为普通回答——
+// 宁可 complex 被当 trivial 静默跳过审批，不可把闲聊误判成计划拿去审批。
+export async function detectPlanDraft(
+	runtime: OrchestrationRuntime,
+): Promise<PlanDraft | null> {
+	const candidate = await readLastMainAssistantText(runtime);
+	if (candidate === null || !isPlanDraftText(candidate.text)) {
+		return null;
+	}
+	return candidate;
 }
 
 // 内部延续提示：进入模型历史但不进入 UI transcript
@@ -159,7 +189,7 @@ export async function* runPlanPhase(
 		pollInbox,
 	};
 
-	let draft = await readLastPlanDraft(runtime);
+	let draft = await readLastMainAssistantText(runtime);
 	// 所有作为计划草稿落盘的 assistant 消息 id：web 用它们隐藏正文气泡
 	const messageIds: string[] = draft === null ? [] : [draft.id];
 	// 初始轮已有计划时直接进入审批；队列里有 steer 则先 reconcile 一轮
@@ -182,7 +212,7 @@ export async function* runPlanPhase(
 			}
 			if (signal.aborted) return;
 
-			const next = await readLastPlanDraft(runtime);
+			const next = await readLastMainAssistantText(runtime);
 			if (next !== null) {
 				draft = next;
 				if (!messageIds.includes(next.id)) {
