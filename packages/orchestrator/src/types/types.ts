@@ -10,6 +10,14 @@ import type { AgentEvent, ModelTier } from "@hotpot/core";
 // 三层 agent 角色：main（对话入口）、worker（执行/并行拆分）、task（原子子任务）
 export type AgentRole = "main" | "worker" | "task";
 
+// 一次 runMainTurn 回合内的主 agent 状态：首轮流路由（首轮检测计划草稿转
+// planning）、plan 审批（planApproved/revisions）都记录在这里，随回合结束丢弃
+export interface TurnState {
+	phase: "initial" | "planning" | "executing";
+	planApproved: boolean;
+	revisions: number;
+}
+
 export type OrchestrationEvent =
 	| AgentEvent
 	| {

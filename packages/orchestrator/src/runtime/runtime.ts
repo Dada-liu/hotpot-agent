@@ -1,4 +1,4 @@
-// 编排运行时：delegate/spawn_workers/spawn_tasks、plan 流程、inbox 等后续能力都闭包在这个对象上。
+// 编排运行时：spawn_workers/spawn_tasks、plan 流程、inbox 等后续能力都闭包在这个对象上。
 // spawn 只负责三件事：首次调用时按既有日志播种计数器（resume 场景防 agentId 复用，见下）、
 // 按 role 计数分配 agentId（worker-1、task-1…，runtime 生命周期内单调递增不复用），
 // 并把 agent_spawn 事件落盘（id/ts 由这里组装，append 本身带 fsync，见 core session/store.ts）。

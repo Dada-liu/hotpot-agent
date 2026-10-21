@@ -1,5 +1,5 @@
 // 按角色装配工具注册表，规则钉死（docs/archive/03-agent-orchestration.md §1）：
-// - main：只有编排元工具（delegate/spawn_workers），不直接操作文件
+// - main：只有编排元工具（首轮与执行阶段均为 spawn_workers），不直接操作文件
 // - worker：四个基础工具 + 元工具（元工具携带 spawn_tasks，可并行拆分）
 // - task：只有四个基础工具，无派生能力（metaTools 直接忽略）
 // 四件套与 createToolRegistry 复用 core 实现；metaTools 由上层注入，便于测试用桩替换。
@@ -8,7 +8,7 @@
 // 装饰只作用于四件套，feature 外工具裸注册（Review Focus 1）。
 // worker 另有 createWorkerRegistry 工厂：元工具不是外部注入的桩，而是闭包绑定该
 // worker（agentId/tier）的真实 spawn_tasks —— 派生的 task 以此 worker 为 parent、
-// 继承其档位；delegate/spawn_workers/run-worker 内联 worker turn 一律走这个工厂，
+// 继承其档位；spawn_workers/run-worker 内联 worker turn 一律走这个工厂，
 // 嵌套 spawn_tasks 才可用。main/task 仍用 createRoleRegistry。
 
 import { randomUUID } from "node:crypto";

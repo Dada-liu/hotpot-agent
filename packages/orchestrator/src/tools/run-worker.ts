@@ -1,4 +1,4 @@
-// 下层 agent 内联执行助手：spawn 之后由 delegate（simple 分支）、spawn_workers（complex 流）
+// 下层 agent 内联执行助手：spawn 之后由 spawn_workers（simple 直派与 complex 执行流）
 // 复用 worker 版；spawn_tasks 用通用版 runAgentInline 跑每个 task turn。
 // 通用版按角色装配注册表（worker 走 createWorkerRegistry —— 闭包绑定了该 worker 的
 // spawn_tasks，嵌套拆分才真正可用；task 走 createRoleRegistry 四件套、无派生能力），
@@ -123,7 +123,7 @@ export async function runAgentInline(
 	return { summary, failures, aborted };
 }
 
-// 内联跑完 worker 的整个 turn（delegate simple 分支与 spawn_workers 共用）：
+// 内联跑完 worker 的整个 turn（spawn_workers 的 simple 直派与 complex 执行流共用）：
 // 注册表来自 createWorkerRegistry（含该 worker 的 spawn_tasks），摘要回收失败时按
 // `[${workerId} failed] ${reason}` 标注，失败分类法与 spawn_tasks 的 [FAILED] 段对齐
 export async function runWorkerInline(
