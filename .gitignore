@@ -8,6 +8,9 @@ artifacts/
 .worktrees/
 # 用户/agent 在 temp/ 下生成的独立项目，不纳入本仓库校验与提交
 temp/
+# 官网独立项目（website/ 自带 .gitignore 语义；构建产物与依赖不提交）
+website/node_modules/
+website/doc_build/
 
 # macOS
 .DS_Store

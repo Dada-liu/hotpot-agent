@@ -1,0 +1,17 @@
+[
+	{
+		"type": "file",
+		"name": "changelog",
+		"label": "更新日志"
+	},
+	{
+		"type": "dir",
+		"name": "guide",
+		"label": "指南"
+	},
+	{
+		"type": "dir",
+		"name": "advanced",
+		"label": "深入"
+	}
+]
