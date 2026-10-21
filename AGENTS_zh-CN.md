@@ -24,13 +24,12 @@
 - 只有一个调用点的单行辅助函数应内联展开。
 - 外部 API 的类型要去 node_modules 里查证，不要靠猜。
 - **禁止内联 import**（`await import()`、`import("pkg").Type`、动态类型导入）。只允许顶层 import。
-- 在 `packages/coding-agent` 中，通过 `src/config.ts` 里的辅助函数解析包资源。不要直接使用 `__dirname`；这些辅助函数已处理源码检出、npm 安装和独立二进制等多种场景。
+- 不要直接使用 `__dirname`；这些辅助函数已处理源码检出、npm 安装和独立二进制等多种场景。
 - 绝不为了修复因依赖版本过旧导致的类型错误而删除或降级代码；应升级该依赖。
 - 在被根配置检查的代码中（`packages/*/src`、`packages/*/test`、`packages/coding-agent/examples），只使用可擦除的 TypeScript 语法（Node strip-only 模式）：不使用 parameter properties、`enum `、`namespace `/`module `、`import =`、`export =` 或其他需要生成 JS 产物的语法。使用显式字段并在构造函数中赋值。
 - 删除看起来是有意为之的功能或代码之前，必须先询问。
 - 除非用户要求，否则不保留向后兼容。
 - 绝不硬编码按键判断（例如 `matchesKey(keyData, "ctrl+x")`）。应将默认值加入 `DEFAULT_EDITOR_KEYBINDINGS` 或 `DEFAULT_APP_KEYBINDINGS`，使其保持可配置。
-- 绝不直接修改 `packages/ai/src/models.generated.ts`；应修改 `packages/ai/scripts/generate-models.ts`，然后重新生成。提交时附带生成的 `models.generated.ts` 的 diff 总是可以的，即使重新生成带入了无关的上游模型元数据变更。
 
 ## 打包与发布
 
