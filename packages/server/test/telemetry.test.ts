@@ -93,16 +93,14 @@ function textRound(
 	];
 }
 
-// main delegate → worker 读文件 → worker 总结 → main 收尾
+// main spawn_workers(simple) → worker 读文件 → worker 总结 → main 收尾
 function oneTurnScript(): StreamEvent[][] {
 	return [
 		toolCallRound(
-			"delegate",
+			"spawn_workers",
 			"m-tc-1",
 			JSON.stringify({
-				difficulty: "simple",
-				modelTier: "low",
-				task: "读取 note.txt 并总结内容",
+				workers: [{ task: "读取 note.txt 并总结内容", modelTier: "low" }],
 			}),
 			{ input: 100, output: 20 },
 		),

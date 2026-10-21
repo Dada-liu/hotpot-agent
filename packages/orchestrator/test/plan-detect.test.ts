@@ -137,18 +137,23 @@ describe("detectPlanDraft", () => {
 		expect(await detectPlanDraft(runtime)).toBeNull();
 	});
 
-	it("多条 assistant 消息取最后一条：最新合法返回最新，最新不合法返回 null", async () => {
+	it("多条 assistant 取最新一条带标记的：旧消息带标记也算产出计划", async () => {
 		const runtime = await makeRuntime();
 		await appendUserMsg(runtime, "给项目加用户认证");
 		await appendAssistantText(runtime, "先想想。");
 		const id = await appendAssistantText(runtime, VALID_PLAN);
 		expect(await detectPlanDraft(runtime)).toEqual({ id, text: VALID_PLAN });
 
+		// 「计划正文 + 同轮工具调用被守卫拦截后的补充说明」形态：
+		// 计划标记在较早消息里，窗口内任一消息带标记即视为产出计划
 		const runtime2 = await makeRuntime();
 		await appendUserMsg(runtime2, "给项目加用户认证");
-		await appendAssistantText(runtime2, VALID_PLAN);
-		await appendAssistantText(runtime2, "补充：不需要了。");
-		expect(await detectPlanDraft(runtime2)).toBeNull();
+		const id2 = await appendAssistantText(runtime2, VALID_PLAN);
+		await appendAssistantText(runtime2, "补充：等待审批。");
+		expect(await detectPlanDraft(runtime2)).toEqual({
+			id: id2,
+			text: VALID_PLAN,
+		});
 	});
 
 	it("PLAN_FORMAT_TEMPLATE 含 # Plan 与三个必备段落标题", async () => {

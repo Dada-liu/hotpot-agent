@@ -132,16 +132,14 @@ function textRound(text: string): StreamEvent[] {
 	];
 }
 
-// 一轮完整的短对话：main delegate → worker 处理 → main 收尾
+// 一轮完整的短对话：main 首轮 spawn_workers(simple) → worker 处理 → main 收尾
 function oneTurnScript(): StreamEvent[][] {
 	return [
 		toolCallRound(
 			"m-tc-1",
-			"delegate",
+			"spawn_workers",
 			JSON.stringify({
-				difficulty: "simple",
-				modelTier: "low",
-				task: USER_PROMPT,
+				workers: [{ task: USER_PROMPT, modelTier: "low" }],
 			}),
 		),
 		textRound(ASSISTANT_TEXT),

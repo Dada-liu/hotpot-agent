@@ -147,12 +147,17 @@ function textRound(delta: string, usage: Usage): StreamEvent[] {
 	];
 }
 
-function delegateRound(inputJson: string): StreamEvent[] {
-	return toolCallRound("delegate", "m-tc-1", inputJson);
-}
-
 function spawnWorkersRound(inputJson: string): StreamEvent[] {
 	return toolCallRound("spawn_workers", "m-tc-2", inputJson);
+}
+
+// main 首轮的 spawn_workers 轮：simple 直派一个 low 档 worker
+function spawnSimpleRound(task: string): StreamEvent[] {
+	return toolCallRound(
+		"spawn_workers",
+		"m-tc-1",
+		JSON.stringify({ workers: [{ task, modelTier: "low" }] }),
+	);
 }
 
 describe("createSessionManager", () => {
@@ -192,12 +197,10 @@ describe("createSessionManager", () => {
 		expect([...seqs].sort((a, b) => a - b)).toEqual(seqs);
 	});
 
-	it("delegate→simple：收到 spawn 瞬态事件；子 agent 事件只经 log 路径到达（迭代器未转发 tool_call）", async () => {
+	it("spawn→simple：收到 spawn 瞬态事件；子 agent 事件只经 log 路径到达（迭代器未转发 tool_call）", async () => {
 		await writeSettings("never");
 		const adapter = scriptedAdapter([
-			delegateRound(
-				'{"difficulty":"simple","modelTier":"low","task":"读取 note.txt 并总结内容"}',
-			),
+			spawnSimpleRound("读取 note.txt 并总结内容"),
 			toolCallRound("read", "w-tc-1", '{"path":"note.txt"}'),
 			textRound("note.txt 有一行：hello hotpot。", {
 				input: 2000,
@@ -256,9 +259,7 @@ describe("createSessionManager", () => {
 	it("bash 高危命令：sink 收到 approval；未应答期间 turn 不结束；allow 后收到 log(approval/asked→decided) 与 turn(end)", async () => {
 		await writeSettings("ask-on-dangerous");
 		const adapter = scriptedAdapter([
-			delegateRound(
-				'{"difficulty":"simple","modelTier":"low","task":"清理临时目录 x"}',
-			),
+			spawnSimpleRound("清理临时目录 x"),
 			toolCallRound("bash", "w-tc-1", '{"command":"rm -rf x"}'),
 			textRound("清理完成。", { input: 50, output: 10 }),
 			textRound("临时目录已清理。", { input: 20, output: 5 }),
@@ -276,7 +277,7 @@ describe("createSessionManager", () => {
 		expect(approval.approvalType).toBe("tool");
 		expect(approval.summary).toContain("rm -rf x");
 
-		// 未应答期间 turn 不结束（parked promise 挂起 delegate → worker 的 bash 执行）
+		// 未应答期间 turn 不结束（parked promise 挂起 spawn_workers → worker 的 bash 执行）
 		await new Promise((resolve) => setTimeout(resolve, 300));
 		expect(events.some(isTurnEnd)).toBe(false);
 		expect(sm.answerToolApproval(rec.id, approval.requestId, "allow")).toBe(
@@ -311,12 +312,19 @@ describe("createSessionManager", () => {
 
 	it("complex：plan(drafted) → answerPlan approve → plan(approved) → 执行 turn 完成", async () => {
 		await writeSettings("ask-on-dangerous");
-		const planV1 =
-			"PLAN v1: (1) add auth routes (2) add login page. Files: auth.ts, login.tsx.";
+		const planV1 = `# Plan
+
+## Steps
+1. add auth routes
+2. add login page
+
+## Files
+auth.ts, login.tsx
+
+## Acceptance criteria
+tests pass
+`;
 		const adapter = scriptedAdapter([
-			delegateRound(
-				'{"difficulty":"complex","modelTier":"high","task":"给项目加用户认证"}',
-			),
 			textRound(planV1, { input: 200, output: 60 }),
 			spawnWorkersRound(
 				'{"workers":[{"task":"实现后端 auth 路由","modelTier":"high"}]}',
@@ -492,9 +500,7 @@ describe("createSessionManager", () => {
 	it("usage()：折叠 assistant_msg.usage，total/byTier/byAgent 正确", async () => {
 		await writeSettings("never");
 		const adapter = scriptedAdapter([
-			delegateRound(
-				'{"difficulty":"simple","modelTier":"low","task":"读取 note.txt 并总结内容"}',
-			),
+			spawnSimpleRound("读取 note.txt 并总结内容"),
 			toolCallRound("read", "w-tc-1", '{"path":"note.txt"}'),
 			textRound("note.txt 有一行：hello hotpot。", {
 				input: 2000,
@@ -517,7 +523,7 @@ describe("createSessionManager", () => {
 		).toBe(true);
 
 		const usage = await sm.usage(rec.id);
-		// main 两轮（delegate 100/20 + 收尾 120/30），worker 两轮（read 100/20 + 摘要 2000/400）
+		// main 两轮（spawn_workers 100/20 + 收尾 120/30），worker 两轮（read 100/20 + 摘要 2000/400）
 		expect(usage.total).toEqual({ input: 2320, output: 470 });
 		expect(usage.byTier.high).toEqual({ input: 220, output: 50, count: 2 });
 		expect(usage.byTier.low).toEqual({ input: 2100, output: 420, count: 2 });
@@ -682,9 +688,7 @@ describe("MCP 挂载（mcpServers 配置）", () => {
 			},
 		]);
 		const adapter = scriptedAdapter([
-			delegateRound(
-				'{"difficulty":"simple","modelTier":"low","task":"用 ping 工具探测 demo"}',
-			),
+			spawnSimpleRound("用 ping 工具探测 demo"),
 			toolCallRound("mcp__demo__ping", "w-tc-1", '{"target":"demo"}'),
 			textRound("pong 已收到。", { input: 20, output: 5 }),
 			textRound("worker 已用 ping 完成探测。", { input: 30, output: 8 }),

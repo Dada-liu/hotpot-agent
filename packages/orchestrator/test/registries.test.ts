@@ -17,7 +17,7 @@ import { buildRoleSystemPrompt } from "../src/prompts/prompts.ts";
 import { createRoleRegistry } from "../src/registries/registries.ts";
 import type { OrchestrationRuntime } from "../src/runtime/runtime.ts";
 
-// 元工具桩：Task 7 才提供真实 delegate/spawn_workers/spawn_tasks，这里只钉名字集合
+// 元工具桩：这里只钉名字集合（main 首轮只有 spawn_workers 一个元工具）
 function stubMetaTool(name: string): ToolDefinition<unknown> {
 	return {
 		name,
@@ -27,7 +27,7 @@ function stubMetaTool(name: string): ToolDefinition<unknown> {
 	};
 }
 
-const MAIN_META = [stubMetaTool("delegate"), stubMetaTool("spawn_workers")];
+const MAIN_META = [stubMetaTool("spawn_workers")];
 const WORKER_META = [stubMetaTool("spawn_tasks")];
 
 // 最小 runtime 桩：注册表只消费 decorateWorkerTool/features/mcpTools/webSearchBackend，
@@ -77,7 +77,7 @@ function makeCtx(tools: ToolDeclaration[]) {
 describe("createRoleRegistry 按角色装配工具集", () => {
 	it("main = 仅元工具，无文件四件套", () => {
 		const registry = createRoleRegistry(stubRuntime(), "main", MAIN_META);
-		expect(names(registry)).toEqual(["delegate", "spawn_workers"]);
+		expect(names(registry)).toEqual(["spawn_workers"]);
 	});
 
 	it("worker = bash/read/write/edit + todo + web_fetch + spawn_tasks", () => {
@@ -134,8 +134,8 @@ describe("buildRoleSystemPrompt 角色指令", () => {
 		// trivial 直接答、complex 在初始轮产出 plan，由系统发起审批
 		expect(prompt).toMatch(/[Aa]nswer directly/);
 		expect(prompt).toMatch(/shows it to the user for approval/);
-		// main 不操作文件：工具清单来自 ctx.tools（delegate/spawn_workers），不列文件四件套
-		expect(prompt).toContain("delegate");
+		// main 不操作文件：工具清单来自 ctx.tools（spawn_workers），不列文件四件套
+		expect(prompt).toContain("spawn_workers");
 		expect(prompt).not.toContain("- bash:");
 		expect(prompt).not.toContain("- read:");
 	});
@@ -417,7 +417,7 @@ describe("createRoleRegistry role×feature 矩阵", () => {
 			"main",
 			MAIN_META,
 		);
-		expect(names(registry)).toEqual(["delegate", "spawn_workers"]);
+		expect(names(registry)).toEqual(["spawn_workers"]);
 	});
 
 	it("main + webSearchBackend 提供 → 仍只有元工具（web_search 不进 main）", () => {
@@ -426,12 +426,12 @@ describe("createRoleRegistry role×feature 矩阵", () => {
 			"main",
 			MAIN_META,
 		);
-		expect(names(registry)).toEqual(["delegate", "spawn_workers"]);
+		expect(names(registry)).toEqual(["spawn_workers"]);
 	});
 
 	it("main + features 默认 → 同样只有元工具（todo 默认全开也不进 main）", () => {
 		const registry = createRoleRegistry(stubRuntime(), "main", MAIN_META);
-		expect(names(registry)).toEqual(["delegate", "spawn_workers"]);
+		expect(names(registry)).toEqual(["spawn_workers"]);
 	});
 
 	it("decorateWorkerTool 只包四件套：外工具与元工具保持原样", () => {

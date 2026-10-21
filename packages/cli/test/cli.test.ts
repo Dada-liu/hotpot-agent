@@ -1,8 +1,9 @@
-// runChat 测试（M2 编排流）：每个场景脚本前补 main 的 delegate 轮（simple，task 复用原用户消息），
-// worker 轮做实际工具工作，main 文本轮收尾。worker 事件不外传（M2 计划决定 #3）：
-// 工具调用/结果不落终端渲染，可经会话文件（tool_result 带 agentId）与 delegate 摘要 tool_result 断言；
+// runChat 测试（M2 编排流）：每个场景脚本前补 main 的首轮 spawn_workers 轮（simple，
+// 单 worker 任务复用原用户消息），worker 轮做实际工具工作，main 文本轮收尾。
+// worker 事件不外传（M2 计划决定 #3）：工具调用/结果不落终端渲染，可经会话文件
+//（tool_result 带 agentId）与 spawn_workers 摘要 tool_result 断言；
 // 审批询问仍走终端 handler（在 worker 工具执行内触发），交互断言不变。
-// 脚本化适配器按全局 streamChat 调用序回放：1=main delegate 步，2..N=worker 各步，末位=main 收尾。
+// 脚本化适配器按全局 streamChat 调用序回放：1=main 首轮步，2..N=worker 各步，末位=main 收尾。
 
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -126,12 +127,12 @@ function textRound(text: string): StreamEvent[] {
 	];
 }
 
-// main 的 delegate 轮：难度 simple、worker 走 low 档，task 复用原用户消息
-function delegateRound(task: string): StreamEvent[] {
+// main 的首轮 spawn_workers 轮：simple 直派一个 low 档 worker，task 复用原用户消息
+function spawnWorkersRound(task: string): StreamEvent[] {
 	return toolCallRound(
 		"m-tc-1",
-		"delegate",
-		JSON.stringify({ difficulty: "simple", modelTier: "low", task }),
+		"spawn_workers",
+		JSON.stringify({ workers: [{ task, modelTier: "low" }] }),
 	);
 }
 
@@ -145,7 +146,7 @@ describe("runChat", () => {
 			settings: SETTINGS,
 			llm: {
 				adapter: scriptedAdapter([
-					delegateRound("你好"),
+					spawnWorkersRound("你好"),
 					textRound("worker 已处理：你好"),
 					textRound("你好，世界"),
 				]),
@@ -161,7 +162,7 @@ describe("runChat", () => {
 		const sessions = await listSessions(home);
 		expect(sessions).toHaveLength(1);
 		const { events } = await loadSession(sessions[0]?.filePath ?? "");
-		// 编排流完整事件链：main(user→delegate→结果) + spawn + worker(user→摘要) + main 收尾
+		// 编排流完整事件链：main(user→spawn_workers→结果) + spawn + worker(user→摘要) + main 收尾
 		expect(events.map((e) => e.type)).toEqual([
 			"meta",
 			"user_msg",
@@ -184,7 +185,7 @@ describe("runChat", () => {
 
 	it("危险命令触发审批：回答 n 拒绝执行，deny 落盘到 worker 的 tool_result", async () => {
 		const script: StreamEvent[][] = [
-			delegateRound("清理临时目录"),
+			spawnWorkersRound("清理临时目录"),
 			toolCallRound(
 				"tc-1",
 				"bash",
@@ -208,7 +209,7 @@ describe("runChat", () => {
 		expect(output.text).toContain("[approval]");
 		expect(output.text).toContain("rm -rf");
 		expect(output.text).toContain("已拒绝");
-		// worker 摘要经 delegate 的 tool_result 渲染回终端
+		// worker 摘要经 spawn_workers 的 tool_result 渲染回终端
 		expect(output.text).toContain("已取消操作");
 		expect(output.text).toContain("好的，已跳过该操作");
 
@@ -235,7 +236,7 @@ describe("runChat", () => {
 			approval: { policy: "never" },
 		};
 		const script: StreamEvent[][] = [
-			delegateRound("清理临时目录"),
+			spawnWorkersRound("清理临时目录"),
 			toolCallRound(
 				"tc-1",
 				"bash",
@@ -279,7 +280,7 @@ describe("runChat", () => {
 			approval: { policy: "always" },
 		};
 		const script: StreamEvent[][] = [
-			delegateRound("打个招呼"),
+			spawnWorkersRound("打个招呼"),
 			toolCallRound("tc-1", "bash", '{"command":"echo policy-always-ok"}'),
 			textRound("执行完毕"),
 			textRound("已完成"),
@@ -319,7 +320,7 @@ describe("runChat", () => {
 		};
 		await writeFile(join(home, "note.txt"), "hello hotpot\n");
 		const script: StreamEvent[][] = [
-			delegateRound("读一下 note.txt"),
+			spawnWorkersRound("读一下 note.txt"),
 			toolCallRound("tc-1", "read", '{"path":"note.txt"}'),
 			textRound("读取完成"),
 			textRound("好的"),
@@ -364,7 +365,7 @@ describe("runChat", () => {
 
 		const requests: ChatRequest[] = [];
 		const inner = scriptedAdapter([
-			delegateRound("继续"),
+			spawnWorkersRound("继续"),
 			textRound("worker 摘要"),
 			textRound("续聊回答"),
 		]);
@@ -402,7 +403,7 @@ describe("runChat", () => {
 			"assistant_msg",
 		]);
 		// 首轮请求即携带恢复出的历史（runTurn 内部 loadSession + deriveMessages）：
-		// 旧问题在前，本次用户消息在后（delegate 调用是本轮的响应，进第二个请求的历史）
+		// 旧问题在前，本次用户消息在后（spawn_workers 调用是本轮的响应，进第二个请求的历史）
 		expect(requests[0]?.messages).toHaveLength(2);
 		expect(requests[0]?.messages[0]).toEqual({
 			role: "user",
@@ -411,11 +412,11 @@ describe("runChat", () => {
 		expect(requests[0]?.messages[1]?.content).toEqual([
 			{ type: "text", text: "继续" },
 		]);
-		// 全局调用序：requests[0]=main 第一步（delegate），requests[1]=worker 步，
-		// requests[2]=main 收尾步 —— delegate 调用与结果进 main 第二步的历史
+		// 全局调用序：requests[0]=main 第一步（spawn_workers），requests[1]=worker 步，
+		// requests[2]=main 收尾步 —— spawn_workers 调用与结果进 main 第二步的历史
 		expect(requests[2]?.messages[2]?.content[0]).toMatchObject({
 			type: "tool_call",
-			name: "delegate",
+			name: "spawn_workers",
 		});
 		expect(requests[2]?.messages[3]?.content[0]).toMatchObject({
 			type: "tool_result",
@@ -482,7 +483,7 @@ describe("runChat", () => {
 			settings,
 			llm: {
 				adapter: scriptedAdapter([
-					delegateRound("hi"),
+					spawnWorkersRound("hi"),
 					textRound("worker 摘要"),
 					textRound("ok"),
 				]),
@@ -492,7 +493,7 @@ describe("runChat", () => {
 			output,
 		});
 		expect(output.text).toContain("tier=medium");
-		// --tier 语义不变（主 agent 档）：delegate 后 worker 照常 spawn
+		// --tier 语义不变（主 agent 档）：首轮后 worker 照常 spawn
 		expect(output.text).toContain("[spawn] worker-1");
 	});
 
@@ -510,7 +511,7 @@ describe("runChat", () => {
 			settings: SETTINGS,
 			llm: {
 				adapter: scriptedAdapter([
-					delegateRound("Deploy target: staging"),
+					spawnWorkersRound("Deploy target: staging"),
 					textRound("worker 完成"),
 					textRound("已部署"),
 				]),

@@ -65,11 +65,11 @@ function toolCallRound(
 	];
 }
 
-function delegateRound(task: string): StreamEvent[] {
+function spawnWorkersRound(task: string): StreamEvent[] {
 	return toolCallRound(
-		"m-delegate-1",
-		"delegate",
-		JSON.stringify({ difficulty: "simple", modelTier: "low", task }),
+		"m-tc-1",
+		"spawn_workers",
+		JSON.stringify({ workers: [{ task, modelTier: "low" }] }),
 	);
 }
 
@@ -97,7 +97,7 @@ describe("runAgentTurn", () => {
 		await mkdir(join(cwd, "fixture-dir"), { recursive: true });
 		await writeFile(join(cwd, "fixture-dir", "keep.txt"), "x\n", "utf8");
 		const adapter = scriptedAdapter([
-			delegateRound("Remove the fixture directory."),
+			spawnWorkersRound("Remove the fixture directory."),
 			toolCallRound(
 				"w-bash-1",
 				"bash",

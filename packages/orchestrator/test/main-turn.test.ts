@@ -1,7 +1,9 @@
-// runMainTurn 测试：delegate 元工具的 trivial/simple 流、重复调用守卫、worker 档位与 token 开销断言。
-// scriptedAdapter 按全局 streamChat 调用顺序回放：
-// 调用 1 = main 的 delegate 步，调用 2..N = worker turn 的各步（工具步 + 摘要步），
-// 最后一调用 = main 收尾。所有档位共用一个录制适配器，按调用序对齐脚本。
+// runMainTurn 测试：首轮提示词路由——trivial 直接文本回答；simple 首轮直接
+// spawn_workers（本回合无计划标记即放行，worker 内联跑完摘要回传）；complex 首轮
+// 输出带 `# Plan` 标记的计划正文进入审批；同轮「计划标记 + spawn_workers」被
+// 门禁拦截（未批准不产生 agent_spawn）。
+// scriptedAdapter 按全局 streamChat 调用顺序回放：调用 1 = main 首轮步，
+// 2..N = worker turn 的各步（工具步 + 摘要步），最后一调用 = main 收尾。
 
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -111,9 +113,41 @@ function textRound(delta: string, usage: Usage): StreamEvent[] {
 	];
 }
 
-function delegateRound(inputJson: string): StreamEvent[] {
-	return toolCallRound("delegate", "m-tc-1", inputJson);
+// main 首轮的 spawn_workers 轮：simple 直派一个 low 档 worker
+function spawnWorkersRound(id: string, inputJson: string): StreamEvent[] {
+	return toolCallRound("spawn_workers", id, inputJson);
 }
+
+// 同一条 assistant 消息内「计划正文 + 工具调用」：堵同轮执行守卫的构造
+function planTextWithToolRound(
+	text: string,
+	name: string,
+	id: string,
+	inputJson: string,
+	usage: Usage,
+): StreamEvent[] {
+	return [
+		{ type: "text_delta", delta: text },
+		{ type: "tool_call_start", id, name },
+		{ type: "tool_call_delta", id, inputDelta: inputJson },
+		{ type: "tool_call_end", id },
+		{ type: "usage", usage },
+		{ type: "finish", reason: "tool_calls" },
+	];
+}
+
+// 合法计划正文（# Plan 标记 + 三个必备段落）
+const PLAN_TEXT = `# Plan
+
+## Steps
+1. add auth routes
+
+## Files
+auth.ts
+
+## Acceptance criteria
+tests pass
+`;
 
 function sumTokens(list: Usage[]): number {
 	return list.reduce((acc, u) => acc + u.input + u.output, 0);
@@ -153,6 +187,8 @@ describe("runMainTurn", () => {
 		);
 
 		expect(events.at(-1)).toEqual({ type: "done", stopReason: "stop" });
+		// 普通回答不触发计划审批流
+		expect(events.some((e) => e.type === "plan")).toBe(false);
 		const text = events
 			.filter((e) => e.type === "text")
 			.map((e) => e.delta)
@@ -167,54 +203,20 @@ describe("runMainTurn", () => {
 		expect(userMsg).toMatchObject({ agentId: "main", content: "1+1 等于几" });
 	});
 
-	it("trivial 难度：delegate 返回「直接回答用户」提示，不落 agent_spawn", async () => {
-		const approval = new ApprovalChain();
-		const { runtime } = await makeRuntime(
-			[
-				delegateRound(
-					'{"difficulty":"trivial","modelTier":"high","task":"1+1 等于几"}',
-				),
-				textRound("答案是 42。", { input: 10, output: 5 }),
-			],
-			approval,
-		);
-
-		const events = await collect(
-			runMainTurn({
-				runtime,
-				userMessage: "1+1 等于几",
-				signal: new AbortController().signal,
-				mainTier: "high",
-			}),
-		);
-
-		const result = events.find(
-			(e) => e.type === "tool_result" && e.name === "delegate",
-		);
-		if (result?.type !== "tool_result") {
-			throw new Error("delegate tool_result missing");
-		}
-		expect(result.output.isError ?? false).toBe(false);
-		expect(result.output.content).toContain("直接回答用户");
-		expect(events.at(-1)).toEqual({ type: "done", stopReason: "stop" });
-
-		const { events: fileEvents } = await loadSession(runtime.session.filePath);
-		expect(fileEvents.some((e) => e.type === "agent_spawn")).toBe(false);
-	});
-
-	it("simple：delegate 内联跑 worker 全程无审批，worker 档位/模型正确，token 开销 < 20% worker 成本", async () => {
+	it("simple：首轮 spawn_workers（本回合无计划标记）放行，内联跑 worker，档位/模型正确，token 开销 < 20% worker 成本", async () => {
 		let approvalAsks = 0;
 		const approval = new ApprovalChain();
 		approval.use(() => {
 			approvalAsks += 1;
 			return Promise.resolve("next");
 		});
-		// 全局调用序：1=main delegate，2=worker 读文件（isConcurrencySafe 的 read），
+		// 全局调用序：1=main spawn_workers，2=worker 读文件（isConcurrencySafe 的 read），
 		// 3=worker 文本摘要收尾，4=main 文本收尾
 		const { runtime, usages } = await makeRuntime(
 			[
-				delegateRound(
-					'{"difficulty":"simple","modelTier":"low","task":"读取 note.txt 并总结"}',
+				spawnWorkersRound(
+					"m-tc-1",
+					'{"workers":[{"task":"读取 note.txt 并总结","modelTier":"low"}]}',
 				),
 				toolCallRound("read", "w-tc-1", '{"path":"note.txt"}'),
 				textRound("note.txt 有一行：hello hotpot。", {
@@ -244,10 +246,10 @@ describe("runMainTurn", () => {
 
 		// main 收到的 tool_result 带 worker 摘要（Worker <id> (tier=low) result: ...）
 		const result = events.find(
-			(e) => e.type === "tool_result" && e.name === "delegate",
+			(e) => e.type === "tool_result" && e.name === "spawn_workers",
 		);
 		if (result?.type !== "tool_result") {
-			throw new Error("delegate tool_result missing");
+			throw new Error("spawn_workers tool_result missing");
 		}
 		expect(result.output.isError ?? false).toBe(false);
 		expect(result.output.content).toContain(
@@ -276,7 +278,7 @@ describe("runMainTurn", () => {
 		expect(lastWorker.tier).toBe("low");
 		expect(lastWorker.model).toBe("deepseek-chat");
 
-		// 验收：全程无审批（无 plan 审批、无工具审批）；plan 事件不落会话日志，这里只看审批
+		// 验收：全程无审批（simple 直派无 plan 审批、无工具审批）
 		expectNoApproval(approvalAsks, fileEvents);
 
 		// token 断言：main 两次请求（调用 1 与 4）开销 < 20% × worker 两次请求（调用 2 与 3）
@@ -286,13 +288,14 @@ describe("runMainTurn", () => {
 		expect(mainTokens).toBeLessThan(0.2 * workerTokens);
 	});
 
-	it("simple：agent_spawn 流事件由主流直产，位于 delegate tool_result 之前", async () => {
+	it("simple：agent_spawn 流事件由主流直产，位于 spawn_workers tool_result 之前", async () => {
 		const approval = new ApprovalChain();
-		// 调用序：1=main delegate(simple)，2=worker 读文件，3=worker 摘要收尾，4=main 收尾
+		// 调用序：1=main spawn_workers(simple)，2=worker 读文件，3=worker 摘要收尾，4=main 收尾
 		const { runtime } = await makeRuntime(
 			[
-				delegateRound(
-					'{"difficulty":"simple","modelTier":"low","task":"读取 note.txt 并总结"}',
+				spawnWorkersRound(
+					"m-tc-1",
+					'{"workers":[{"task":"读取 note.txt 并总结","modelTier":"low"}]}',
 				),
 				toolCallRound("read", "w-tc-1", '{"path":"note.txt"}'),
 				textRound("note.txt 有一行：hello hotpot。", {
@@ -327,27 +330,30 @@ describe("runMainTurn", () => {
 			task: "读取 note.txt 并总结",
 		});
 		const resultIdx = events.findIndex(
-			(e) => e.type === "tool_result" && e.name === "delegate",
+			(e) => e.type === "tool_result" && e.name === "spawn_workers",
 		);
 		expect(resultIdx).toBeGreaterThanOrEqual(0);
-		// spawn 事件必须先于 delegate 的 tool_result 到达
+		// spawn 事件必须先于 spawn_workers 的 tool_result 到达
 		expect(spawnIdx).toBeLessThan(resultIdx);
 	});
 
-	it("重复 delegate：第二次调用返回 isError「已判定」", async () => {
+	it("simple：同回合多次 spawn_workers 均放行（worker-1、worker-2 都诞生）", async () => {
 		const approval = new ApprovalChain();
-		// 调用序：1=main 首次 delegate(simple)，2=worker 摘要收尾，
-		// 3=main 再次 delegate（应被守卫拒绝），4=main 文本收尾
+		// 调用序：1=main 首次 spawn_workers，2=worker-1 摘要收尾，
+		// 3=main 再次 spawn_workers，4=worker-2 摘要收尾，5=main 文本收尾
 		const { runtime } = await makeRuntime(
 			[
-				delegateRound(
-					'{"difficulty":"simple","modelTier":"low","task":"读取 note.txt"}',
+				spawnWorkersRound(
+					"m-tc-1",
+					'{"workers":[{"task":"读取 note.txt","modelTier":"low"}]}',
 				),
 				textRound("读完了。", { input: 50, output: 10 }),
-				delegateRound(
-					'{"difficulty":"simple","modelTier":"low","task":"再读一次"}',
+				spawnWorkersRound(
+					"m-tc-2",
+					'{"workers":[{"task":"读取 note.txt 第二遍","modelTier":"low"}]}',
 				),
-				textRound("收到，不再重复判定。", { input: 50, output: 10 }),
+				textRound("又读完了。", { input: 50, output: 10 }),
+				textRound("两次都完成。", { input: 50, output: 10 }),
 			],
 			approval,
 		);
@@ -362,36 +368,42 @@ describe("runMainTurn", () => {
 		);
 
 		const results = events.filter(
-			(e) => e.type === "tool_result" && e.name === "delegate",
+			(e) => e.type === "tool_result" && e.name === "spawn_workers",
 		);
 		expect(results).toHaveLength(2);
-		const first = results[0];
-		const second = results[1];
-		if (first?.type !== "tool_result" || second?.type !== "tool_result") {
-			throw new Error("delegate tool_result missing");
+		for (const r of results) {
+			if (r.type !== "tool_result") throw new Error("tool_result missing");
+			expect(r.output.isError ?? false).toBe(false);
 		}
-		expect(first.output.isError ?? false).toBe(false);
-		expect(second.output.isError).toBe(true);
-		expect(second.output.content).toContain("已判定");
 		expect(events.at(-1)).toEqual({ type: "done", stopReason: "stop" });
 
-		// 只有一次 spawn：第二次 delegate 未派生 worker
 		const { events: fileEvents } = await loadSession(runtime.session.filePath);
-		expect(fileEvents.filter((e) => e.type === "agent_spawn")).toHaveLength(1);
+		const spawns = fileEvents.filter((e) => e.type === "agent_spawn");
+		expect(spawns).toHaveLength(2);
+		expect(spawns.map((e) => e.agentId).sort()).toEqual([
+			"worker-1",
+			"worker-2",
+		]);
 	});
 
-	it("重复 delegate：trivial 判定后再调用也返回 isError「已判定」", async () => {
+	it("complex 守卫：首轮同轮产出计划标记文本并调 spawn_workers（未批准）→ isError 且 plan 仍走审批", async () => {
 		const approval = new ApprovalChain();
-		// 调用序：1=main delegate(trivial)，2=main 再次 delegate（应被守卫拒绝），3=main 文本收尾
+		// 调用序：1=main 一条消息内「计划正文 + spawn_workers 调用」（守卫应拦截执行），
+		// 2=main 收到 isError 后结束首轮，3=plan 被拒后的收尾回复
 		const { runtime } = await makeRuntime(
 			[
-				delegateRound(
-					'{"difficulty":"trivial","modelTier":"high","task":"1+1 等于几"}',
+				planTextWithToolRound(
+					PLAN_TEXT,
+					"spawn_workers",
+					"m-tc-1",
+					'{"workers":[{"task":"实现 auth 路由","modelTier":"high"}]}',
+					{ input: 200, output: 60 },
 				),
-				delegateRound(
-					'{"difficulty":"trivial","modelTier":"high","task":"2+2 等于几"}',
-				),
-				textRound("答案是 4。", { input: 50, output: 10 }),
+				textRound("收到，等待审批。", { input: 50, output: 10 }),
+				textRound("好的，计划被拒绝，不做任何实现。", {
+					input: 100,
+					output: 20,
+				}),
 			],
 			approval,
 		);
@@ -399,22 +411,30 @@ describe("runMainTurn", () => {
 		const events = await collect(
 			runMainTurn({
 				runtime,
-				userMessage: "1+1 等于几",
+				userMessage: "给项目加用户认证",
 				signal: new AbortController().signal,
 				mainTier: "high",
+				onPlanApproval: () =>
+					Promise.resolve({ kind: "reject", note: "先不做了" }),
 			}),
 		);
 
-		const results = events.filter(
-			(e) => e.type === "tool_result" && e.name === "delegate",
+		// 守卫：spawn_workers 被拦截、无 agent_spawn 落盘
+		const result = events.find(
+			(e) => e.type === "tool_result" && e.name === "spawn_workers",
 		);
-		expect(results).toHaveLength(2);
-		const second = results[1];
-		if (second?.type !== "tool_result") {
-			throw new Error("delegate tool_result missing");
+		if (result?.type !== "tool_result") {
+			throw new Error("spawn_workers tool_result missing");
 		}
-		expect(second.output.isError).toBe(true);
-		expect(second.output.content).toContain("已判定");
+		expect(result.output.isError).toBe(true);
+
+		// 计划仍进入审批流：drafted → denied，随后 main 收尾回复用户
+		expect(events.some((e) => e.type === "plan" && e.phase === "drafted")).toBe(
+			true,
+		);
+		expect(events.some((e) => e.type === "plan" && e.phase === "denied")).toBe(
+			true,
+		);
 		expect(events.at(-1)).toEqual({ type: "done", stopReason: "stop" });
 
 		const { events: fileEvents } = await loadSession(runtime.session.filePath);

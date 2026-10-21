@@ -318,12 +318,17 @@ function textRound(delta: string, usage: Usage): StreamEvent[] {
 	];
 }
 
-function delegateRound(inputJson: string): StreamEvent[] {
-	return toolCallRound("delegate", "m-tc-1", inputJson);
-}
-
 function spawnWorkersRound(inputJson: string): StreamEvent[] {
 	return toolCallRound("spawn_workers", "m-tc-2", inputJson);
+}
+
+// main 首轮的 spawn_workers 轮：simple 直派一个 low 档 worker
+function spawnSimpleRound(task: string): StreamEvent[] {
+	return toolCallRound(
+		"spawn_workers",
+		"m-tc-1",
+		JSON.stringify({ workers: [{ task, modelTier: "low" }] }),
+	);
 }
 
 describe("HTTP API", () => {
@@ -560,9 +565,7 @@ describe("HTTP API", () => {
 	it("审批全流程：bash 高危→SSE 收 approval→turn running→allow→log(approval/decided)+turn(end)→idle；未知 requestId→404", async () => {
 		const fx = await startApi(
 			scriptedAdapter([
-				delegateRound(
-					'{"difficulty":"simple","modelTier":"low","task":"清理临时目录 x"}',
-				),
+				spawnSimpleRound("清理临时目录 x"),
 				toolCallRound("bash", "w-tc-1", '{"command":"rm -rf x"}'),
 				textRound("清理完成。", { input: 50, output: 10 }),
 				textRound("临时目录已清理。", { input: 20, output: 5 }),
@@ -626,13 +629,20 @@ describe("HTTP API", () => {
 	}, 20000);
 
 	it("plan 全流程：drafted→POST plan approve→approved→turn(end)；无 pending plan→404", async () => {
-		const planV1 =
-			"PLAN v1: (1) add auth routes (2) add login page. Files: auth.ts, login.tsx.";
+		const planV1 = `# Plan
+
+## Steps
+1. add auth routes
+2. add login page
+
+## Files
+auth.ts, login.tsx
+
+## Acceptance criteria
+tests pass
+`;
 		const fx = await startApi(
 			scriptedAdapter([
-				delegateRound(
-					'{"difficulty":"complex","modelTier":"high","task":"给项目加用户认证"}',
-				),
 				textRound(planV1, { input: 200, output: 60 }),
 				spawnWorkersRound(
 					'{"workers":[{"task":"实现后端 auth 路由","modelTier":"high"}]}',
@@ -930,9 +940,7 @@ describe("HTTP API", () => {
 	it("删除会话：DELETE 204 后列表/详情 404、磁盘日志移除；运行中 409；未知会话 404", async () => {
 		const fx = await startApi(
 			scriptedAdapter([
-				delegateRound(
-					'{"difficulty":"simple","modelTier":"low","task":"清理临时目录 x"}',
-				),
+				spawnSimpleRound("清理临时目录 x"),
 				toolCallRound("bash", "w-tc-1", '{"command":"rm -rf x"}'),
 				textRound("清理完成。", { input: 50, output: 10 }),
 				textRound("临时目录已清理。", { input: 20, output: 5 }),
@@ -1001,9 +1009,7 @@ describe("HTTP API", () => {
 	it("归档会话：运行中归档→回合中止收尾、会话保留在列表且日志落盘，之后可删除", async () => {
 		const fx = await startApi(
 			scriptedAdapter([
-				delegateRound(
-					'{"difficulty":"simple","modelTier":"low","task":"清理临时目录 x"}',
-				),
+				spawnSimpleRound("清理临时目录 x"),
 				toolCallRound("bash", "w-tc-1", '{"command":"rm -rf x"}'),
 				textRound("清理完成。", { input: 50, output: 10 }),
 				textRound("临时目录已清理。", { input: 20, output: 5 }),

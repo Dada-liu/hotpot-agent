@@ -1,5 +1,5 @@
 // M1 验收场景的多层编排迁移版（docs/archive/04-roadmap.md 验收标准 1/2，M2 三层流重跑）：
-// 场景 A：「找出 src 下所有 .ts 文件，统计行数写入 report.txt」——main delegate(simple) 派 worker，
+// 场景 A：「找出 src 下所有 .ts 文件，统计行数写入 report.txt」——main 首轮 spawn_workers(simple) 派 worker，
 //   worker 完成 bash 统计 → write 报告 → 摘要回传，main 收尾；断言 report.txt 真实生成、
 //   会话文件含完整事件链（spawn + worker 工具步 + usage 记录）
 // 场景 B：模拟进程重启——同一会话文件经 resumeSession + deriveMessages 恢复后续聊一轮，
@@ -113,12 +113,12 @@ function textRound(text: string): StreamEvent[] {
 	];
 }
 
-// main 的 delegate 轮：难度 simple、worker 走 low 档，task 复用原用户消息
-function delegateRound(task: string): StreamEvent[] {
+// main 的首轮 spawn_workers 轮：simple 直派一个 low 档 worker，task 复用原用户消息
+function spawnWorkersRound(task: string): StreamEvent[] {
 	return toolCallRound(
 		"m-tc-1",
-		"delegate",
-		JSON.stringify({ difficulty: "simple", modelTier: "low", task }),
+		"spawn_workers",
+		JSON.stringify({ workers: [{ task, modelTier: "low" }] }),
 	);
 }
 
@@ -128,10 +128,10 @@ const WORKER_SUMMARY =
 	"统计完成：alpha.ts 3 行，beta.ts 5 行，合计 8 行，已写入 report.txt";
 const FINAL_ANSWER = "已找到 2 个 .ts 文件，共 8 行，结果已写入 report.txt。";
 
-// 场景 A 脚本（全局调用序）：main delegate → worker bash 统计 → worker write 报告
+// 场景 A 脚本（全局调用序）：main 首轮 spawn_workers → worker bash 统计 → worker write 报告
 // → worker 摘要收尾 → main 文本收尾
 const SCENARIO_A_SCRIPT: StreamEvent[][] = [
-	delegateRound(TASK),
+	spawnWorkersRound(TASK),
 	toolCallRound("tc-1", "bash", '{"command":"wc -l src/alpha.ts src/beta.ts"}'),
 	toolCallRound(
 		"tc-2",
@@ -160,8 +160,8 @@ describe("M1 验收（M2 编排流迁移）", () => {
 		expect(report).toBe(REPORT_CONTENT);
 		expect(output.text).toContain(FINAL_ANSWER);
 
-		// 会话文件事件链：meta → main(user→delegate) → spawn → worker(user→bash→result→write→result→摘要)
-		//   → main(delegate 结果) → main 收尾
+		// 会话文件事件链：meta → main(user→spawn_workers) → spawn → worker(user→bash→result→write→result→摘要)
+		//   → main(spawn_workers 结果) → main 收尾
 		const sessions = await listSessions(home);
 		expect(sessions).toHaveLength(1);
 		const { events } = await loadSession(sessions[0]?.filePath ?? "");
@@ -243,7 +243,7 @@ describe("M1 验收（M2 编排流迁移）", () => {
 		// runTurn 内部 loadSession + deriveMessages 重建历史；记录适配器捕获真实请求
 		const requests: ChatRequest[] = [];
 		const inner = scriptedAdapter([
-			delegateRound("这些文件一共多少行？"),
+			spawnWorkersRound("这些文件一共多少行？"),
 			textRound("两个文件合计 8 行。"),
 			textRound("两个文件合计 8 行。"),
 		]);
@@ -270,7 +270,7 @@ describe("M1 验收（M2 编排流迁移）", () => {
 		expect(await listSessions(home)).toHaveLength(1);
 
 		// 新一轮请求携带 main 的完整历史（worker 事件按 agentId 过滤，不进 main 上下文）：
-		// 任务 → delegate 调用 → delegate 结果（含 worker 摘要）→ 收尾回答 → 新问题
+		// 任务 → spawn_workers 调用 → spawn_workers 结果（含 worker 摘要）→ 收尾回答 → 新问题
 		const messages = requests[0]?.messages ?? [];
 		expect(messages).toHaveLength(5);
 		expect(messages[0]).toEqual({
@@ -280,7 +280,7 @@ describe("M1 验收（M2 编排流迁移）", () => {
 		expect(messages[1]?.role).toBe("assistant");
 		expect(messages[1]?.content[0]).toMatchObject({
 			type: "tool_call",
-			name: "delegate",
+			name: "spawn_workers",
 		});
 		expect(messages[2]?.role).toBe("user");
 		expect(messages[2]?.content[0]).toMatchObject({
@@ -296,7 +296,7 @@ describe("M1 验收（M2 编排流迁移）", () => {
 			content: [{ type: "text", text: "这些文件一共多少行？" }],
 		});
 
-		// 会话文件追加完整：场景 A 的 12 事件 + 新一轮 7 事件（main user→delegate→结果 + spawn + worker 摘要 + main 收尾）
+		// 会话文件追加完整：场景 A 的 12 事件 + 新一轮 7 事件（main user→spawn_workers→结果 + spawn + worker 摘要 + main 收尾）
 		const { events } = await loadSession(sessionPath);
 		expect(events.map((e) => e.type)).toEqual([
 			"meta",

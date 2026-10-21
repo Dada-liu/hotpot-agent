@@ -1,9 +1,10 @@
-// plan 审批流（complex 流）测试：批准 / 批注修订 / 修订上限 / 拒绝 / 未批准守卫。
-// 脚本顺序（批准与拒绝走 runMainTurn 全流）：delegate→main 收尾→起草→(修订→起草)×n→执行。
+// plan 审批流（complex 流）测试：批准 / 批注修订 / 修订上限 / 拒绝 / spawn_workers 双分支门禁。
+// 批准与拒绝走 runMainTurn 全流：main 首轮直接产出带 `# Plan` 标记的计划正文
+// （初始轮复用，无 delegate）→ 起草/修订 → 执行。
 // 批注与上限两条直接驱动 runPlanPhase（自建 TurnState，便于断言 state.revisions），
 // 此时脚本只有 main 起草轮：每轮一个 textRound，plan 文本按轮次区分。
 // 断言锚点：approval/decided 早于任何文件写工具 tool_result；asked/decided 落盘内容；
-// 起草 user_msg 携带批注；revision_exhausted 场景 asked 次数 == planMaxRevisions。
+// 起草 internal_msg 携带批注；revision_exhausted 场景 asked 次数 == planMaxRevisions。
 
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -32,9 +33,8 @@ import {
 	createRuntime,
 	type OrchestrationRuntime,
 } from "../src/runtime/runtime.ts";
-import type { TurnState } from "../src/tools/delegate.ts";
 import { createSpawnWorkersTool } from "../src/tools/spawn-workers.ts";
-import type { OrchestrationEvent } from "../src/types/types.ts";
+import type { OrchestrationEvent, TurnState } from "../src/types/types.ts";
 
 let home: string;
 let proj: string;
@@ -134,30 +134,33 @@ function textRound(delta: string, usage: Usage): StreamEvent[] {
 	];
 }
 
-function delegateRound(inputJson: string): StreamEvent[] {
-	return toolCallRound("delegate", "m-tc-1", inputJson);
-}
-
 function spawnWorkersRound(inputJson: string): StreamEvent[] {
 	return toolCallRound("spawn_workers", "m-tc-2", inputJson);
 }
 
-// 第 n 版 plan 文本（按轮次区分，便于断言 asked payload 与 drafted 事件携带哪一版）
+// 第 n 版 plan 文本（# Plan 标记 + 三个必备段落；按轮次区分，便于断言 asked
+// payload 与 drafted 事件携带哪一版）
 function planText(n: number): string {
-	return `PLAN v${n}: (1) add auth routes (2) add login page. Files: auth.ts, login.tsx. Acceptance: tests pass.`;
+	return `# Plan
+
+## Steps
+1. PLAN v${n}: add auth routes
+2. PLAN v${n}: add login page
+
+## Files
+auth.ts, login.tsx
+
+## Acceptance criteria
+tests pass (v${n})
+`;
 }
 
-// complex 流的初始状态：delegate 已判定 complex（runPlanPhase 从中档 tier 解析起草模型）
+// complex 流的初始状态：首轮已产出计划正文（runPlanPhase 从会话日志复用草稿）
 function planningState(): TurnState {
 	return {
 		phase: "planning",
 		planApproved: false,
 		revisions: 0,
-		lastDelegate: {
-			difficulty: "complex",
-			modelTier: "high",
-			task: "给项目加用户认证",
-		},
 	};
 }
 
@@ -169,14 +172,11 @@ describe("plan 审批流（complex）", () => {
 			approvalAsks += 1;
 			return Promise.resolve("next");
 		});
-		// 调用序：1=main delegate(complex)，2=main 在初始轮产出 plan（plan 阶段直接复用，
-		// 不再多跑一轮起草），3=main spawn_workers，4=worker 写 auth.ts（新文件，不触发审批），
-		// 5=worker 摘要收尾，6=main 最终回复
+		// 调用序：1=main 在初始轮产出 plan（plan 阶段直接复用，不再多跑一轮起草），
+		// 2=main spawn_workers，3=worker 写 auth.ts（新文件，不触发审批），
+		// 4=worker 摘要收尾，5=main 最终回复
 		const { runtime, usages } = await makeRuntime(
 			[
-				delegateRound(
-					'{"difficulty":"complex","modelTier":"high","task":"给项目加用户认证"}',
-				),
 				textRound(planText(1), { input: 200, output: 60 }),
 				spawnWorkersRound(
 					'{"workers":[{"task":"实现后端 auth 路由","modelTier":"high"}]}',
@@ -221,9 +221,9 @@ describe("plan 审批流（complex）", () => {
 		if (drafted?.type !== "plan") throw new Error("drafted event missing");
 		expect(drafted.messageIds).toHaveLength(1);
 
-		// 初始轮计划被复用：不再产生第二次起草调用（delegate + plan + spawn + write +
-		// worker 摘要 + main 收尾 = 6 次 streamChat）
-		expect(usages).toHaveLength(6);
+		// 初始轮计划被复用：不再产生第二次起草调用（plan + spawn + write +
+		// worker 摘要 + main 收尾 = 5 次 streamChat）
+		expect(usages).toHaveLength(5);
 		const approvedIdx = events.findIndex(
 			(e) => e.type === "plan" && e.phase === "approved",
 		);
@@ -342,13 +342,10 @@ describe("plan 审批流（complex）", () => {
 	it("plan 期间 steer：队列非空时先 reconcile，steer 在审批前进入模型历史", async () => {
 		const approval = new ApprovalChain();
 		let inbox: Inbox | null = null;
-		// 调用序：1=delegate，2=初始 plan（此时用户 steer），3=reconcile 起草，
-		// 4=拒绝后的收尾回复
+		// 调用序：1=初始 plan（此时用户 steer），2=reconcile 起草，
+		// 3=拒绝后的收尾回复
 		const { runtime, requests } = await makeRuntime(
 			[
-				delegateRound(
-					'{"difficulty":"complex","modelTier":"high","task":"给项目加用户认证"}',
-				),
 				textRound(planText(1), { input: 200, output: 60 }),
 				textRound(planText(2), { input: 220, output: 60 }),
 				textRound("好的，不做任何实现。", { input: 100, output: 20 }),
@@ -356,7 +353,7 @@ describe("plan 审批流（complex）", () => {
 			approval,
 			undefined,
 			async (callIndex) => {
-				if (callIndex === 2) {
+				if (callIndex === 1) {
 					if (inbox === null) throw new Error("inbox missing");
 					await inbox.steer("改用 React 实现");
 				}
@@ -386,10 +383,10 @@ describe("plan 审批流（complex）", () => {
 		const drafted = events.find((e) => e.type === "plan");
 		if (drafted?.type !== "plan") throw new Error("drafted event missing");
 		expect(drafted.messageIds).toHaveLength(2);
-		// 第 3 次请求（reconcile 起草）的模型历史包含 steer
-		expect(JSON.stringify(requests[2]?.messages)).toContain("改用 React 实现");
-		// plan 阶段不挂 delegate：请求里只有空工具列表
-		expect(requests[2]?.tools).toEqual([]);
+		// 第 2 次请求（reconcile 起草）的模型历史包含 steer
+		expect(JSON.stringify(requests[1]?.messages)).toContain("改用 React 实现");
+		// plan 阶段不挂任何工具：请求里只有空工具列表
+		expect(requests[1]?.tools).toEqual([]);
 
 		const { events: fileEvents } = await loadSession(runtime.session.filePath);
 		expect(
@@ -551,13 +548,9 @@ describe("plan 审批流（complex）", () => {
 
 	it("拒绝路径：reject 后无 spawn_workers 执行、无 worker agent_spawn", async () => {
 		const approval = new ApprovalChain();
-		// 调用序：1=main delegate(complex)，2=main 在初始轮产出 plan，
-		// 3=main 收到拒绝提示后收尾回复用户
+		// 调用序：1=main 在初始轮产出 plan，2=main 收到拒绝提示后收尾回复用户
 		const { runtime } = await makeRuntime(
 			[
-				delegateRound(
-					'{"difficulty":"complex","modelTier":"high","task":"给项目加用户认证"}',
-				),
 				textRound(planText(1), { input: 200, output: 60 }),
 				textRound("好的，计划被拒绝，不做任何实现。", {
 					input: 100,
@@ -614,9 +607,27 @@ describe("plan 审批流（complex）", () => {
 		).toBe(true);
 	});
 
-	it("守卫：plan 未批准时 spawn_workers 返回 isError，不产生 agent_spawn", async () => {
+	it("守卫：本回合已产出计划标记（未批准）时 spawn_workers 返回 isError，不产生 agent_spawn", async () => {
 		const approval = new ApprovalChain();
 		const { runtime } = await makeRuntime([], approval);
+		// 首轮产物：user_msg + 带 # Plan 标记的计划正文（detectPlanDraft 命中）
+		await runtime.session.append({
+			type: "user_msg",
+			id: "u-1",
+			ts: new Date().toISOString(),
+			agentId: "main",
+			content: "给项目加用户认证",
+		});
+		await runtime.session.append({
+			type: "assistant_msg",
+			id: "a-1",
+			ts: new Date().toISOString(),
+			agentId: "main",
+			content: [{ type: "text", text: planText(1) }],
+			usage: { input: 200, output: 60 },
+			model: "claude-sonnet-4-5",
+			tier: "high",
+		});
 		const state: TurnState = {
 			phase: "planning",
 			planApproved: false,
@@ -636,6 +647,40 @@ describe("plan 审批流（complex）", () => {
 		expect(out.isError).toBe(true);
 		const { events: fileEvents } = await loadSession(runtime.session.filePath);
 		expect(fileEvents.some((e) => e.type === "agent_spawn")).toBe(false);
+	});
+
+	it("放行：本回合无计划标记（simple 首轮直派）时 spawn_workers 正常 spawn worker", async () => {
+		const approval = new ApprovalChain();
+		// 调用序：1=worker 摘要轮（execute 内联跑完该 worker turn）
+		const { runtime } = await makeRuntime(
+			[textRound("auth 路由完成。", { input: 300, output: 60 })],
+			approval,
+		);
+		const state: TurnState = {
+			phase: "initial",
+			planApproved: false,
+			revisions: 0,
+		};
+		const tool = createSpawnWorkersTool(runtime, state);
+		const out = await tool.execute(
+			{ workers: [{ task: "实现 auth 路由", modelTier: "low" }] },
+			{
+				cwd: proj,
+				signal: new AbortController().signal,
+				approval,
+				agentId: "main",
+				session: runtime.session,
+			},
+		);
+		expect(out.isError ?? false).toBe(false);
+		expect(out.content).toContain("Worker worker-1 (tier=low) result:");
+		expect(out.content).toContain("auth 路由完成");
+		const { events: fileEvents } = await loadSession(runtime.session.filePath);
+		expect(
+			fileEvents.some(
+				(e) => e.type === "agent_spawn" && e.agentId === "worker-1",
+			),
+		).toBe(true);
 	});
 
 	it("批准后 spawn_workers：按 modelTier 逐个 spawn worker 并聚合摘要", async () => {

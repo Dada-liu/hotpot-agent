@@ -138,12 +138,17 @@ function textRound(delta: string, usage: Usage): StreamEvent[] {
 	];
 }
 
-function delegateRound(inputJson: string): StreamEvent[] {
-	return toolCallRound("delegate", "m-tc-1", inputJson);
-}
-
 function spawnWorkersRound(inputJson: string): StreamEvent[] {
 	return toolCallRound("spawn_workers", "m-tc-2", inputJson);
+}
+
+// main 首轮的 spawn_workers 轮：simple 直派一个 low 档 worker
+function spawnSimpleRound(task: string): StreamEvent[] {
+	return toolCallRound(
+		"spawn_workers",
+		"m-tc-1",
+		JSON.stringify({ workers: [{ task, modelTier: "low" }] }),
+	);
 }
 
 function sumTokens(list: Usage[]): number {
@@ -156,13 +161,13 @@ function sumTokens(list: Usage[]): number {
 type ScriptEntry = StreamEvent[] | { error: Error };
 
 interface FlowScript {
-	// main 的 delegate 步（主流入口第一调用）
-	mainDelegate: StreamEvent[];
+	// main 的首轮步：直接 spawn_workers（simple 直派，主流入口第一调用）
+	mainFirst: StreamEvent[];
 	// worker 第一步：调 spawn_tasks
 	workerFirst: StreamEvent[];
 	// worker 收尾步：messages 已带 spawn_tasks 的 tool_call 块
 	workerNext: StreamEvent[];
-	// main 收尾步：messages 已带 delegate 的 tool_call 块
+	// main 收尾步：messages 已带 spawn_workers 的 tool_call 块与 tool_result
 	mainFinal: StreamEvent[];
 	// 每个 task 一轮（下标 i 对应第 i+1 个任务）
 	tasks: ScriptEntry[];
@@ -187,11 +192,12 @@ async function holdAtConcurrency(
 }
 
 // 分发规则（依次匹配）：messages 含 '"name":"spawn_tasks"' → worker 收尾步；
-// 含 '"name":"delegate"' → main 收尾步；含主流用户消息 → main 的 delegate 步；
+// 含 '"name":"spawn_workers"'（main 收尾请求的历史已带该 tool_call 块与 tool_result）
+// → main 收尾步；含主流用户消息 → main 首轮步（simple 直派，请求仅有 user 消息）；
 // 含 worker 任务描述 → worker 第一步；含某 task 描述 → 该 task 的轮；都不含 → 抛错。
 // worker 收尾步同时含 worker 任务描述与全部 task 描述，故必须最先判 spawn_tasks 块；
-// main 收尾步与 worker 第一步都含各自的任务描述锚点，故 tool_call 名/用户消息判定
-// 须先于 worker 任务描述（main 收尾步的 delegate tool_call 输入含 worker 任务描述）
+// spawn_workers/mainUserText 判定须先于 worker 任务描述（main 收尾步的历史
+// 同时含主流用户消息与 worker 任务描述）
 function makeDispatchAdapter(
 	script: FlowScript,
 	mainUserText: string,
@@ -210,10 +216,10 @@ function makeDispatchAdapter(
 			let isTask = false;
 			if (text.includes('"name":"spawn_tasks"')) {
 				entry = script.workerNext;
-			} else if (text.includes('"name":"delegate"')) {
+			} else if (text.includes('"name":"spawn_workers"')) {
 				entry = script.mainFinal;
 			} else if (text.includes(mainUserText)) {
-				entry = script.mainDelegate;
+				entry = script.mainFirst;
 			} else if (text.includes(workerTaskText)) {
 				entry = script.workerFirst;
 			} else {
@@ -317,12 +323,10 @@ describe("M2 验收 1-5（runMainTurn 端到端串联）", () => {
 			return Promise.resolve("next");
 		});
 		let planAsked = 0;
-		// 全局调用序：1=main delegate，2=worker 读文件，3=worker 摘要收尾，4=main 收尾
+		// 全局调用序：1=main spawn_workers，2=worker 读文件，3=worker 摘要收尾，4=main 收尾
 		const { runtime, usages } = await makeScriptedRuntime(
 			[
-				delegateRound(
-					'{"difficulty":"simple","modelTier":"low","task":"读取 note.txt 并总结内容"}',
-				),
+				spawnSimpleRound("读取 note.txt 并总结内容"),
 				toolCallRound("read", "w-tc-1", '{"path":"note.txt"}'),
 				textRound("note.txt 有一行：hello hotpot。", {
 					input: 2000,
@@ -369,15 +373,22 @@ describe("M2 验收 1-5（runMainTurn 端到端串联）", () => {
 
 	it("验收 2：complex 任务先展示 plan，批准前零文件改动，批准后 worker 执行", async () => {
 		const approval = new ApprovalChain();
-		// 调用序：1=main delegate(complex)，2=main 在初始轮产出 plan，
-		// 3=main spawn_workers，4=worker 写 auth.ts，5=worker 摘要收尾，6=main 最终回复
-		const planV1 =
-			"PLAN v1: (1) add auth routes (2) add login page. Files: auth.ts, login.tsx.";
+		// 调用序：1=main 在初始轮产出 plan（带 # Plan 标记），2=main spawn_workers，
+		// 3=worker 写 auth.ts，4=worker 摘要收尾，5=main 最终回复
+		const planV1 = `# Plan
+
+## Steps
+1. add auth routes
+2. add login page
+
+## Files
+auth.ts, login.tsx
+
+## Acceptance criteria
+tests pass
+`;
 		const { runtime } = await makeScriptedRuntime(
 			[
-				delegateRound(
-					'{"difficulty":"complex","modelTier":"high","task":"给项目加用户认证"}',
-				),
 				textRound(planV1, { input: 200, output: 60 }),
 				spawnWorkersRound(
 					'{"workers":[{"task":"实现后端 auth 路由","modelTier":"high"}]}',
@@ -475,9 +486,7 @@ describe("M2 验收 1-5（runMainTurn 端到端串联）", () => {
 		const recording: Recording = { maxConcurrent: 0, requests: [] };
 		const adapter = makeDispatchAdapter(
 			{
-				mainDelegate: delegateRound(
-					`{"difficulty":"simple","modelTier":"low","task":"${workerTaskText}"}`,
-				),
+				mainFirst: spawnSimpleRound(workerTaskText),
 				workerFirst: toolCallRound(
 					"spawn_tasks",
 					"w-tc-1",
@@ -535,29 +544,28 @@ describe("M2 验收 1-5（runMainTurn 端到端串联）", () => {
 			});
 		}
 
-		// 聚合 8 段摘要回传 worker（从落盘 tool_result 取），worker 摘要再回传 main
+		// 聚合 8 段摘要回传 worker（从落盘 tool_result 取），worker 摘要再经
+		// spawn_workers 的 tool_result 回传 main
 		const output = spawnTasksOutputFromLog(fileEvents, "worker-1");
 		expect(output.isError).toBe(false);
 		const sections = output.content.match(/Task task-\d+ result:/g) ?? [];
 		expect(sections).toHaveLength(8);
-		const delegateResult = events.find(
-			(e) => e.type === "tool_result" && e.name === "delegate",
+		const spawnResult = events.find(
+			(e) => e.type === "tool_result" && e.name === "spawn_workers",
 		);
-		if (delegateResult?.type !== "tool_result") {
-			throw new Error("delegate tool_result missing");
+		if (spawnResult?.type !== "tool_result") {
+			throw new Error("spawn_workers tool_result missing");
 		}
-		expect(delegateResult.output.isError ?? false).toBe(false);
-		expect(delegateResult.output.content).toContain("8 个文件全部审查完成");
+		expect(spawnResult.output.isError ?? false).toBe(false);
+		expect(spawnResult.output.content).toContain("8 个文件全部审查完成");
 	});
 
 	it("验收 4：simple 路由 low 档，worker 落盘 assistant_msg 的 tier/model 正确", async () => {
 		const approval = new ApprovalChain();
-		// 调用序：1=main delegate(simple, low)，2=worker 摘要收尾，3=main 收尾
+		// 调用序：1=main spawn_workers(simple, low)，2=worker 摘要收尾，3=main 收尾
 		const { runtime } = await makeScriptedRuntime(
 			[
-				delegateRound(
-					'{"difficulty":"simple","modelTier":"low","task":"读取 note.txt 并总结内容"}',
-				),
+				spawnSimpleRound("读取 note.txt 并总结内容"),
 				textRound("note.txt 有一行：hello hotpot。", {
 					input: 2000,
 					output: 400,
@@ -612,9 +620,7 @@ describe("M2 验收 1-5（runMainTurn 端到端串联）", () => {
 		taskRounds[4] = { error: new Error("scripted stream failure") };
 		const adapter = makeDispatchAdapter(
 			{
-				mainDelegate: delegateRound(
-					`{"difficulty":"simple","modelTier":"low","task":"${workerTaskText}"}`,
-				),
+				mainFirst: spawnSimpleRound(workerTaskText),
 				workerFirst: toolCallRound(
 					"spawn_tasks",
 					"w-tc-1",
@@ -675,15 +681,15 @@ describe("M2 验收 1-5（runMainTurn 端到端串联）", () => {
 			"[FAILED] task-5: stream_error: scripted stream failure",
 		);
 
-		// 主流不因单任务失败中断：worker 摘要回传 main，正常收尾
-		const delegateResult = events.find(
-			(e) => e.type === "tool_result" && e.name === "delegate",
+		// 主流不因单任务失败中断：worker 摘要经 spawn_workers 的 tool_result 回传 main，正常收尾
+		const spawnResult = events.find(
+			(e) => e.type === "tool_result" && e.name === "spawn_workers",
 		);
-		if (delegateResult?.type !== "tool_result") {
-			throw new Error("delegate tool_result missing");
+		if (spawnResult?.type !== "tool_result") {
+			throw new Error("spawn_workers tool_result missing");
 		}
-		expect(delegateResult.output.isError ?? false).toBe(false);
-		expect(delegateResult.output.content).toContain("[FAILED]");
+		expect(spawnResult.output.isError ?? false).toBe(false);
+		expect(spawnResult.output.content).toContain("[FAILED]");
 		expect(events.at(-1)).toEqual({ type: "done", stopReason: "stop" });
 	});
 });
@@ -692,13 +698,13 @@ describe("runMainTurn pollInbox 接线（Task 12 补口）", () => {
 	it("turn 进行中 steer 的 next-step 消息注入后续 step 的模型历史", async () => {
 		const approval = new ApprovalChain();
 		// steer 动作经 onFirstCall 挂在首次 streamChat（step 1 进行中），
-		// 模拟 turn 进行中用户注入；调用序：1=main delegate(trivial)，2=main 收尾
+		// 模拟 turn 进行中用户注入；调用序：1=main spawn_workers(simple)，
+		// 2=worker 摘要（worker turn 无 pollInbox，看不到 steer），3=main 收尾
 		let doSteer: (() => void) | null = null;
 		const { runtime, requests } = await makeScriptedRuntime(
 			[
-				delegateRound(
-					'{"difficulty":"trivial","modelTier":"high","task":"1+1 等于几"}',
-				),
+				spawnSimpleRound("1+1 等于几"),
+				textRound("worker 已处理。", { input: 10, output: 5 }),
 				textRound("答案是 2。", { input: 10, output: 5 }),
 			],
 			approval,
@@ -737,9 +743,11 @@ describe("runMainTurn pollInbox 接线（Task 12 补口）", () => {
 			),
 		).toBe(true);
 
-		// 出现在后续 step 的模型历史：step 1 请求不含注入，step 2 请求含注入
-		expect(requests).toHaveLength(2);
+		// 出现在后续 step 的模型历史：step 1 请求与 worker 请求不含注入，
+		// main 收尾请求（step 2 顶部 pollInbox 消费后）含注入
+		expect(requests).toHaveLength(3);
 		expect(JSON.stringify(requests[0]?.messages)).not.toContain("改用中文回答");
-		expect(JSON.stringify(requests[1]?.messages)).toContain("改用中文回答");
+		expect(JSON.stringify(requests[1]?.messages)).not.toContain("改用中文回答");
+		expect(JSON.stringify(requests[2]?.messages)).toContain("改用中文回答");
 	});
 });
