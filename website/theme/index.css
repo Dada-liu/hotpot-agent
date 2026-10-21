@@ -1,0 +1,142 @@
+/* 首页 hero 背景：淡橙色。
+
+   默认主题通过 CSS 变量 --rp-home-background-bg 绘制 hero 背景
+   （:where() 包裹，优先级为 0），此处覆盖为淡橙色渐变。 */
+:root {
+	/* 浅色模式品牌色：橙色（链接、导航选中态、hero 标题与按钮渐变） */
+	--rp-c-brand: #ea580c;
+	--rp-c-brand-light: #ff7a18;
+	--rp-c-brand-dark: #ea580c;
+	--rp-c-brand-darker: #c2410c;
+	--rp-c-brand-lighter: #ffedd5;
+	--rp-c-brand-tint: #ff7a181f;
+	--rp-home-hero-secondary-color: #ff9a4d;
+
+	--rp-home-background-bg:
+		radial-gradient(
+			42.12% 56.13% at 100% 0%,
+			rgba(255, 167, 94, 0.32) 0%,
+			rgba(255, 250, 245, 0) 100%
+		),
+		radial-gradient(
+			42.01% 79.63% at 52.86% 0%,
+			rgba(255, 122, 24, 0.22) 0%,
+			rgba(255, 250, 245, 0) 100%
+		),
+		radial-gradient(
+			79.67% 58.09% at 0% 0%,
+			rgba(255, 196, 140, 0.35) 0%,
+			rgba(255, 250, 245, 0) 100%
+		),
+		#fffaf5;
+}
+
+/* 深色模式：暖橙暗渐变，与浅色模式保持同一色系 */
+html.rp-dark,
+html.dark {
+	/* 品牌色改为橙色（链接、导航选中态、代码高亮等全部跟随） */
+	--rp-c-brand: #ff7a18;
+	--rp-c-brand-light: #ffa25e;
+	--rp-c-brand-dark: #ff8c3b;
+	--rp-c-brand-darker: #c2410c;
+	--rp-c-brand-lighter: #ffd9b8;
+	--rp-c-brand-tint: #ff7a1829;
+	/* hero 标题与品牌按钮的渐变（brand-dark → secondary） */
+	--rp-home-hero-secondary-color: #ffb37a;
+
+	--rp-home-background-bg:
+		radial-gradient(
+			42.12% 56.13% at 100% 0%,
+			rgba(122, 66, 20, 0.55) 0%,
+			rgba(23, 16, 10, 0) 100%
+		),
+		radial-gradient(
+			55.81% 87.78% at 48.37% 0%,
+			rgba(0, 0, 0, 0.9) 0%,
+			rgba(23, 16, 10, 0) 89.55%
+		),
+		radial-gradient(
+			122.65% 88.24% at 0% 0%,
+			rgba(140, 78, 22, 0.5) 0%,
+			rgba(23, 16, 10, 0) 100%
+		),
+		#17100a;
+}
+
+/* 深色模式下 logo 黑线转白：反色 + 色相旋转 180°，
+   黑色变为白色，橙色蒸汽色相保持不变 */
+html.rp-dark img[src*="logo.png"],
+html.dark img[src*="logo.png"] {
+	filter: invert(1) hue-rotate(180deg);
+}
+
+/* hero 右侧图：默认展示 logo，悬浮时切换为三层 agent 组合 */
+.hero-team {
+	position: relative;
+	width: min(100%, 400px);
+	margin: 0 auto;
+	aspect-ratio: 1;
+}
+
+.hero-team__logo {
+	position: absolute;
+	inset: 0;
+	width: 100%;
+	height: 100%;
+	object-fit: contain;
+	transition:
+		opacity 0.3s ease,
+		transform 0.3s ease;
+}
+
+/* 三张 agent 图默认隐藏，悬浮时淡入上浮 */
+.hero-team__agent {
+	position: absolute;
+	opacity: 0;
+	transform: translateY(10px) scale(0.96);
+	transition:
+		opacity 0.3s ease,
+		transform 0.3s ease;
+	pointer-events: none;
+}
+
+/* main 在上方，z-index 最低，被 work / task 部分遮盖 */
+.hero-team__agent--main {
+	top: 0;
+	left: 12%;
+	width: 76%;
+	z-index: 1;
+	transition-delay: 0.12s;
+}
+
+/* work / task 在下方，叠在 main 之上 */
+.hero-team__agent--work {
+	bottom: 14%;
+	left: 0;
+	width: 50%;
+	z-index: 2;
+}
+
+.hero-team__agent--task {
+	bottom: 11%;
+	right: 0;
+	width: 50%;
+	z-index: 3;
+	transition-delay: 0.06s;
+}
+
+.hero-team:hover .hero-team__logo {
+	opacity: 0;
+	transform: scale(0.92);
+}
+
+.hero-team:hover .hero-team__agent {
+	opacity: 1;
+	transform: translateY(0) scale(1);
+}
+
+/* 深色模式下 agent 黑线转白（与 logo 同一处理） */
+html.rp-dark .hero-team__agent,
+html.dark .hero-team__agent {
+	filter: invert(1) hue-rotate(180deg);
+}
