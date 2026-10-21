@@ -19,6 +19,7 @@ import {
 	type LoopConfig,
 	loadSession,
 	type ModelTier,
+	type SessionEvent,
 	runTurn,
 } from "@hotpot/core";
 import type { Inbox } from "../inbox/inbox.ts";
@@ -81,7 +82,8 @@ const PLAN_REQUIRED_SECTIONS = [
 ];
 
 function isPlanDraftText(text: string): boolean {
-	const trimmed = text.trimStart();
+	// 模型输出可能出现 CRLF：归一化后再做标题匹配，避免换行风格导致漏检
+	const trimmed = text.replace(/\r\n/g, "\n").trimStart();
 	if (trimmed !== PLAN_HEADING && !trimmed.startsWith(`${PLAN_HEADING}\n`)) {
 		return false;
 	}
@@ -93,20 +95,30 @@ export interface PlanDraft {
 	text: string;
 }
 
-// 读当前回合（最后一条 main user_msg 之后）最后一条带文本的 main assistant_msg。
-// internal_msg 不算用户输入，因此批注修订/steer 注入后仍能定位到最新草稿。
+// 扫描窗口起点：默认最后一条 main user_msg 之后；传入 afterId（本回合 user_msg
+// 事件 id）时锚定到该事件之后——turn 内 steer 注入的 user_msg 不得把首轮计划
+// 挤出检测窗口。锚点事件缺失时回退默认窗口。
+function scanWindowStart(events: SessionEvent[], afterId?: string): number {
+	if (afterId !== undefined) {
+		const idx = events.findIndex((e) => e.id === afterId);
+		if (idx >= 0) return idx + 1;
+	}
+	for (let i = events.length - 1; i >= 0; i--) {
+		const event = events[i];
+		if (event?.type === "user_msg" && event.agentId === MAIN_AGENT_ID) {
+			return i + 1;
+		}
+	}
+	return 0;
+}
+
+// 读窗口内最后一条带文本的 main assistant_msg（plan 阶段修订轮复用）。
+// internal_msg 不算用户输入，因此批注修订后仍能定位到最新草稿。
 async function readLastMainAssistantText(
 	runtime: OrchestrationRuntime,
 ): Promise<PlanDraft | null> {
 	const { events } = await loadSession(runtime.session.filePath);
-	let start = 0;
-	for (let i = events.length - 1; i >= 0; i--) {
-		const event = events[i];
-		if (event?.type === "user_msg" && event.agentId === MAIN_AGENT_ID) {
-			start = i + 1;
-			break;
-		}
-	}
+	const start = scanWindowStart(events);
 	for (let i = events.length - 1; i >= start; i--) {
 		const event = events[i];
 		if (event?.type !== "assistant_msg" || event.agentId !== MAIN_AGENT_ID) {
@@ -123,23 +135,18 @@ async function readLastMainAssistantText(
 	return null;
 }
 
-// 检测当前回合是否产出了计划草稿（首轮流路由与 spawn_workers 门禁共用）：
-// 窗口内从新到旧找第一条带 # Plan 标记与必备段落的 assistant 消息。
-// 取「最新一条带标记的」而非「最后一条文本」：首轮流允许「计划正文 + 同轮工具调用
-// 被守卫拦截后的补充说明」形态，计划标记在较早消息里。漏标/缺段落一律视为
-// 普通回答——宁可 complex 被当 trivial 静默跳过审批，不可把闲聊误判成计划拿去审批。
+// 检测本回合是否产出了计划草稿（首轮流路由、spawn_workers 门禁与 plan 阶段
+// 初始复用共用）：窗口内从新到旧找第一条带 # Plan 标记与必备段落的 assistant
+// 消息。取「最新一条带标记的」而非「最后一条文本」：首轮流允许「计划正文 + 同轮
+// 工具调用被守卫拦截后的补充说明」形态，计划标记在较早消息里。漏标/缺段落一律
+// 视为普通回答——宁可 complex 被当 trivial 静默跳过审批，不可把闲聊误判成计划
+// 拿去审批。
 export async function detectPlanDraft(
 	runtime: OrchestrationRuntime,
+	afterId?: string,
 ): Promise<PlanDraft | null> {
 	const { events } = await loadSession(runtime.session.filePath);
-	let start = 0;
-	for (let i = events.length - 1; i >= 0; i--) {
-		const event = events[i];
-		if (event?.type === "user_msg" && event.agentId === MAIN_AGENT_ID) {
-			start = i + 1;
-			break;
-		}
-	}
+	const start = scanWindowStart(events, afterId);
 	for (let i = events.length - 1; i >= start; i--) {
 		const event = events[i];
 		if (event?.type !== "assistant_msg" || event.agentId !== MAIN_AGENT_ID) {
@@ -207,7 +214,10 @@ export async function* runPlanPhase(
 		pollInbox,
 	};
 
-	let draft = await readLastMainAssistantText(runtime);
+	// 初始草稿复用与首轮流路由同一标准（锚定窗口 + 标记校验）：「计划正文 + 同轮
+	// 工具调用被拦截后的补充说明」形态下，送审的必须是带标记的计划而不是后续笔记。
+	// 修订轮内部的再读仍用 readLastMainAssistantText（修订提示驱动，最后一条文本即草稿）
+	let draft = await detectPlanDraft(runtime, state.turnAnchorId);
 	// 所有作为计划草稿落盘的 assistant 消息 id：web 用它们隐藏正文气泡
 	const messageIds: string[] = draft === null ? [] : [draft.id];
 	// 初始轮已有计划时直接进入审批；队列里有 steer 则先 reconcile 一轮

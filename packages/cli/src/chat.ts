@@ -1,6 +1,7 @@
 // 行式交互主逻辑（M2 编排入口）：runChat 驱动「输入一行 → runMainTurn → 渲染事件」循环。
-// 主循环不再碰 runTurn/工具注册表：main agent 只有 delegate/spawn_workers 元工具，
-// 用户消息经 orchestrator 的 runMainTurn 走 delegate → worker 内联执行 → 摘要回传；
+// 主循环不再碰 runTurn/工具注册表：main agent 只有 spawn_workers 元工具，
+// 用户消息经 orchestrator 的 runMainTurn 走首轮提示词路由（trivial 直答 / simple 直派 /
+// complex 首轮出计划等审批）→ worker 内联执行 → 摘要回传；
 // 本文件只负责终端 I/O、审批装配（含审计落盘）、事件渲染与 next-turn 补发。
 // IO 全部经 ChatInput/ChatOutput 两个最小接口注入：bin 入口给真实终端实现，测试给脚本化实现。
 // 另含进程入口的组装函数 runChatCli 与 argv 解析 parseChatArgs。

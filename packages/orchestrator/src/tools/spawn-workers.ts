@@ -54,8 +54,9 @@ export function createSpawnWorkersTool(
 		async execute(args, ctx: ToolContext) {
 			if (state.planApproved === false) {
 				// 未批准时只有「本回合无计划标记」的 simple 直派可以放行；
-				// 计划标记在本回合出现 = 模型已把任务定为 complex，必须先审批
-				const plan = await detectPlanDraft(runtime);
+				// 计划标记在本回合出现 = 模型已把任务定为 complex，必须先审批。
+				// 锚定本回合 user_msg，steer 注入不得把计划挤出检测窗口
+				const plan = await detectPlanDraft(runtime, state.turnAnchorId);
 				if (plan !== null) {
 					return {
 						content:

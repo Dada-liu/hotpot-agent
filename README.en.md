@@ -49,7 +49,7 @@ The npm package is named `hotpot-agent` (the `hotpot` name is taken by an unrela
 
 Dependencies flow strictly top-down (`server → orchestrator → core → ai`; `cli` and `server` are both entry points above orchestrator, and `web` imports no workspace packages — its build output is served by server). Reverse dependencies are forbidden. There is also a side package `packages/telemetry` (`cli`/`server` → `telemetry` → `core`) that only reports anonymous metrics and stays off the agent main path; the dev tool `packages/benchmarks` reuses core/orchestrator/telemetry for batch runs, but is not referenced by `cli`/`server` and is not shipped in the tool artifact.
 
-Data flow of one user message: cli → `runMainTurn` (`delegate` difficulty routing) → worker / task inline-runs core `runTurn` → each step's history is derived by `deriveMessages` from the session log → `ai.streamChat` → tool batches execute through the approval waterfall → all events are appended to JSONL and streamed back to the cli renderer.
+Data flow of one user message: cli → `runMainTurn` (first-turn prompt difficulty routing) → worker / task inline-runs core `runTurn` → each step's history is derived by `deriveMessages` from the session log → `ai.streamChat` → tool batches execute through the approval waterfall → all events are appended to JSONL and streamed back to the cli renderer.
 
 ## Directory Structure
 
@@ -63,7 +63,7 @@ Data flow of one user message: cli → `runMainTurn` (`delegate` difficulty rout
 ├── packages/          # code (pnpm monorepo)
 │   ├── ai/            # @hotpot/ai: LLM protocol adaptation and model catalog
 │   ├── core/          # @hotpot/core: session log, turn loop, tools and approvals
-│   ├── orchestrator/  # @hotpot/orchestrator: three-tier orchestration (delegate/spawn_workers/spawn_tasks, plan approval, inbox)
+│   ├── orchestrator/  # @hotpot/orchestrator: three-tier orchestration (spawn_workers/spawn_tasks, plan approval, inbox)
 │   ├── server/        # @hotpot/server: REST + SSE service (sessions, log replay, approval bridge, static hosting)
 │   ├── web/           # @hotpot/web: React SPA (three-column UI, agent status panel)
 │   ├── cli/           # @hotpot/cli: line-based interactive entry

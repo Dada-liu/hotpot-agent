@@ -23,6 +23,7 @@ import {
 	type Settings,
 } from "@hotpot/core";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createInbox, type Inbox } from "../src/inbox/inbox.ts";
 import { runMainTurn } from "../src/main-turn/main-turn.ts";
 import {
 	createRuntime,
@@ -52,19 +53,25 @@ const MODELS: Settings["models"] = {
 };
 
 // 组装运行时：真实 createRuntime 保留 spawn 落盘语义，resolveModel 的适配器换成
-// scriptedAdapter 的录制包装（捕获每次请求的 usage，供 token 断言）
+// scriptedAdapter 的录制包装（捕获每次请求的 usage，供 token 断言）；
+// onCall 在第 n 次 streamChat 时触发（turn 中途 steer 注入用）
 async function makeRuntime(
 	script: StreamEvent[][],
 	approval: ApprovalChain,
+	onCall?: (callIndex: number) => Promise<void> | void,
 ): Promise<{ runtime: OrchestrationRuntime; usages: Usage[] }> {
 	const session = await createSession(proj, home);
 	const base = createRuntime({ session, cwd: proj, approval, models: MODELS });
 	const inner = scriptedAdapter(script);
 	const usages: Usage[] = [];
+	let calls = 0;
 	const adapter: LlmAdapter = {
 		api: inner.api,
 		streamChat(req, signal) {
+			calls += 1;
+			const callIndex = calls;
 			return (async function* (): AsyncGenerator<StreamEvent> {
+				await onCall?.(callIndex);
 				for await (const ev of inner.streamChat(req, signal)) {
 					if (ev.type === "usage") usages.push(ev.usage);
 					yield ev;
@@ -408,14 +415,17 @@ describe("runMainTurn", () => {
 			approval,
 		);
 
+		const seenPlans: string[] = [];
 		const events = await collect(
 			runMainTurn({
 				runtime,
 				userMessage: "给项目加用户认证",
 				signal: new AbortController().signal,
 				mainTier: "high",
-				onPlanApproval: () =>
-					Promise.resolve({ kind: "reject", note: "先不做了" }),
+				onPlanApproval: (plan) => {
+					seenPlans.push(plan);
+					return Promise.resolve({ kind: "reject", note: "先不做了" });
+				},
 			}),
 		);
 
@@ -428,6 +438,9 @@ describe("runMainTurn", () => {
 		}
 		expect(result.output.isError).toBe(true);
 
+		// 送审的必须是带标记的计划正文，不是随后那条「收到，等待审批。」笔记
+		expect(seenPlans).toEqual([PLAN_TEXT]);
+
 		// 计划仍进入审批流：drafted → denied，随后 main 收尾回复用户
 		expect(events.some((e) => e.type === "plan" && e.phase === "drafted")).toBe(
 			true,
@@ -439,5 +452,73 @@ describe("runMainTurn", () => {
 
 		const { events: fileEvents } = await loadSession(runtime.session.filePath);
 		expect(fileEvents.some((e) => e.type === "agent_spawn")).toBe(false);
+	});
+
+	it("complex：首轮产出计划后 turn 中途 steer，扫描窗口锚定，计划仍送审", async () => {
+		const approval = new ApprovalChain();
+		let inbox: Inbox | null = null;
+		// 调用序：1=main 一条消息内「计划正文 + spawn_workers 调用」（守卫拦截；
+		// steer 在本调用期间注入，step2 顶部被 pollInbox 落盘为 main user_msg），
+		// 2=main 收尾文本，3=plan 被拒后的收尾回复。
+		// 若扫描窗口以「最后一条 user_msg」为起点，steer 会把首轮计划挤出窗口、
+		// 计划阶段被静默跳过——本用例钉住锚定行为
+		const { runtime } = await makeRuntime(
+			[
+				planTextWithToolRound(
+					PLAN_TEXT,
+					"spawn_workers",
+					"m-tc-1",
+					'{"workers":[{"task":"实现 auth 路由","modelTier":"high"}]}',
+					{ input: 200, output: 60 },
+				),
+				textRound("收到，等待审批。", { input: 50, output: 10 }),
+				textRound("好的，计划被拒绝，不做任何实现。", {
+					input: 100,
+					output: 20,
+				}),
+			],
+			approval,
+			async (callIndex) => {
+				if (callIndex === 1) {
+					if (inbox === null) throw new Error("inbox missing");
+					await inbox.steer("改用 React 实现");
+				}
+			},
+		);
+		inbox = createInbox(runtime.session, "main");
+
+		const seenPlans: string[] = [];
+		const events = await collect(
+			runMainTurn({
+				runtime,
+				userMessage: "给项目加用户认证",
+				signal: new AbortController().signal,
+				mainTier: "high",
+				inbox,
+				onPlanApproval: (plan) => {
+					seenPlans.push(plan);
+					return Promise.resolve({ kind: "reject", note: "先不做了" });
+				},
+			}),
+		);
+
+		// 计划阶段未被 steer 挤掉：送审的仍是首轮计划正文
+		expect(seenPlans).toEqual([PLAN_TEXT]);
+		expect(events.some((e) => e.type === "plan" && e.phase === "drafted")).toBe(
+			true,
+		);
+		expect(events.at(-1)).toEqual({ type: "done", stopReason: "stop" });
+
+		// steer 照常落盘为 main user_msg 且队列已消费
+		const { events: fileEvents } = await loadSession(runtime.session.filePath);
+		expect(
+			fileEvents.some(
+				(e) =>
+					e.type === "user_msg" &&
+					e.agentId === "main" &&
+					e.content === "改用 React 实现",
+			),
+		).toBe(true);
+		expect(inbox.snapshot().nextStep).toHaveLength(0);
 	});
 });

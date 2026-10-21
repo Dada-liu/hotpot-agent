@@ -1,8 +1,9 @@
-// detectPlanDraft 测试：计划标记校验与扫描窗口（最后一条 main user_msg 之后
-// 最后一条带文本的 main assistant_msg）。钉住行为：带 `# Plan` 标记且含三个必备
-// 段落（Steps/Files/Acceptance criteria）才算计划草稿；普通回答、缺段落、
-// 窗口外的旧计划、纯空白一律 null。prompts 的计划格式模板含全部四个标题。
-// 会话事件直接经 session.append 落盘，不触发任何 LLM 调用（hermetic）。
+// detectPlanDraft 测试：计划标记校验与扫描窗口（最后一条 main user_msg 之后，
+// 取最新一条带标记的 main assistant_msg——同轮「计划正文 + 后续补充说明」也能命中）。
+// 钉住行为：带 `# Plan` 标记且含三个必备段落（Steps/Files/Acceptance criteria）
+// 才算计划草稿；普通回答、缺段落、窗口外的旧计划、纯空白一律 null。
+// prompts 的计划格式模板含全部四个标题。会话事件直接经 session.append 落盘，
+// 不触发任何 LLM 调用（hermetic）。
 
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -154,6 +155,15 @@ describe("detectPlanDraft", () => {
 			id: id2,
 			text: VALID_PLAN,
 		});
+	});
+
+	it("CRLF 换行的计划文本也能命中（模型输出可能出现 \\r\\n）", async () => {
+		const runtime = await makeRuntime();
+		await appendUserMsg(runtime, "给项目加用户认证");
+		const id = await appendAssistantText(runtime, VALID_PLAN.replace(/\n/g, "\r\n"));
+
+		const draft = await detectPlanDraft(runtime);
+		expect(draft?.id).toBe(id);
 	});
 
 	it("PLAN_FORMAT_TEMPLATE 含 # Plan 与三个必备段落标题", async () => {

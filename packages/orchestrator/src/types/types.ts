@@ -16,6 +16,9 @@ export interface TurnState {
 	phase: "initial" | "planning" | "executing";
 	planApproved: boolean;
 	revisions: number;
+	/** 本回合扫描锚点：runMainTurn 落盘的 user_msg 事件 id。detectPlanDraft 以它为
+	 * 窗口起点，防止 turn 内 steer 注入的 user_msg 把首轮计划挤出检测窗口 */
+	turnAnchorId?: string;
 }
 
 export type OrchestrationEvent =

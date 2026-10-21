@@ -7,6 +7,8 @@
 // runPlanPhase（复用首轮草稿，审批/修订循环，见 plan.ts）；批准后换 EXECUTION_INSTRUCTIONS
 // 跑执行 turn（注册表仍只挂 spawn_workers，planApproved 已翻转、门禁放行）。
 // 未命中 → trivial/simple 已在本轮内闭环，endTurn 收尾。
+// 本回合 user_msg 落盘时记录事件锚点（state.turnAnchorId）：detectPlanDraft 以它为
+// 扫描窗口起点，turn 内 steer 注入的 user_msg 不得把首轮计划挤出检测窗口。
 // onPlanApproval 缺失时 plan 阶段 fail-closed（拒绝并收尾），见 plan.ts。
 // 传入 inbox 时，core runTurn 的每个 step 顶部经 pollInbox 拉取 next-step 消息
 // （steer/inject 注入），plan 起草/修订轮与执行轮同样生效；默认不轮询。
@@ -93,13 +95,16 @@ export async function* runMainTurn(opts: {
 	const registry = createRoleRegistry(turnRuntime, MAIN_AGENT_ID, [
 		spawnWorkersTool,
 	]);
+	const userMsgId = randomUUID();
 	await runtime.session.append({
 		type: "user_msg",
-		id: randomUUID(),
+		id: userMsgId,
 		ts: new Date().toISOString(),
 		agentId: MAIN_AGENT_ID,
 		content: userMessage,
 	});
+	// 本回合扫描锚点：steer 注入的 user_msg 不得把首轮计划挤出 detectPlanDraft 窗口
+	state.turnAnchorId = userMsgId;
 	const resolved = runtime.resolveModel(mainTier);
 	// M4 Feature④：skills 段数据源（features.skills 关闭时不传，prompt 不出段——
 	// 装配层关闭时本就不扫描，这里是第二道门）
@@ -148,8 +153,9 @@ export async function* runMainTurn(opts: {
 	yield* drainPendingSpawns();
 
 	// 首轮提示词路由：只有首轮产出了带 # Plan 标记的计划正文才进入 plan 阶段；
-	// 普通回答与 simple 直派（worker 已内联跑完）到此收尾
-	const initialPlan = await detectPlanDraft(runtime);
+	// 普通回答与 simple 直派（worker 已内联跑完）到此收尾。锚定本回合 user_msg，
+	// turn 内 steer 注入不得把首轮计划挤出检测窗口
+	const initialPlan = await detectPlanDraft(runtime, state.turnAnchorId);
 	if (initialPlan === null || signal.aborted) {
 		await endTurn();
 		return;

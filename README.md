@@ -48,7 +48,7 @@ npm 包名是 `hotpot-agent`，安装后的命令是 `hotpot`。要求 Node >= 2
 
 依赖方向严格自上而下（`server → orchestrator → core → ai`；`cli` 与 `server` 同为 orchestrator 之上的入口，`web` 不引 workspace 包、构建产物由 server 托管），禁止反向依赖。另有旁路包 `packages/telemetry`（`cli`/`server` → `telemetry` → `core`），只做匿名指标上报，不进入 agent 主链路；开发工具 `packages/benchmarks` 复用 core/orchestrator/telemetry 跑批，但不被 `cli`/`server` 引用，也不进入工具产物。
 
-一次用户消息的数据流：cli → `runMainTurn`（`delegate` 难度路由）→ worker / task 内联跑 core `runTurn` → 每个 step 由 `deriveMessages` 从会话日志转换历史 → `ai.streamChat` → 工具批次经审批 waterfall 执行 → 全部事件 append 进 JSONL 并流回 cli 渲染。
+一次用户消息的数据流：cli → `runMainTurn`（首轮提示词难度路由）→ worker / task 内联跑 core `runTurn` → 每个 step 由 `deriveMessages` 从会话日志转换历史 → `ai.streamChat` → 工具批次经审批 waterfall 执行 → 全部事件 append 进 JSONL 并流回 cli 渲染。
 
 ## 目录结构
 
@@ -62,7 +62,7 @@ npm 包名是 `hotpot-agent`，安装后的命令是 `hotpot`。要求 Node >= 2
 ├── packages/          # 代码（pnpm monorepo）
 │   ├── ai/            # @hotpot/ai：LLM 协议适配与模型目录
 │   ├── core/          # @hotpot/core：会话日志、turn 循环、工具与审批
-│   ├── orchestrator/  # @hotpot/orchestrator：三层编排（delegate/spawn_workers/spawn_tasks、plan 审批、inbox）
+│   ├── orchestrator/  # @hotpot/orchestrator：三层编排（spawn_workers/spawn_tasks、plan 审批、inbox）
 │   ├── server/        # @hotpot/server：REST + SSE 服务层（会话管理、日志补发、审批桥、静态托管）
 │   ├── web/           # @hotpot/web：React SPA（三栏界面、agent 状态面板）
 │   ├── cli/           # @hotpot/cli：行式交互入口
