@@ -19,8 +19,8 @@ import {
 	type LoopConfig,
 	loadSession,
 	type ModelTier,
-	type SessionEvent,
 	runTurn,
+	type SessionEvent,
 } from "@hotpot/core";
 import type { Inbox } from "../inbox/inbox.ts";
 import {
@@ -100,7 +100,7 @@ export interface PlanDraft {
 // 挤出检测窗口。锚点事件缺失时回退默认窗口。
 function scanWindowStart(events: SessionEvent[], afterId?: string): number {
 	if (afterId !== undefined) {
-		const idx = events.findIndex((e) => e.id === afterId);
+		const idx = events.findIndex((e) => "id" in e && e.id === afterId);
 		if (idx >= 0) return idx + 1;
 	}
 	for (let i = events.length - 1; i >= 0; i--) {

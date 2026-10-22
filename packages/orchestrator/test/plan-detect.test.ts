@@ -160,7 +160,10 @@ describe("detectPlanDraft", () => {
 	it("CRLF 换行的计划文本也能命中（模型输出可能出现 \\r\\n）", async () => {
 		const runtime = await makeRuntime();
 		await appendUserMsg(runtime, "给项目加用户认证");
-		const id = await appendAssistantText(runtime, VALID_PLAN.replace(/\n/g, "\r\n"));
+		const id = await appendAssistantText(
+			runtime,
+			VALID_PLAN.replace(/\n/g, "\r\n"),
+		);
 
 		const draft = await detectPlanDraft(runtime);
 		expect(draft?.id).toBe(id);
