@@ -46,7 +46,7 @@ npm 包名是 `hotpot-agent`，安装后的命令是 `hotpot`。要求 Node >= 2
 └───────────────────────────────────────────────────────────────────────────┘
 ```
 
-依赖方向严格自上而下（`server → orchestrator → core → ai`；`cli` 与 `server` 同为 orchestrator 之上的入口，`web` 不引 workspace 包、构建产物由 server 托管），禁止反向依赖。另有旁路包 `packages/telemetry`（`cli`/`server` → `telemetry` → `core`），只做匿名指标上报，不进入 agent 主链路；开发工具 `packages/benchmarks` 复用 core/orchestrator/telemetry 跑批，但不被 `cli`/`server` 引用，也不进入工具产物。
+依赖方向严格自上而下（`server → orchestrator → core → ai`；`cli` 与 `server` 同为 orchestrator 之上的入口，`web` 不引 workspace 包、构建产物由 server 托管），禁止反向依赖。另有旁路包 `packages/telemetry`（`cli`/`server` → `telemetry` → `core`），只做匿名指标上报，不进入 agent 主链路；开发工具 `benchmarks/`（根级目录，与 `packages/` 并列）复用 core/orchestrator/telemetry 跑批，但不被 `cli`/`server` 引用，也不进入工具产物。
 
 一次用户消息的数据流：cli → `runMainTurn`（首轮提示词难度路由）→ worker / task 内联跑 core `runTurn` → 每个 step 由 `deriveMessages` 从会话日志转换历史 → `ai.streamChat` → 工具批次经审批 waterfall 执行 → 全部事件 append 进 JSONL 并流回 cli 渲染。
 
@@ -67,8 +67,8 @@ npm 包名是 `hotpot-agent`，安装后的命令是 `hotpot`。要求 Node >= 2
 │   ├── web/           # @hotpot/web：React SPA（三栏界面、agent 状态面板）
 │   ├── cli/           # @hotpot/cli：行式交互入口
 │   ├── hotpot-agent/  # hotpot-agent：npm 发布包（hotpot 命令 + Web 产物）
-│   ├── telemetry/     # @hotpot/telemetry：M5 匿名遥测客户端（事件 schema、脱敏、批量上报）
-│   └── benchmarks/    # @hotpot/benchmarks：M5 benchmark runner（SWE-bench 官方评测 + 自建三题）
+│   └── telemetry/     # @hotpot/telemetry：M5 匿名遥测客户端（事件 schema、脱敏、批量上报）
+├── benchmarks/        # @hotpot/benchmarks：M5 benchmark runner（SWE-bench 官方评测 + 自建题三类）
 └── scripts/           # 开发辅助脚本（pnpm dev 等）
 ```
 
@@ -81,7 +81,7 @@ pnpm test             # 跑全部测试（vitest，packages/*/test/**/*.test.ts�
 pnpm typecheck        # 所有包 tsc 类型检查
 pnpm pack:npm         # 在 artifacts/ 生成 npm tarball
 pnpm publish:npm      # 发布 npm tarball（需先 npm login）
-pnpm bench --help     # benchmark runner：SWE-bench 官方评测 / 自建三题
+pnpm bench --help     # benchmark runner：SWE-bench 官方评测 / 自建题三类
 pnpm dev <pkg> [args] # tsx 直跑包入口，如 pnpm dev cli chat
 pnpm dev web          # 构建并启动 Web 端（默认 4573 端口，启动后自动打开浏览器）
 pnpm exec biome check # lint + format 检查
@@ -97,7 +97,7 @@ M2 已完成：三层编排（main 难度路由 → worker 执行/并行拆分 �
 
 M3 已完成：Web 端交付——`packages/server`（REST + SSE，默认 4573 端口，断线重连从日志补发、CLI 与 web 可同时观察同一会话）+ `packages/web`（React SPA：会话列表、流式对话、工具卡片、plan 审查、审批、steer/中断、用量展示、右侧面板 agent 工作状态）。测试见 `packages/server/test/`（api / session-manager / tailer / static）与 `packages/web/test/`，验收标准见 `docs/archive/04-roadmap.md` M3 节。
 
-M5 已完成（本仓库部分）：`packages/telemetry` 匿名遥测客户端（cli/server 接入、事件白名单、脱敏、批量重试）+ `packages/benchmarks` benchmark runner（SWE-bench 实例导出/选择、普通 checkout + worktree、无交互 agent、predictions、官方 `swebench` harness 编排、报告、`benchmark_run` 遥测、自建三题）。用法见 `packages/benchmarks/README.md`；自建题沉淀流程见 `docs/benchmark-authoring.md`；Lite 10 题验收记录见 `docs/archive/04-roadmap.md` M5 节。遥测后台是仓库外独立项目 `../hotpot-telemetry/`，不进入工具产物。
+M5 已完成（本仓库部分）：`packages/telemetry` 匿名遥测客户端（cli/server 接入、事件白名单、脱敏、批量重试）+ `benchmarks/` benchmark runner（SWE-bench 实例导出/选择、普通 checkout + worktree、无交互 agent、predictions、官方 `swebench` harness 编排、报告、`benchmark_run` 遥测、自建题三类）。用法见 `benchmarks/README.md`；自建题沉淀流程见 `docs/benchmark-authoring.md`；Lite 10 题验收记录见 `docs/archive/04-roadmap.md` M5 节。遥测后台是仓库外独立项目 `../hotpot-telemetry/`，不进入工具产物。
 
 运行方式：
 

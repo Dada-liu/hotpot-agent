@@ -35,7 +35,7 @@ hotpot-agent 是 pnpm monorepo，Node >= 22 + TypeScript（erasable-syntax-only�
 旁路包：
 
 - `packages/telemetry`：`cli`/`server` → `telemetry` → `core`，只做匿名指标上报，不进入 agent 主链路。
-- `packages/benchmarks`：复用 core/orchestrator/telemetry 跑批，不被 `cli`/`server` 引用，也不进入工具产物。
+- `benchmarks/`（根级，与 `packages/` 并列）：复用 core/orchestrator/telemetry 跑批，不被 `cli`/`server` 引用，也不进入工具产物。
 - `packages/hotpot-agent`：唯一 npm 发布包（`hotpot` 命令 + Web 产物），tsup 把 workspace 源码打进单文件 CLI。
 
 ## 一次用户消息的数据流

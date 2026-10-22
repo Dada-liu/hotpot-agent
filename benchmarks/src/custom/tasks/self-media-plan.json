@@ -1,0 +1,17 @@
+{
+	"id": "self-media-plan",
+	"domain": "self-media",
+	"prompt": "Read brief.md and write plan.json for a short-video post. The JSON object must contain exactly: title (string, 1-40 characters), hook (string, 1-80 characters), outline (array of 3-5 non-empty strings), and hashtags (array of 3-5 strings, each starting with # and containing no spaces). Mention the topic keyword \"camping\" somewhere in the title or outline. Do not change brief.md. The harness validates plan.json with check.mjs after you finish.",
+	"workspace": {
+		"files": {
+			"brief.md": "Topic: weekend camping gear for beginners\nAudience: first-time campers\nGoal: drive saves and follows\nTone: practical, friendly, no hype\n",
+			"check.mjs": "import { readFileSync } from \"node:fs\";\n\nfunction fail(message) {\n  console.error(message);\n  process.exit(1);\n}\n\nlet plan;\ntry {\n  plan = JSON.parse(readFileSync(\"plan.json\", \"utf8\"));\n} catch {\n  fail(\"plan.json is missing or not valid JSON\");\n}\n\nif (typeof plan !== \"object\" || plan === null) fail(\"plan.json must be an object\");\nif (typeof plan.title !== \"string\" || plan.title.length < 1 || plan.title.length > 40) {\n  fail(\"title must be a string of 1-40 characters\");\n}\nif (typeof plan.hook !== \"string\" || plan.hook.length < 1 || plan.hook.length > 80) {\n  fail(\"hook must be a string of 1-80 characters\");\n}\nif (!Array.isArray(plan.outline) || plan.outline.length < 3 || plan.outline.length > 5) {\n  fail(\"outline must have 3-5 items\");\n}\nfor (const item of plan.outline) {\n  if (typeof item !== \"string\" || item.trim() === \"\") fail(\"outline items must be non-empty strings\");\n}\nif (!Array.isArray(plan.hashtags) || plan.hashtags.length < 3 || plan.hashtags.length > 5) {\n  fail(\"hashtags must have 3-5 items\");\n}\nfor (const tag of plan.hashtags) {\n  if (typeof tag !== \"string\" || !/^#[^\\s#]+$/.test(tag)) fail(`invalid hashtag: ${tag}`);\n}\nif (!JSON.stringify(plan).toLowerCase().includes(\"camping\")) {\n  fail('the keyword \"camping\" must appear in the plan');\n}\n\nconsole.log(\"self-media ok\");\n"
+		}
+	},
+	"validation": {
+		"command": "node check.mjs",
+		"expectedExitCode": 0,
+		"expectedStdout": "self-media ok"
+	},
+	"timeoutMs": 300000
+}

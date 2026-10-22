@@ -23,7 +23,7 @@ hotpot-agent 内置 benchmark runner：在真实仓库上跑无交互 agent 生�
 ```bash
 # 1. 激活 venv 并导出实例
 source ~/swebench-venv/bin/activate
-python packages/benchmarks/scripts/export_instances.py \
+python benchmarks/scripts/export_instances.py \
   --dataset SWE-bench/SWE-bench_Lite --split test --limit 10 \
   --output instances.jsonl
 
@@ -51,16 +51,16 @@ pnpm bench swebench \
 
 ### Apple Silicon 注意
 
-`swebench` 5.x 拉镜像不传 platform，需要先手动预拉 amd64 镜像（镜像名可用 harness 的 `make_test_spec` 计算），否则报 `no matching manifest for linux/arm64/v8`。详见 `packages/benchmarks/README.md`。
+`swebench` 5.x 拉镜像不传 platform，需要先手动预拉 amd64 镜像（镜像名可用 harness 的 `make_test_spec` 计算），否则报 `no matching manifest for linux/arm64/v8`。详见 `benchmarks/README.md`。
 
-## 自建三题
+## 自建题（三类）
 
 ```bash
-pnpm bench custom                # 三题全跑
-pnpm bench custom --domain finance   # 只跑金融题
+pnpm bench custom                    # 全部题目
+pnpm bench custom --domain finance   # 只跑金融域
 ```
 
-三题（金融 / 软件开发 / 自媒体）全部离线、确定性、无网络，校验命令是 workspace 内的 `check.mjs`。题目格式与沉淀流程见 `docs/benchmark-authoring.md`。
+所有题目（金融 / 软件开发 / 自媒体三类）全部离线、确定性、无网络，校验命令是 workspace 内的 `check.mjs`。题目格式与沉淀流程见 `docs/benchmark-authoring.md`。
 
 ## 怎么读报告
 

@@ -8,7 +8,7 @@
 		"node": ">=22"
 	},
 	"scripts": {
-		"bench": "tsx packages/benchmarks/src/cli.ts",
+		"bench": "tsx benchmarks/src/cli.ts",
 		"build": "pnpm --filter @hotpot/web build && pnpm --filter hotpot-agent build",
 		"dev": "tsx scripts/dev.ts",
 		"pack:npm": "pnpm build && rm -rf artifacts && pnpm --dir packages/hotpot-agent pack --pack-destination ../../artifacts",

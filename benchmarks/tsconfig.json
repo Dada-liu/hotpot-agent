@@ -1,0 +1,10 @@
+{
+	"extends": "../tsconfig.base.json",
+	"compilerOptions": {
+		// 依赖 @hotpot/core、@hotpot/orchestrator 与 @hotpot/telemetry，其契约类型引用
+		// Headers / ReadableStream / AbortSignal / fetch 等 Node 22 运行时全局；
+		// 同时 CLI 需要 process.argv。类型声明来自 DOM lib，做法与其他包一致
+		"lib": ["es2023", "dom"]
+	},
+	"include": ["src", "test"]
+}

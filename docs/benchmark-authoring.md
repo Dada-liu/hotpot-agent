@@ -1,6 +1,6 @@
 # 自建 benchmark 题目沉淀流程
 
-本流程把一次真实使用（历史会话）沉淀为可重复运行的离线题目，进入 `packages/benchmarks/src/custom/tasks/`。目标是让「改动后是否变好」可度量，而不是收集尽可能多的题。
+本流程把一次真实使用（历史会话）沉淀为可重复运行的离线题目，进入 `benchmarks/src/custom/tasks/`。目标是让「改动后是否变好」可度量，而不是收集尽可能多的题。
 
 题目必须离线、确定性、无网络：校验脚本只依赖题目自带的 `workspace.files`，不装依赖、不访问外部服务。题目 prompt 会传给 LLM，按仓库约定用英文；文件内容、校验脚本注释用中文或英文均可，但不得包含真实用户数据。
 
@@ -30,7 +30,7 @@
 
 ## 3. 题目化
 
-每题一个 JSON 文件，字段用 `packages/benchmarks/src/custom/task.ts` 的 schema（`.strict()`，拼错字段会直接报错）：
+每题一个 JSON 文件，字段用 `benchmarks/src/custom/task.ts` 的 schema（`.strict()`，拼错字段会直接报错）：
 
 ```json
 {
@@ -67,7 +67,7 @@
 - 只读 workspace 内文件，不联网、不装依赖；用 `node check.mjs` 或 `node -e`。
 - 成功时退出 0，并在 stdout 打印固定标记（如 `finance ok`）；失败时退出非 0 并打印可定位原因（第几行、期望/实际）。
 - 校验的是题面口径，不是实现细节：数值题给容差（如 `1e-6`），函数题用行为用例，结构题校验字段/长度/关键词。
-- 必须写负例：桩实现、缺文件、错误数值时校验要失败。当前三题在 `packages/benchmarks/test/custom-tasks.test.ts` 中覆盖了金融与软件的负例。
+- 必须写负例：桩实现、缺文件、错误数值时校验要失败。当前题库在 `benchmarks/test/custom-tasks.test.ts` 中每题都有正例，金融与软件两域带负例。
 - 不要把答案写进 `check.mjs` 能被人一眼抄走的位置也无所谓——benchmark 衡量 agent，不衡量防作弊；但答案不要出现在 `prompt` 或初始文件里。
 
 ## 5. 回归
@@ -77,7 +77,7 @@
 1. 用正确产物手工跑校验，确认退出 0。
 2. 用桩/缺失产物跑校验，确认失败。
 3. 跑 `pnpm bench custom --domain <domain>`（需要 `~/.hotpot/settings.json` 的 LLM 凭证），确认 agent 能读取题目并产出文件。
-4. 在 `packages/benchmarks/test/custom-tasks.test.ts` 增加该题的「正确产物通过 + 至少一个负例」用例；测试必须 hermetic。
+4. 在 `benchmarks/test/custom-tasks.test.ts` 增加该题的「正确产物通过 + 至少一个负例」用例；测试必须 hermetic。
 5. 跑 `pnpm test`、`pnpm typecheck`、`pnpm exec biome check .`。
 6. 在 `docs/archive/04-roadmap.md` 或本文件的「题库」表里登记题目、口径与已知边界。
 
@@ -87,6 +87,7 @@
 |----|------|------|----------|----------|
 | `finance-daily-returns` | 金融 | `returns.json` | 3 行日收益率，日期精确、数值容差 `1e-6` | 只覆盖简单收益率与舍入 |
 | `software-slugify` | 软件开发 | `slug.js` | `check.mjs` 五个行为用例 | 只覆盖 ASCII 输入 |
+| `software-pos-cart` | 软件开发 | `data.js` + `cart.js` + `index.html` | cart.js 行为用例（含分位舍入、不可变、抛错）+ data.js 结构 + index.html 引用与元素 id 静态检查 | 只校验纯函数与页面结构，不执行页面交互；结算只覆盖现金找零口径 |
 | `self-media-plan` | 自媒体 | `plan.json` | 字段/长度/标签格式 + 关键词 `camping` | 不评估内容质量，只评估结构约束 |
 
 新增题目按上表追加一行。

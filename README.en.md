@@ -47,7 +47,7 @@ The npm package is named `hotpot-agent` (the `hotpot` name is taken by an unrela
 └────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-Dependencies flow strictly top-down (`server → orchestrator → core → ai`; `cli` and `server` are both entry points above orchestrator, and `web` imports no workspace packages — its build output is served by server). Reverse dependencies are forbidden. There is also a side package `packages/telemetry` (`cli`/`server` → `telemetry` → `core`) that only reports anonymous metrics and stays off the agent main path; the dev tool `packages/benchmarks` reuses core/orchestrator/telemetry for batch runs, but is not referenced by `cli`/`server` and is not shipped in the tool artifact.
+Dependencies flow strictly top-down (`server → orchestrator → core → ai`; `cli` and `server` are both entry points above orchestrator, and `web` imports no workspace packages — its build output is served by server). Reverse dependencies are forbidden. There is also a side package `packages/telemetry` (`cli`/`server` → `telemetry` → `core`) that only reports anonymous metrics and stays off the agent main path; the dev tool `benchmarks/` (root-level, sibling of `packages/`) reuses core/orchestrator/telemetry for batch runs, but is not referenced by `cli`/`server` and is not shipped in the tool artifact.
 
 Data flow of one user message: cli → `runMainTurn` (first-turn prompt difficulty routing) → worker / task inline-runs core `runTurn` → each step's history is derived by `deriveMessages` from the session log → `ai.streamChat` → tool batches execute through the approval waterfall → all events are appended to JSONL and streamed back to the cli renderer.
 
@@ -68,8 +68,8 @@ Data flow of one user message: cli → `runMainTurn` (first-turn prompt difficul
 │   ├── web/           # @hotpot/web: React SPA (three-column UI, agent status panel)
 │   ├── cli/           # @hotpot/cli: line-based interactive entry
 │   ├── hotpot-agent/  # hotpot-agent: npm distribution package (hotpot command + web assets)
-│   ├── telemetry/     # @hotpot/telemetry: M5 anonymous telemetry client (event schema, redaction, batching)
-│   └── benchmarks/    # @hotpot/benchmarks: M5 benchmark runner (official SWE-bench evaluation + three built-in tasks)
+│   └── telemetry/     # @hotpot/telemetry: M5 anonymous telemetry client (event schema, redaction, batching)
+├── benchmarks/        # @hotpot/benchmarks: M5 benchmark runner (official SWE-bench evaluation + three categories of custom tasks)
 └── scripts/           # development helper scripts (pnpm dev, etc.)
 ```
 
@@ -82,7 +82,7 @@ pnpm test             # run all tests (vitest, packages/*/test/**/*.test.ts)
 pnpm typecheck        # tsc typecheck for all packages
 pnpm pack:npm         # create the npm tarball under artifacts/
 pnpm publish:npm      # publish the npm tarball (requires npm login)
-pnpm bench --help     # benchmark runner: official SWE-bench / three built-in tasks
+pnpm bench --help     # benchmark runner: official SWE-bench / three categories of custom tasks
 pnpm dev <pkg> [args] # run a package entry directly with tsx, e.g. pnpm dev cli chat
 pnpm dev web          # build and start the web app (default port 4573, opens the browser)
 pnpm exec biome check # lint + format check
@@ -98,7 +98,7 @@ M2 done: three-tier orchestration (main difficulty routing → worker execution/
 
 M3 done: web delivery — `packages/server` (REST + SSE, default port 4573, reconnect replay from the log, CLI and web can observe the same session) + `packages/web` (React SPA: session list, streaming chat, tool cards, plan review, approvals, steer/interrupt, usage display, right-side agent status panel). Tests in `packages/server/test/` (api / session-manager / tailer / static) and `packages/web/test/`; criteria in the M3 section of `docs/archive/04-roadmap.md`).
 
-M5 done (this repo's part): `packages/telemetry` anonymous telemetry client (cli/server integration, event allowlist, redaction, batch retry) + `packages/benchmarks` benchmark runner (SWE-bench instance export/selection, plain checkout + worktree, non-interactive agent, predictions, official `swebench` harness orchestration, reports, `benchmark_run` telemetry, three built-in tasks). Usage in `packages/benchmarks/README.md`; authoring flow in `docs/benchmark-authoring.md`; Lite 10-task acceptance record in the M5 section of `docs/archive/04-roadmap.md`. The telemetry backend is a separate project outside this repo at `../hotpot-telemetry/` and is not shipped in the tool artifact.
+M5 done (this repo's part): `packages/telemetry` anonymous telemetry client (cli/server integration, event allowlist, redaction, batch retry) + `benchmarks/` benchmark runner (SWE-bench instance export/selection, plain checkout + worktree, non-interactive agent, predictions, official `swebench` harness orchestration, reports, `benchmark_run` telemetry, three categories of built-in tasks). Usage in `benchmarks/README.md`; authoring flow in `docs/benchmark-authoring.md`; Lite 10-task acceptance record in the M5 section of `docs/archive/04-roadmap.md`. The telemetry backend is a separate project outside this repo at `../hotpot-telemetry/` and is not shipped in the tool artifact.
 
 How to run:
 

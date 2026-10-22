@@ -1,0 +1,20 @@
+{
+	"run_id": "run-1",
+	"total_instances": 4,
+	"submitted_instances": 4,
+	"completed_instances": 4,
+	"resolved_instances": 2,
+	"unresolved_instances": 2,
+	"empty_patch_instances": 1,
+	"error_instances": 0,
+	"resolved_ids": ["django__django-11099", "pytest-dev__pytest-7432"],
+	"unresolved_ids": ["sympy__sympy-20590", "matplotlib__matplotlib-22835"],
+	"empty_patch_ids": ["matplotlib__matplotlib-22835"],
+	"error_ids": [],
+	"completed_ids": [
+		"django__django-11099",
+		"pytest-dev__pytest-7432",
+		"sympy__sympy-20590",
+		"matplotlib__matplotlib-22835"
+	]
+}
