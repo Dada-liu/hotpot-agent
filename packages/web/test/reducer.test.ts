@@ -143,6 +143,7 @@ describe("reduce：spawn 登记与 agent 树", () => {
 			}),
 		);
 		expect(state.todosByAgent["worker-1"]).toHaveLength(2);
+		expect(state.lastTodoAgentId).toBe("worker-1");
 		// 新快照整体覆盖
 		state = reduce(
 			state,
@@ -195,10 +196,12 @@ describe("reduce：spawn 登记与 agent 树", () => {
 		);
 		expect(state.agents).toHaveLength(1);
 		expect(state.todosByAgent["worker-1"]).toHaveLength(1);
+		expect(state.lastTodoAgentId).toBe("worker-1");
 
 		state = reduce(state, { seq: 3, kind: "turn", phase: "start" });
 		expect(state.agents).toHaveLength(0);
 		expect(state.todosByAgent).toEqual({});
+		expect(state.lastTodoAgentId).toBeNull();
 		expect(state.turn).toBe("running");
 
 		// 新回合 spawn 的 agent 正常登记

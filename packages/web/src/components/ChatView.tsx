@@ -5,11 +5,15 @@
 // Enter 发送，Shift+Enter 换行；IME 组合键入中 Enter 不触发（isComposing 守卫）。
 
 import {
+	Check,
 	ChevronDown,
 	ChevronRight,
+	Circle,
 	File,
 	Folder,
+	ListChecks,
 	ListPlus,
+	Loader2,
 	Paperclip,
 	Send,
 	Square,
@@ -44,7 +48,12 @@ import {
 	isProcessItem,
 	type TurnGroup,
 } from "../lib/turn-groups.ts";
-import type { ContentBlock, FsEntry, InboxSnapshot } from "../protocol.ts";
+import type {
+	ContentBlock,
+	FsEntry,
+	InboxSnapshot,
+	TodoItem,
+} from "../protocol.ts";
 import type { ChatState, TranscriptEntry } from "../state/reducer.ts";
 import { ApprovalPrompt } from "./ApprovalPrompt.tsx";
 import { MessageBubble } from "./MessageBubble.tsx";
@@ -58,6 +67,92 @@ function textOf(content: ContentBlock[]): string {
 		.filter((b) => b.type === "text")
 		.map((b) => b.text)
 		.join("\n\n");
+}
+
+// 审批痕迹（已决定的 approval 条目）：标题行 = 「审批」+ 决定（已允许/已拒绝）；
+// 第二行为摘要——超过一行时带折叠箭头（点击展开/收起），一行放得下则不显示箭头。
+// 默认始终折叠（与任务是否完成无关），展开/收起完全由用户点击切换。
+function ApprovalTrace({
+	summary,
+	decision,
+}: {
+	summary: string;
+	decision?: "approved" | "denied";
+}): ReactElement {
+	const [override, setOverride] = useState<boolean | null>(null);
+	// 摘要是否超出一行：只有超出一行才需要折叠箭头（DOM 测量得出）
+	const [multiLine, setMultiLine] = useState(false);
+	const summaryRef = useRef<HTMLSpanElement>(null);
+	const expanded = override ?? false;
+
+	// 测量摘要是否超出一行；展开态为 pre-wrap，scrollWidth 失真，跳过测量保持原结论
+	// biome-ignore lint/correctness/useExhaustiveDependencies: summary 变化需重新测量；multiLine 翻转会切换分支重建 span，需重挂观察器
+	useEffect(() => {
+		const el = summaryRef.current;
+		if (el === null || expanded) {
+			return;
+		}
+		const measure = (): void => {
+			setMultiLine(el.scrollWidth > el.clientWidth + 1);
+		};
+		measure();
+		const observer = new ResizeObserver(measure);
+		observer.observe(el);
+		return () => {
+			observer.disconnect();
+		};
+	}, [summary, expanded, multiLine]);
+
+	return (
+		<div className="text-xs text-muted-foreground">
+			{/* 标题行：审批 + 决定 */}
+			<div className="flex items-center gap-2">
+				<span>审批</span>
+				{decision !== undefined && (
+					<span
+						className={cn(
+							"font-medium",
+							decision === "approved" ? "text-foreground" : "text-destructive",
+						)}
+					>
+						{decision === "approved" ? "已允许" : "已拒绝"}
+					</span>
+				)}
+			</div>
+			{multiLine ? (
+				<button
+					type="button"
+					className="mt-0.5 flex w-full items-start gap-1.5 text-left transition-colors hover:text-foreground"
+					onClick={() => {
+						setOverride(!expanded);
+					}}
+				>
+					{expanded ? (
+						<ChevronDown className="mt-0.5 size-3 shrink-0" />
+					) : (
+						<ChevronRight className="mt-0.5 size-3 shrink-0" />
+					)}
+					<span
+						ref={summaryRef}
+						className={cn(
+							"min-w-0 flex-1",
+							expanded ? "whitespace-pre-wrap break-words" : "truncate",
+						)}
+					>
+						{summary}
+					</span>
+				</button>
+			) : (
+				// 一行放得下：不展示折叠箭头，箭头位留白保持多行摘要的对齐
+				<div className="mt-0.5 flex items-start gap-1.5">
+					<span className="size-3 shrink-0" aria-hidden="true" />
+					<span ref={summaryRef} className="min-w-0 flex-1 truncate">
+						{summary}
+					</span>
+				</div>
+			)}
+		</div>
+	);
 }
 
 // 单条 transcript 条目渲染：assistant 气泡 / 工具卡片 / 计划卡片 / 审批痕迹 / 错误行。
@@ -97,20 +192,7 @@ export function TranscriptItem({
 		case "approval":
 			// 审计痕迹行（待处理的由 ApprovalPrompt 内联呈现）
 			return (
-				<div className="flex items-center gap-2 text-xs text-muted-foreground">
-					审批 · {entry.summary}
-					{entry.decision !== undefined && (
-						<span
-							className={
-								entry.decision === "approved"
-									? "font-medium text-foreground"
-									: "font-medium text-destructive"
-							}
-						>
-							{entry.decision === "approved" ? "已允许" : "已拒绝"}
-						</span>
-					)}
-				</div>
+				<ApprovalTrace summary={entry.summary} decision={entry.decision} />
 			);
 		case "error":
 			return (
@@ -711,6 +793,7 @@ function TurnView({
 }): ReactElement {
 	const finalEntry = findFinalAnswer(group.items);
 	// 过程区 = 思考（assistant 文本）+ 工具卡片；plan/approval/error 常驻不参与折叠
+	// （approval 痕迹逐条自折叠且默认始终折叠，见 ApprovalTrace）
 	const processItems = group.items.filter(
 		(e) => e !== finalEntry && isProcessItem(e),
 	);
@@ -916,6 +999,56 @@ function QueueBar({
 	);
 }
 
+// 计划条：composer 正上方展示最近 todo/set 的 agent 清单（state.lastTodoAgentId 指向）。
+// todo/set 全量快照实时折叠，进度天然实时；turn(start) 清空后即消失。
+// 标题行 = ListChecks + 「执行计划」 + n/m + 橙色进度条；清单三态与 AgentPanel TodoList 一致。
+function TodoPlanBar({ todos }: { todos: TodoItem[] }): ReactElement {
+	const done = todos.filter((t) => t.status === "completed").length;
+	const pct = todos.length === 0 ? 0 : Math.round((done / todos.length) * 100);
+	return (
+		<div className="mb-2 rounded-xl border border-border bg-secondary/40 px-3 py-2">
+			<div className="flex items-center gap-2">
+				<ListChecks className="size-3.5 shrink-0 text-brand" />
+				<span className="text-xs font-medium">执行计划</span>
+				<span className="font-mono text-xs text-muted-foreground">
+					{done}/{todos.length}
+				</span>
+				<div className="ml-auto h-1 w-24 overflow-hidden rounded-full bg-background">
+					<div
+						className="h-full rounded-full bg-brand transition-all"
+						style={{ width: `${pct}%` }}
+					/>
+				</div>
+			</div>
+			<ul className="mt-2 flex max-h-40 flex-col gap-1 overflow-y-auto">
+				{todos.map((t) => (
+					<li
+						key={t.content}
+						className="flex items-center gap-1.5 text-xs text-muted-foreground"
+						title={t.content}
+					>
+						{t.status === "completed" ? (
+							<Check className="size-3 shrink-0 text-foreground" />
+						) : t.status === "in_progress" ? (
+							<Loader2 className="size-3 shrink-0 animate-spin text-brand" />
+						) : (
+							<Circle className="size-3 shrink-0" />
+						)}
+						<span
+							className={cn(
+								"truncate",
+								t.status === "completed" && "line-through",
+							)}
+						>
+							{t.content}
+						</span>
+					</li>
+				))}
+			</ul>
+		</div>
+	);
+}
+
 interface ChatViewProps {
 	state: ChatState;
 	hasSession: boolean;
@@ -1015,6 +1148,11 @@ export function ChatView({
 	const lastIndex = groups.length - 1;
 	// 队列为空且回合运行中：取消钮放 composer 底部（队列非空时 QueueBar 内有取消钮）
 	const queueCount = state.inbox.nextTurn.length + state.inbox.nextStep.length;
+	// composer 上方计划条：最近 todo/set 的 agent 清单（无则整条不渲染）
+	const planTodos =
+		state.lastTodoAgentId !== null
+			? (state.todosByAgent[state.lastTodoAgentId] ?? null)
+			: null;
 
 	return (
 		<main className="flex min-h-0 flex-1 flex-col">
@@ -1063,6 +1201,9 @@ export function ChatView({
 							onSteer={onSteerQueued}
 							onRemove={onRemoveQueued}
 						/>
+						{planTodos !== null && planTodos.length > 0 && (
+							<TodoPlanBar todos={planTodos} />
+						)}
 						<Composer
 							running={state.turn === "running"}
 							prompts={prompts}

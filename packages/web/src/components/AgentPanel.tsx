@@ -286,7 +286,8 @@ function AgentDetail({
 			e.kind !== "plan" && e.kind !== "approval" && e.agentId === node.agentId,
 	);
 	return (
-		<div className="flex flex-col gap-3">
+		// min-w-0 打通收缩链：内部 pre 的 min-content 宽度不再撑宽弹窗
+		<div className="flex min-w-0 flex-col gap-3">
 			<DialogTitle className="sr-only">{name}</DialogTitle>
 			<Card className="gap-2.5 rounded-xl p-3">
 				<div className="flex items-start gap-2.5">
@@ -438,9 +439,12 @@ export function AgentPanel({
 					}
 				}}
 			>
-				<DialogContent className="max-h-[80vh] gap-0 overflow-y-auto sm:max-w-xl">
+				<DialogContent className="max-h-[80vh] gap-0 overflow-hidden sm:max-w-6xl [&_code]:break-all [&_pre]:overflow-x-hidden [&_pre]:break-words [&_pre]:whitespace-pre-wrap">
 					{selected !== null && (
-						<AgentDetail node={selected} transcript={transcript} />
+						// 滚动下沉到内层：右上角关闭按钮固定在外层 padding 区，不随内容滚动
+						<div className="max-h-[calc(80vh-3rem)] overflow-y-auto overflow-x-hidden">
+							<AgentDetail node={selected} transcript={transcript} />
+						</div>
 					)}
 				</DialogContent>
 			</Dialog>

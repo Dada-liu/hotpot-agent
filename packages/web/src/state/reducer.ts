@@ -117,6 +117,9 @@ export interface ChatState {
 	// agent 任务清单：todo/set 全量快照按 agentId 折叠（last-write-wins），
 	// 右侧面板卡片在状态栏下方实时渲染
 	todosByAgent: Record<string, TodoItem[]>;
+	// 最近写入 todo/set 的 agentId：composer 上方计划条的数据源（main 无 todo 工具，
+	// 清单来自 worker/task；多 agent 场景以最新活跃者为准）
+	lastTodoAgentId: string | null;
 	// 作为计划正文落盘的 assistant_msg id：UI 只保留 plan 卡片，不再重复渲染正文气泡
 	hiddenPlanMessageIds: string[];
 	// 已见过的 log 事件 id（幂等去重）
@@ -140,6 +143,7 @@ export function createInitialState(): ChatState {
 		inbox: { nextTurn: [], nextStep: [] },
 		permissionMode: "ask-on-dangerous",
 		todosByAgent: {},
+		lastTodoAgentId: null,
 		hiddenPlanMessageIds: [],
 		seenEventIds: [],
 	};
@@ -282,6 +286,7 @@ export function reduce(state: ChatState, event: WireEvent): ChatState {
 					turn: "running",
 					agents: [],
 					todosByAgent: {},
+					lastTodoAgentId: null,
 				};
 			}
 			// 回合结束：兜底清掉 pending 与流式段（LLM 失败时无 assistant_msg
@@ -503,13 +508,15 @@ function reduceLog(state: ChatState, event: SessionEvent): ChatState {
 			};
 		}
 		case "todo/set":
-			// todo 工具的全量快照：整体覆盖该 agent 的清单（last-write-wins）
+			// todo 工具的全量快照：整体覆盖该 agent 的清单（last-write-wins），
+			// 同时记录最近写入者供 composer 上方计划条取用
 			return {
 				...state,
 				todosByAgent: {
 					...state.todosByAgent,
 					[event.agentId]: event.todos,
 				},
+				lastTodoAgentId: event.agentId,
 			};
 		// M3/M4 新增事件：与主对话渲染无关（hook/skill/prompt/mcp 由遥测与审计消费；
 		// permission/changed 为权限切换审计，档位由 wire permission 瞬态折叠），
