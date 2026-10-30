@@ -28,7 +28,7 @@ export const MessageBubble = memo(function MessageBubble({
 	}
 	return (
 		<div className={cn("md", variant === "streaming" && "md-streaming")}>
-			<Markdown text={text} />
+			<Markdown text={text} streaming={variant === "streaming"} />
 		</div>
 	);
 });

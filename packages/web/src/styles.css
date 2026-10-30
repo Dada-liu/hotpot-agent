@@ -4,6 +4,13 @@
 
 @import "tailwindcss";
 
+/* streamdown 及其插件的组件内部使用 Tailwind 工具类，但 v4 扫不到 pnpm 符号链接的
+ * node_modules（@source 目录声明实测无效，pnpm 布局 realpath 落在 .pnpm 下被忽略），
+ * 因此把 dist 里的类名候选提取到 src/streamdown-classes.txt 再显式引入。
+ * 升级 streamdown/@streamdown/* 后必须在 packages/web 下重新生成该文件：
+ *   node -e 'const fs=require("node:fs");const dirs=["node_modules/streamdown/dist","node_modules/@streamdown/code/dist","node_modules/@streamdown/math/dist","node_modules/@streamdown/cjk/dist"];const out=new Set();for(const d of dirs){for(const f of fs.readdirSync(d)){if(!f.endsWith(".js"))continue;const s=fs.readFileSync(d+"/"+f,"utf8");for(const m of s.matchAll(/[A-Za-z0-9_:[\]()\/.,%#&=+!-]+/g)){const t=m[0];if(t.length>=2&&t.length<=60)out.add(t);}}}fs.writeFileSync("src/streamdown-classes.txt",[...out].sort().join("\n")+"\n");' */
+@source "./streamdown-classes.txt";
+
 :root {
 	--background: #ffffff;
 	--foreground: #17171a;
@@ -177,6 +184,70 @@
 		color: var(--brand);
 		text-decoration: underline;
 		text-underline-offset: 2px;
+	}
+
+	/* GFM 表格（streamdown 渲染语义化 table 元素，容器/控件用其自带 Tailwind 类） */
+	.md table {
+		border-collapse: collapse;
+		font-size: 0.92em;
+		margin: 0 0 0.6em;
+	}
+
+	.md th,
+	.md td {
+		border: 1px solid var(--border-strong);
+		padding: 0.35em 0.7em;
+		text-align: left;
+	}
+
+	.md th {
+		background: var(--secondary);
+		font-weight: 600;
+	}
+
+	/* 分割线 / 图片 / 四至六级标题（streamdown 补齐了手写渲染器不支持的节点） */
+	.md hr {
+		border: none;
+		border-top: 1px solid var(--border-strong);
+		margin: 1em 0;
+	}
+
+	.md img {
+		border-radius: var(--radius-md);
+		max-width: 100%;
+	}
+
+	.md h4,
+	.md h5,
+	.md h6 {
+		font-size: 1em;
+		font-weight: 600;
+		line-height: 1.4;
+		margin: 0 0 0.6em;
+	}
+
+	/* GFM 任务列表复选框（橙色强调贴合三色纪律） */
+	.md input[type="checkbox"] {
+		accent-color: var(--brand);
+		margin-right: 0.4em;
+	}
+
+	/* KaTeX 显示公式横向滚动，长公式不撑破窄列 */
+	.md .katex-display {
+		overflow-x: auto;
+		overflow-y: hidden;
+		padding: 0.2em 0;
+	}
+
+	/* mermaid 图约束在窄列内 */
+	.md [class*="mermaid"] {
+		max-width: 100%;
+	}
+
+	/* 控件顺序统一为复制在前、下载在后：streamdown 的代码块/mermaid 操作区默认下载在前
+	 * （表格区默认已是复制在前），容器均为 flex，用 order 视觉交换即可，不改组件行为 */
+	.md [data-streamdown="code-block-copy-button"] {
+		order: -1;
 	}
 
 	/* 流式光标：橙色竖条闪烁（淡入淡出，避免硬切闪烁感） */
