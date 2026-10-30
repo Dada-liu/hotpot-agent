@@ -8,7 +8,7 @@
   <a href="README.md">中文</a> | English
 </p>
 
-A code agent built on Node + TypeScript. Goal: lower cost, better results.
+hotpot-agent is an open-source coding agent built with Node.js and TypeScript; it uses three-tier agent orchestration, plan approval, and tool calls to complete software development tasks, with the goal of lower cost and better results. It provides both CLI and web interfaces, with support for persistent sessions, multiple workspaces, parallel tasks, permission controls, and SWE-bench evaluation.
 
 ## Install and Use
 

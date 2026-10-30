@@ -8,7 +8,7 @@
   中文 | <a href="README.en.md">English</a>
 </p>
 
-基于 Node + TypeScript 的 code agent。目标：更低的成本、更好的效果。
+hotpot-agent 是一个基于 Node.js 和 TypeScript 的开源代码 Agent，通过三层 Agent 编排、计划审批和工具调用完成软件开发任务，目标是更低的成本与更好的效果。它提供 CLI 与 Web 两种使用方式，支持会话持久化、多工作区、并行任务、权限控制和 SWE-bench 评测。
 
 ## 安装和使用
 
