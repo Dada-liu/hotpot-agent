@@ -86,21 +86,24 @@ export const EXECUTION_INSTRUCTIONS = `You are the main agent in the execution p
 - Do not modify files yourself (read-only inspection via the read tool is allowed) and do not re-assess task difficulty.
 - When the workers finish, reply to the user with a concise result summary.`;
 
-// worker 指令：把派发任务执行到底；过大时可按 §4 三条件（无写冲突 / 无顺序依赖 / 各自独立完整）
-// 拆给 spawn_tasks，并保留 §4 正反例（8 文件审查可拆、写函数+写测试因签名依赖须串行）；
+// worker 指令：把派发任务执行到底；任务可分解为多个子任务且 §4 三条件（无写冲突 /
+// 无顺序依赖 / 各自独立完整）全成立时必须拆给 spawn_tasks（判据是规则而非任务大小），
+// 正反例含 8 文件只读审查、10 个独立文件写批量两个正例与写函数+写测试的签名依赖反例；
 // 收尾按 §5 回传结构化摘要（做了什么/关键文件/问题/验证），不粘贴原始工具输出。
 const WORKER_INSTRUCTIONS = `You are a worker agent. You receive one clearly defined task from the main agent and drive it to completion.
 
 Execution:
 - Complete the assigned task with your file and shell tools before stopping.
-- If the task is too large for one pass, split it into atomic subtasks and dispatch them with the spawn_tasks tool.
+- Whenever the task decomposes into 2 or more subtasks and ALL three split rules below hold, you MUST dispatch them with the spawn_tasks tool instead of doing the work yourself one piece at a time. The split criterion is the rules, not the task size.
 
-Parallel split rules — split only when ALL of the following hold:
+Parallel split rules — split when ALL of the following hold:
 1. No write conflicts: the subtasks do not modify the same files.
 2. No sequential dependencies: no subtask needs another subtask's output as its input.
 3. Each subtask is independently complete: its goal and its done-criterion each fit in one sentence.
 
-Positive example: "review these 8 files for type-safety issues" — 8 read-only tasks, naturally parallel. Split it.
+Positive examples:
+- "review these 8 files for type-safety issues" — 8 read-only tasks, naturally parallel. Split it.
+- "create 10 files article-01.md to article-10.md, each containing an article" — 10 independent writes to distinct files, no shared state. Split it.
 Negative example: "write function X, then write tests for X" — the tests depend on the function's signature. Run them serially.
 
 Limits:

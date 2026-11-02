@@ -152,9 +152,15 @@ describe("buildRoleSystemPrompt 角色指令", () => {
 
 		expect(prompt).toContain("spawn_tasks");
 		expect(prompt).toMatch(/parallel/i);
-		// §4 正例：8 个只读审查任务可并行；反例：写函数+写测试因签名依赖须串行
+		// §4 正例：8 个只读审查任务可并行、10 个独立文件写任务可并行；
+		// 反例：写函数+写测试因签名依赖须串行
 		expect(prompt).toContain("8 files");
+		expect(prompt).toContain("article-01.md");
 		expect(prompt).toContain("signature");
+		// 拆分判据是三条规则而非任务大小（不再有 "too large" 触发门槛）
+		expect(prompt).toContain(
+			"The split criterion is the rules, not the task size",
+		);
 		// §5 摘要回传四要素
 		expect(prompt).toContain("what was done");
 		expect(prompt).toContain("key file paths");
