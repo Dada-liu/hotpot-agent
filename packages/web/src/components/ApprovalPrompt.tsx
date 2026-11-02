@@ -1,4 +1,5 @@
-// 审批条：pendingApproval 时内联渲染（橙色高亮卡片）。summary + 可展开 detail + 允许/拒绝。
+// 审批条：待处理审批（pendingApprovals 中以 requestId 命中）内联渲染（橙色高亮卡片）。
+// summary + 可展开 detail + 允许/拒绝；并发多审批时每个各渲染一条，逐项应答。
 // 注意：approvalType "plan" 的审批由 plan 卡片承担（与 plan(drafted) 同源），
 // 本组件只处理 tool 型审批。
 // busy（应答提交中）：两个按钮禁用、允许键转 loading，防重复点击产生二次应答 404

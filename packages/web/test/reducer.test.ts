@@ -647,7 +647,7 @@ describe("reduce：delta 折叠与定格", () => {
 });
 
 describe("reduce：approval 登记与清除", () => {
-	it("approval 事件登记 pendingApproval；approval/decided 清除", () => {
+	it("approval 事件登记 pendingApprovals；approval/decided 只清除对应项", () => {
 		let state = createInitialState();
 		state = reduce(state, {
 			seq: 1,
@@ -656,7 +656,7 @@ describe("reduce：approval 登记与清除", () => {
 			approvalType: "tool",
 			summary: "允许执行 rm -rf？",
 		});
-		expect(state.pendingApproval).toMatchObject({
+		expect(state.pendingApprovals["req-1"]).toMatchObject({
 			requestId: "req-1",
 			approvalType: "tool",
 			summary: "允许执行 rm -rf？",
@@ -672,21 +672,83 @@ describe("reduce：approval 登记与清除", () => {
 				decision: "approved",
 			}),
 		);
-		expect(state.pendingApproval).toBeNull();
+		expect(state.pendingApprovals).toEqual({});
 	});
 
-	it("turn(end) 兜底清除 pendingApproval", () => {
+	it("并发多个 approval 全部保留，decided 只清对应项", () => {
+		let state = createInitialState();
+		state = reduce(state, {
+			seq: 1,
+			kind: "approval",
+			requestId: "req-a",
+			approvalType: "tool",
+			summary: "覆盖写 article-01.md",
+		});
+		state = reduce(state, {
+			seq: 2,
+			kind: "approval",
+			requestId: "req-b",
+			approvalType: "tool",
+			summary: "覆盖写 article-02.md",
+		});
+		state = reduce(state, {
+			seq: 3,
+			kind: "approval",
+			requestId: "req-c",
+			approvalType: "tool",
+			summary: "覆盖写 article-03.md",
+		});
+		expect(Object.keys(state.pendingApprovals)).toEqual([
+			"req-a",
+			"req-b",
+			"req-c",
+		]);
+
+		state = reduce(
+			state,
+			log(4, {
+				type: "approval/decided",
+				id: "d-b",
+				ts,
+				requestId: "req-b",
+				decision: "approved",
+			}),
+		);
+		expect(Object.keys(state.pendingApprovals)).toEqual(["req-a", "req-c"]);
+	});
+
+	it("同一 requestId 重复投递（wire + 对账合成）只保留一项", () => {
+		let state = createInitialState();
+		const event = {
+			seq: 1,
+			kind: "approval" as const,
+			requestId: "req-dup",
+			approvalType: "tool" as const,
+			summary: "覆盖写 article-01.md",
+		};
+		state = reduce(state, event);
+		state = reduce(state, { ...event, seq: 2 });
+		expect(Object.keys(state.pendingApprovals)).toEqual(["req-dup"]);
+	});
+
+	it("turn(end) 兜底清除全部 pendingApprovals", () => {
 		let state = createInitialState();
 		state = reduce(state, {
 			seq: 1,
 			kind: "approval",
 			requestId: "req-9",
-			approvalType: "plan",
-			summary: "批准计划？",
-			plan: "1. 先做 A",
+			approvalType: "tool",
+			summary: "允许执行命令？",
 		});
-		state = reduce(state, { seq: 2, kind: "turn", phase: "end" });
-		expect(state.pendingApproval).toBeNull();
+		state = reduce(state, {
+			seq: 2,
+			kind: "approval",
+			requestId: "req-10",
+			approvalType: "tool",
+			summary: "允许写入文件？",
+		});
+		state = reduce(state, { seq: 3, kind: "turn", phase: "end" });
+		expect(state.pendingApprovals).toEqual({});
 	});
 });
 
@@ -832,7 +894,7 @@ describe("reduce：plan 卡片与正文去重", () => {
 			plan: planText,
 		});
 		expect(state.transcript).toEqual([]);
-		expect(state.pendingApproval).toBeNull();
+		expect(state.pendingApprovals).toEqual({});
 
 		state = reduce(state, {
 			seq: 2,
@@ -842,7 +904,7 @@ describe("reduce：plan 卡片与正文去重", () => {
 		});
 		state = reduce(state, { seq: 3, kind: "plan", phase: "approved" });
 		expect(state.pendingPlan).toBeNull();
-		expect(state.pendingApproval).toBeNull();
+		expect(state.pendingApprovals).toEqual({});
 	});
 });
 
@@ -1049,7 +1111,7 @@ describe("reduce：权限模式（M3）", () => {
 });
 
 describe("reduceChatAction：本地审批应答", () => {
-	// 构造带 pendingApproval 的状态（wire approval 事件登记）
+	// 构造带 pendingApprovals 的状态（wire approval 事件登记）
 	function stateWithPendingApproval(requestId: string) {
 		let state = createInitialState();
 		state = reduce(state, {
@@ -1063,9 +1125,9 @@ describe("reduceChatAction：本地审批应答", () => {
 		return state;
 	}
 
-	it("approval-answered：不等 decided 日志，立即清除 pendingApproval 并回填决定", () => {
+	it("approval-answered：不等 decided 日志，立即清除 pendingApprovals 并回填决定", () => {
 		const state = stateWithPendingApproval("req-1");
-		expect(state.pendingApproval?.requestId).toBe("req-1");
+		expect(state.pendingApprovals["req-1"]?.requestId).toBe("req-1");
 
 		const next = reduceChatAction(state, {
 			type: "approval-answered",
@@ -1073,7 +1135,7 @@ describe("reduceChatAction：本地审批应答", () => {
 			decision: "approved",
 		});
 
-		expect(next.pendingApproval).toBeNull();
+		expect(next.pendingApprovals).toEqual({});
 		const entry = next.transcript.find(
 			(t) => t.kind === "approval" && t.requestId === "req-1",
 		);
@@ -1097,7 +1159,7 @@ describe("reduceChatAction：本地审批应答", () => {
 				decision: "approved",
 			}),
 		);
-		expect(state.pendingApproval).toBeNull();
+		expect(state.pendingApprovals).toEqual({});
 	});
 
 	it("deny 应答回填 denied", () => {

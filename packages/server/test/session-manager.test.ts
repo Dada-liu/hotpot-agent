@@ -319,6 +319,77 @@ describe("createSessionManager", () => {
 		expect(decided.event.requestId).toBe(approval.requestId);
 	});
 
+	it("订阅对账：审批挂起期间新订阅者收到 bridge.pending() 合成的 approval 事件", async () => {
+		await writeSettings("ask-on-dangerous");
+		const adapter = scriptedAdapter([
+			spawnSimpleRound("清理临时目录 x"),
+			toolCallRound("bash", "w-tc-1", '{"command":"rm -rf x"}'),
+			textRound("清理完成。", { input: 50, output: 10 }),
+			textRound("临时目录已清理。", { input: 20, output: 5 }),
+		]);
+		const sm = createSessionManager({ home, llm: { adapter, model: MODEL } });
+		const rec = await sm.create(proj);
+		const first = makeSink();
+		sm.subscribe(rec.id, null, first.sink);
+
+		await sm.send(rec.id, "清理临时目录");
+		await waitFor(() => first.events.some((e) => e.kind === "approval"));
+		const approval = first.events.find((e) => e.kind === "approval");
+		if (approval?.kind !== "approval") throw new Error("approval 事件缺失");
+
+		// 第二个订阅者（模拟重连）：afterSeq 取当前最新 seq，增量补发不含更早的
+		// 原始 approval 事件——挂起中的审批必须由 bridge.pending() 对账补发
+		const lastSeq = first.events[first.events.length - 1]?.seq ?? 0;
+		const second = makeSink();
+		sm.subscribe(rec.id, lastSeq, second.sink);
+		const replayed = second.events.find(
+			(e) => e.kind === "approval" && e.requestId === approval.requestId,
+		);
+		if (replayed?.kind !== "approval") throw new Error("合成 approval 缺失");
+		expect(replayed.approvalType).toBe("tool");
+		expect(replayed.summary).toContain("rm -rf x");
+
+		expect(sm.answerToolApproval(rec.id, approval.requestId, "allow")).toBe(
+			true,
+		);
+		await waitFor(() => first.events.some(isTurnEnd));
+	});
+
+	it("切到 full 模式 drain 在途审批：parked ask 立即放行，turn 正常收尾", async () => {
+		await writeSettings("ask-on-dangerous");
+		const adapter = scriptedAdapter([
+			spawnSimpleRound("清理临时目录 x"),
+			toolCallRound("bash", "w-tc-1", '{"command":"rm -rf x"}'),
+			textRound("清理完成。", { input: 50, output: 10 }),
+			textRound("临时目录已清理。", { input: 20, output: 5 }),
+		]);
+		const sm = createSessionManager({ home, llm: { adapter, model: MODEL } });
+		const rec = await sm.create(proj);
+		const { events, sink } = makeSink();
+		sm.subscribe(rec.id, null, sink);
+
+		await sm.send(rec.id, "清理临时目录");
+		await waitFor(() => events.some((e) => e.kind === "approval"));
+		const approval = events.find((e) => e.kind === "approval");
+		if (approval?.kind !== "approval") throw new Error("approval 事件缺失");
+		// 未应答：turn 挂起
+		await new Promise((resolve) => setTimeout(resolve, 200));
+		expect(events.some(isTurnEnd)).toBe(false);
+
+		// 切到 full：full 语义是「永不打断」，在途 parked 询问一并放行
+		await sm.setPermission(rec.id, "full");
+		await waitFor(() => events.some(isTurnEnd));
+		expect(
+			events.some(
+				(e) =>
+					isLog(e) &&
+					e.event.type === "approval/decided" &&
+					e.event.requestId === approval.requestId &&
+					e.event.decision === "approved",
+			),
+		).toBe(true);
+	});
+
 	it("complex：plan(drafted) → answerPlan approve → plan(approved) → 执行 turn 完成", async () => {
 		await writeSettings("ask-on-dangerous");
 		const planV1 = `# Plan

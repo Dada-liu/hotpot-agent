@@ -161,6 +161,9 @@ export function TranscriptItem({
 	entry,
 	pendingPlan,
 	onPlanDecision,
+	pendingApprovals,
+	onApproval,
+	approvalBusy = false,
 }: {
 	entry: TranscriptEntry;
 	pendingPlan: ChatState["pendingPlan"];
@@ -168,6 +171,11 @@ export function TranscriptItem({
 		decision: "approve" | "reject" | "annotate",
 		note?: string,
 	) => void;
+	// 主对话区传入：待处理审批按 requestId 命中时渲染可交互审批条；
+	// AgentPanel 详情视图不传，保持只读审计痕迹
+	pendingApprovals?: ChatState["pendingApprovals"];
+	onApproval?: (requestId: string, decision: "allow" | "deny") => void;
+	approvalBusy?: boolean;
 }): ReactElement | null {
 	switch (entry.kind) {
 		case "assistant":
@@ -189,11 +197,24 @@ export function TranscriptItem({
 					onDecide={onPlanDecision}
 				/>
 			);
-		case "approval":
-			// 审计痕迹行（待处理的由 ApprovalPrompt 内联呈现）
+		case "approval": {
+			// tool 型且仍在等待：内联可交互审批条（并发多审批时每条各自可答）；
+			// plan 型由 plan 卡片承担，已决定/详情视图保持只读审计痕迹
+			const pending = pendingApprovals?.[entry.requestId];
+			if (pending !== undefined && entry.approvalType === "tool") {
+				return (
+					<ApprovalPrompt
+						summary={pending.summary}
+						detail={pending.detail}
+						onAnswer={(decision) => onApproval?.(entry.requestId, decision)}
+						busy={approvalBusy}
+					/>
+				);
+			}
 			return (
 				<ApprovalTrace summary={entry.summary} decision={entry.decision} />
 			);
+		}
 		case "error":
 			return (
 				<div className="font-mono text-xs text-destructive">
@@ -773,7 +794,7 @@ function TurnView({
 	group,
 	isLast,
 	streaming,
-	pendingApproval,
+	pendingApprovals,
 	pendingPlan,
 	onApproval,
 	approvalBusy,
@@ -782,9 +803,9 @@ function TurnView({
 	group: TurnGroup;
 	isLast: boolean;
 	streaming: ChatState["streaming"];
-	pendingApproval: ChatState["pendingApproval"];
+	pendingApprovals: ChatState["pendingApprovals"];
 	pendingPlan: ChatState["pendingPlan"];
-	onApproval: (decision: "allow" | "deny") => void;
+	onApproval: (requestId: string, decision: "allow" | "deny") => void;
 	approvalBusy: boolean;
 	onPlanDecision: (
 		decision: "approve" | "reject" | "annotate",
@@ -850,6 +871,9 @@ function TurnView({
 												entry={entry}
 												pendingPlan={pendingPlan}
 												onPlanDecision={onPlanDecision}
+												pendingApprovals={pendingApprovals}
+												onApproval={onApproval}
+												approvalBusy={approvalBusy}
 											/>
 										))}
 									</div>
@@ -862,6 +886,9 @@ function TurnView({
 								entry={entry}
 								pendingPlan={pendingPlan}
 								onPlanDecision={onPlanDecision}
+								pendingApprovals={pendingApprovals}
+								onApproval={onApproval}
+								approvalBusy={approvalBusy}
 							/>
 						))}
 						{finalEntry !== undefined && (
@@ -869,22 +896,14 @@ function TurnView({
 								entry={finalEntry}
 								pendingPlan={pendingPlan}
 								onPlanDecision={onPlanDecision}
+								pendingApprovals={pendingApprovals}
+								onApproval={onApproval}
+								approvalBusy={approvalBusy}
 							/>
 						)}
 						{streamingHere && (
 							<MessageBubble variant="streaming" text={streaming?.text ?? ""} />
 						)}
-						{/* 仅 tool 型审批内联审批条；plan 型由 plan 卡片承担 */}
-						{isLast &&
-							pendingApproval !== null &&
-							pendingApproval.approvalType === "tool" && (
-								<ApprovalPrompt
-									summary={pendingApproval.summary}
-									detail={pendingApproval.detail}
-									onAnswer={onApproval}
-									busy={approvalBusy}
-								/>
-							)}
 					</div>
 				</div>
 			)}
@@ -1069,7 +1088,7 @@ interface ChatViewProps {
 	onRemoveQueued: (messageId: string) => void;
 	onSend: (content: string) => void;
 	onCancel: () => void;
-	onApproval: (decision: "allow" | "deny") => void;
+	onApproval: (requestId: string, decision: "allow" | "deny") => void;
 	// 审批应答提交中：审批条按钮转 loading 并禁用，防重复点击
 	approvalBusy?: boolean;
 	onPlanDecision: (
@@ -1166,7 +1185,7 @@ export function ChatView({
 								group={group}
 								isLast={i === lastIndex}
 								streaming={state.streaming}
-								pendingApproval={state.pendingApproval}
+								pendingApprovals={state.pendingApprovals}
 								pendingPlan={state.pendingPlan}
 								onApproval={onApproval}
 								approvalBusy={approvalBusy}

@@ -20,9 +20,19 @@ export type ApprovalNotifier = (
 	payload: ApprovalNotifyPayload,
 ) => void;
 
+// 挂起中的审批条目：payload 保留 notify 时的摘要/详情，供订阅对账（重连/刷新）
+// 在不广播的情况下重放给单个订阅者（ApprovalBridge.pendingToolAsks）
 type PendingEntry =
-	| { type: "tool"; resolve: (d: ToolApprovalDecision) => void }
-	| { type: "plan"; resolve: (d: PlanDecision) => void };
+	| {
+			type: "tool";
+			resolve: (d: ToolApprovalDecision) => void;
+			payload: { summary: string; detail?: string };
+	  }
+	| {
+			type: "plan";
+			resolve: (d: PlanDecision) => void;
+			payload: { summary: string; plan: string };
+	  };
 
 export interface ApprovalBridge {
 	// 登记一次工具审批询问：入 pending 表 → 广播 → 返回 parked promise
@@ -43,6 +53,13 @@ export interface ApprovalBridge {
 	answerPendingPlan(decision: PlanDecision): boolean;
 	// 当前挂起中的请求（id 列表），供状态查询
 	pending(): string[];
+	// 当前挂起中的 tool 型询问（含 notify 时的摘要/详情），供订阅对账重放：
+	// 内存快照才是「服务端真的在等」的唯一权威，不得用 durable 日志重建
+	pendingToolAsks(): Array<{
+		requestId: string;
+		summary: string;
+		detail?: string;
+	}>;
 }
 
 function planSummary(plan: string): string {
@@ -68,7 +85,11 @@ export function createApprovalBridge(notify: ApprovalNotifier): ApprovalBridge {
 			// 缺省（如纯内存链）才自行生成
 			const requestId = req.requestId ?? randomUUID();
 			const promise = new Promise<ToolApprovalDecision>((resolve) => {
-				pendingMap.set(requestId, { type: "tool", resolve });
+				pendingMap.set(requestId, {
+					type: "tool",
+					resolve,
+					payload: { summary: req.summary, detail: req.detail },
+				});
 			});
 			notify(requestId, {
 				approvalType: "tool",
@@ -81,7 +102,11 @@ export function createApprovalBridge(notify: ApprovalNotifier): ApprovalBridge {
 		registerPlanAsk(plan: string): Promise<PlanDecision> {
 			const requestId = randomUUID();
 			const promise = new Promise<PlanDecision>((resolve) => {
-				pendingMap.set(requestId, { type: "plan", resolve });
+				pendingMap.set(requestId, {
+					type: "plan",
+					resolve,
+					payload: { summary: planSummary(plan), plan },
+				});
 			});
 			notify(requestId, {
 				approvalType: "plan",
@@ -111,6 +136,29 @@ export function createApprovalBridge(notify: ApprovalNotifier): ApprovalBridge {
 
 		pending(): string[] {
 			return [...pendingMap.keys()];
+		},
+
+		pendingToolAsks(): Array<{
+			requestId: string;
+			summary: string;
+			detail?: string;
+		}> {
+			const asks: Array<{
+				requestId: string;
+				summary: string;
+				detail?: string;
+			}> = [];
+			for (const [requestId, entry] of pendingMap) {
+				if (entry.type !== "tool") continue;
+				asks.push({
+					requestId,
+					summary: entry.payload.summary,
+					...(entry.payload.detail === undefined
+						? {}
+						: { detail: entry.payload.detail }),
+				});
+			}
+			return asks;
 		},
 
 		answerPendingPlan(decision: PlanDecision): boolean {

@@ -495,12 +495,14 @@ export function App() {
 		}
 	};
 
-	const handleApproval = async (decision: "allow" | "deny"): Promise<void> => {
+	const handleApproval = async (
+		requestId: string,
+		decision: "allow" | "deny",
+	): Promise<void> => {
 		// 单飞锁：提交期间忽略重复点击（重复应答会被服务端判 404 未知 requestId）
-		if (currentId === null || chat.pendingApproval === null || approvalBusy) {
+		if (currentId === null || approvalBusy) {
 			return;
 		}
-		const requestId = chat.pendingApproval.requestId;
 		setApprovalBusy(true);
 		try {
 			await answerApproval(currentId, requestId, decision);
@@ -654,8 +656,8 @@ export function App() {
 						onCancel={() => {
 							void handleCancel();
 						}}
-						onApproval={(decision) => {
-							void handleApproval(decision);
+						onApproval={(requestId, decision) => {
+							void handleApproval(requestId, decision);
 						}}
 						approvalBusy={approvalBusy}
 						onPlanDecision={(decision, note) => {

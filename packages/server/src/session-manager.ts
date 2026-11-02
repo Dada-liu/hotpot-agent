@@ -447,6 +447,14 @@ async function applyPermissionMode(
 	});
 	await m.syncDurable();
 	m.emit({ kind: "permission", mode });
+	// full 语义是「永不打断」，对存量 parked 询问同样成立：切到 full 时把尚未裁决的
+	// 工具审批一并放行（parked promise 解除，审计层照常落 approved 的 decided）。
+	// 不 drain 的话，切换前挂起的询问会永远等不到人，承载它的 agent turn 永久卡死
+	if (mode === "full") {
+		for (const requestId of m.bridge.pending()) {
+			m.bridge.answer(requestId, "allow");
+		}
+	}
 }
 
 // M2 内置指令：/help 本地应答；/permission 无参报当前档、带参走统一切换路径
@@ -1002,6 +1010,29 @@ export function createSessionManager(
 		};
 	}
 
+	// 订阅对账（模式 B）：bridge 内存里仍挂起的 tool 审批经 hub.replay 合成 approval
+	// 事件，只发给本订阅者（seq 与 live 连续、不进 buffer、不广播）。瞬态 approval
+	// 事件可能已滚出 buffer 或压根没送达本连接，而「服务端真的在等」的唯一权威是
+	// bridge.pending()——不得用 durable 日志里的 asked-without-decided 重建
+	// （server 重启后那是幽灵，用户点了只会 404）。reducer 按 requestId upsert，
+	// 与原始事件/日志重复投递幂等
+	function replayPendingApprovals(
+		m: ManagedSession,
+		sink: (e: WireEvent) => void,
+	): void {
+		for (const ask of m.bridge.pendingToolAsks()) {
+			sink(
+				m.hub.replay({
+					kind: "approval",
+					requestId: ask.requestId,
+					approvalType: "tool",
+					summary: ask.summary,
+					...(ask.detail === undefined ? {} : { detail: ask.detail }),
+				}),
+			);
+		}
+	}
+
 	// M4 Feature⑤：`/name args` → 模板正文。未命中抛 PromptCommandError（REST 转 400）；
 	// 非斜杠输入原样返回。展开后立刻落 prompt/invoked（声明 message 级输入意图，
 	// 与队列无关——真正的 user_msg 仍由 runMainTurn 在回合开始时落盘）
@@ -1422,6 +1453,8 @@ export function createSessionManager(
 			for (const e of catchUp) {
 				sink(e);
 			}
+			// 补发之后、live 之前对账挂起中的审批，堵住「瞬态事件不在补发窗口」的缺口
+			replayPendingApprovals(m, sink);
 			return registerLive(m, sink);
 		},
 
@@ -1436,6 +1469,7 @@ export function createSessionManager(
 				for (const e of catchUp) {
 					sink(e);
 				}
+				replayPendingApprovals(m, sink);
 				return registerLive(m, sink);
 			}
 			// 命中留存窗口：增量补发（同步段，注册前无 await）
@@ -1445,6 +1479,7 @@ export function createSessionManager(
 					for (const e of incremental) {
 						sink(e);
 					}
+					replayPendingApprovals(m, sink);
 					return registerLive(m, sink);
 				}
 			}
@@ -1487,6 +1522,8 @@ export function createSessionManager(
 				}
 				sink(e);
 			}
+			// 对账挂起中的审批后同步换成真 sink（与泄洪同一同步段，无事件缝隙）
+			replayPendingApprovals(m, sink);
 			m.subscribers.set(subId, sink);
 			return () => {
 				m.subscribers.delete(subId);

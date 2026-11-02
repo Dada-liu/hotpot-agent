@@ -104,7 +104,9 @@ export interface ChatState {
 	transcript: TranscriptEntry[];
 	agents: AgentNode[];
 	streaming: StreamingSegment | null;
-	pendingApproval: PendingApproval | null;
+	// 待用户处理的工具审批，按 requestId 索引（并发多审批时全部保留；
+	// JS 对象字符串键保持插入序，渲染按到达顺序）
+	pendingApprovals: Record<string, PendingApproval>;
 	pendingPlan: PendingPlan | null;
 	turn: "idle" | "running";
 	// token 用量累计：log(assistant_msg) 时按 tier 分组累加
@@ -136,7 +138,7 @@ export function createInitialState(): ChatState {
 		transcript: [],
 		agents: [],
 		streaming: null,
-		pendingApproval: null,
+		pendingApprovals: {},
 		pendingPlan: null,
 		turn: "idle",
 		usage: { total: { input: 0, output: 0 }, byTier: {} },
@@ -150,7 +152,8 @@ export function createInitialState(): ChatState {
 }
 
 // approval/decided 折叠（decided 日志与本地乐观应答共用）：
-// 清除匹配 requestId 的 pendingApproval，回填审计条目的决定
+// 删除匹配 requestId 的 pendingApprovals 项（不存在即 no-op，幂等），回填审计条目的决定。
+// plan 型审批不进 pendingApprovals（由 plan 卡片承担），pendingPlan 只随 plan 事件清除
 export function applyApprovalDecided(
 	state: ChatState,
 	decided: {
@@ -164,16 +167,9 @@ export function applyApprovalDecided(
 			? { ...t, decision: decided.decision, note: decided.note }
 			: t,
 	);
-	const pendingApproval =
-		state.pendingApproval?.requestId === decided.requestId
-			? null
-			: state.pendingApproval;
-	const pendingPlan =
-		state.pendingApproval?.requestId === decided.requestId &&
-		state.pendingApproval.approvalType === "plan"
-			? null
-			: state.pendingPlan;
-	return { ...state, transcript, pendingApproval, pendingPlan };
+	const pendingApprovals = { ...state.pendingApprovals };
+	delete pendingApprovals[decided.requestId];
+	return { ...state, transcript, pendingApprovals };
 }
 
 // 本地动作：事件折叠、队列快照覆盖、会话切换重置，以及审批应答的乐观收敛。
@@ -294,7 +290,7 @@ export function reduce(state: ChatState, event: WireEvent): ChatState {
 			return {
 				...state,
 				turn: "idle",
-				pendingApproval: null,
+				pendingApprovals: {},
 				pendingPlan: null,
 				streaming: null,
 			};
@@ -321,24 +317,33 @@ export function reduce(state: ChatState, event: WireEvent): ChatState {
 			if (event.approvalType === "plan") {
 				return state;
 			}
-			// 登记待审批并落一条审计痕迹
-			const entry: TranscriptEntry = {
-				kind: "approval",
-				id: `approval:${event.requestId}`,
-				ts: "",
-				requestId: event.requestId,
-				approvalType: event.approvalType,
-				summary: event.summary,
-			};
+			// 登记待审批并落一条审计痕迹。审计行按 requestId 幂等去重：
+			// wire 事件、对账合成事件与 asked 日志可能对同一审批重复到达
+			const entryId = `approval:${event.requestId}`;
+			const transcript = state.transcript.some((t) => t.id === entryId)
+				? state.transcript
+				: [
+						...state.transcript,
+						{
+							kind: "approval" as const,
+							id: entryId,
+							ts: "",
+							requestId: event.requestId,
+							approvalType: "tool" as const,
+							summary: event.summary,
+						},
+					];
 			return {
 				...state,
-				transcript: [...state.transcript, entry],
-				pendingApproval: {
-					requestId: event.requestId,
-					approvalType: event.approvalType,
-					summary: event.summary,
-					detail: event.detail,
-					plan: event.plan,
+				transcript,
+				pendingApprovals: {
+					...state.pendingApprovals,
+					[event.requestId]: {
+						requestId: event.requestId,
+						approvalType: "tool",
+						summary: event.summary,
+						detail: event.detail,
+					},
 				},
 			};
 		}
@@ -471,16 +476,22 @@ function reduceLog(state: ChatState, event: SessionEvent): ChatState {
 			};
 		case "approval/asked": {
 			// 审计痕迹：payload.requestId 可关联到对应审批条目；
-			// plan 流程的 payload 是 {kind:"plan", plan}，不能按工具审批展示
+			// plan 流程的 payload 是 {kind:"plan", plan}，不能按工具审批展示。
+			// 审计行 id 与 wire approval 分支统一为 `approval:${requestId}`，
+			// 重复到达（wire 先到 / 日志先到）只保留首条
 			const requestId =
 				typeof event.payload.requestId === "string"
 					? event.payload.requestId
 					: event.id;
+			const entryId = `approval:${requestId}`;
+			if (state.transcript.some((t) => t.id === entryId)) {
+				return state;
+			}
 			const approvalType =
 				event.payload.kind === "plan" ? ("plan" as const) : ("tool" as const);
 			const entry: TranscriptEntry = {
 				kind: "approval",
-				id: event.id,
+				id: entryId,
 				ts: event.ts,
 				requestId,
 				approvalType,
@@ -594,11 +605,6 @@ function reducePlan(
 		...state,
 		transcript,
 		pendingPlan: null,
-		// plan 型审批由卡片承担；决定后清掉桥广播留下的 pendingApproval
-		pendingApproval:
-			state.pendingApproval?.approvalType === "plan"
-				? null
-				: state.pendingApproval,
 	};
 }
 
