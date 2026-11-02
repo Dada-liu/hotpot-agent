@@ -464,13 +464,21 @@ export function SessionList({
 
 	return (
 		<aside className="flex h-full w-60 shrink-0 flex-col border-r bg-secondary/60">
-			<div className="flex items-center gap-2 px-4 pb-1 pt-4">
-				<img
-					src="/logo.png"
-					alt="hotpot"
-					className="h-8 w-8 rounded-lg object-contain"
-				/>
-				<span className="text-base font-semibold tracking-tight">hotpot</span>
+			<div className="px-4 pb-1 pt-4">
+				<a
+					href="https://github.com/Dada-liu/hotpot-agent"
+					target="_blank"
+					rel="noreferrer noopener"
+					aria-label="HotPot Agent GitHub"
+					className="flex w-fit items-center gap-2 rounded-lg transition-opacity hover:opacity-70"
+				>
+					<img
+						src="/logo.png"
+						alt="HotPot"
+						className="h-8 w-8 rounded-lg object-contain"
+					/>
+					<span className="text-base font-semibold tracking-tight">HotPot</span>
+				</a>
 			</div>
 			<div className="px-3 pb-2 pt-3">
 				<Button

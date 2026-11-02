@@ -26,7 +26,7 @@ features:
     details: append-only JSONL 事件日志，deriveMessages 从中转换出模型历史；进程被杀、断线重连后都能折叠恢复、继续对话。
   - icon: /icons/shield.svg
     title: 三档权限与审批
-    details: 只读 / 工作区 / 完全三档权限；main 只读工具、worker 按档位放行；高危命令与覆盖写先询问，asked / decided 全程落盘可审计。
+    details: 只读 / 危险操作询问 / 完全权限三档；main 只用只读工具，worker 按档位放行；高危命令与覆盖写先询问，asked / decided 全程落盘可审计。
   - icon: /icons/monitor.svg
     title: Web 工作区与面板
     details: hotpot web 一键启动；工作区按目录分组会话并支持拖拽排序；排队优先输入框、附件与 @ 文件提及；agent 面板展示任务清单与用量。

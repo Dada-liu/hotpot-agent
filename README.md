@@ -137,6 +137,7 @@ M6 已完成：Web 端交互完善——运行中发送默认进入 next-turn �
 
 发布包位于 `packages/hotpot-agent`，构建后只包含 `dist/`（单文件 CLI + Web 产物）。发版步骤：
 
+0. 同步官网：在 `website/docs/changelog.md` 补本版本更新日志，并核对官网首页、指南与深入文档是否与最新代码一致。
 1. 同步版本号：`packages/hotpot-agent/package.json` 与 `packages/telemetry/src/defaults.ts` 的 `APP_VERSION`。
 2. 在 GitHub 仓库 Settings → Secrets and variables → Actions 添加 `NPM_TOKEN`。该 token 必须具备 publish 权限，并且能绕过 2FA（npm Automation token，或在 granular token 中勾选 bypass 2FA）；普通 token 会在发布会报 `EOTP`。
 3. 提交后打 tag 并推送：

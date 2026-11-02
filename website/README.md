@@ -42,3 +42,4 @@ GitHub Actions 工作流 `.github/workflows/website.yml` 在 `main` 分支的 `w
 - 站点内容为简体中文，页面组织参考 https://rspress.rs/zh/。
 - 新增页面时同步更新对应目录的 `_meta.json` 与 `rspress.config.ts` 的 sidebar。
 - 内容来源：根 `README.md`、`docs/`（PRD、archive）、各包 `README.md`；改写为用户文档语言，不整段搬运。
+- 发版前补齐本版本更新日志，并核对首页、指南与深入文档是否与最新代码一致。

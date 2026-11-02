@@ -137,6 +137,7 @@ How to run:
 
 The distribution package lives in `packages/hotpot-agent` and contains only `dist/` (single-file CLI + web assets). Release steps:
 
+0. Sync the website: add the release entry to `website/docs/changelog.md` and verify the homepage, guides and advanced docs still match the latest code.
 1. Keep versions in sync: `packages/hotpot-agent/package.json` and `APP_VERSION` in `packages/telemetry/src/defaults.ts`.
 2. Add `NPM_TOKEN` (an npm granular access token with publish permission) under GitHub repo Settings → Secrets and variables → Actions. The token must be able to bypass 2FA (an npm Automation token, or a granular token with "bypass 2FA" enabled); otherwise publishing fails with `EOTP`.
 3. Commit, then tag and push:

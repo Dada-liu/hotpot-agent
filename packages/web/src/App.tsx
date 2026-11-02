@@ -358,6 +358,12 @@ export function App() {
 	// QueueBar 立即展示；点击队列条目才转 steer）。内置指令命中返回 200 {reply}，
 	// 只追加本地 notice 气泡，不进入回合
 	const handleSend = async (content: string): Promise<void> => {
+		// 新回合：先在本地落提示与处理中状态，不等 SSE 往返；
+		// 运行中发送仍走队列，不创建乐观新回合
+		const startsNewTurn = currentId === null || chat.turn === "idle";
+		if (startsNewTurn) {
+			dispatch({ type: "send-start", content });
+		}
 		try {
 			// 草稿态（含未点新建、直接输入发送）：首条消息才创建会话文件。
 			// workspaceId=null 明确落「未分组」（跳过服务端按 cwd 自动归属）；
@@ -371,6 +377,7 @@ export function App() {
 					});
 				} catch (e) {
 					// 工作区已删除（404）、cwd 校验失败（400）等：停在欢迎态，红字提示
+					dispatch({ type: "send-cancel" });
 					setCreateError(errorMessage(e));
 					return;
 				}
@@ -386,6 +393,8 @@ export function App() {
 				await Promise.all([refreshSessions(), refreshWorkspaces()]);
 				const result = await sendMessage(id, content);
 				if (result.reply != null) {
+					// 内置指令不进入回合：撤销乐观用户气泡，只留本地 notice
+					dispatch({ type: "send-cancel" });
 					setNotices((n) => [...n, result.reply as string]);
 				} else {
 					setSessions((ss) =>
@@ -399,6 +408,7 @@ export function App() {
 			}
 			const result = await sendMessage(currentId, content);
 			if (result.reply != null) {
+				dispatch({ type: "send-cancel" });
 				setNotices((n) => [...n, result.reply as string]);
 			} else if (chat.turn === "running") {
 				// 已排队：inbox/spliced 随 SSE 到达，快照刷新兜底修正
@@ -412,6 +422,7 @@ export function App() {
 			}
 			setError(null);
 		} catch (e) {
+			dispatch({ type: "send-cancel" });
 			setError(errorMessage(e));
 		}
 	};

@@ -533,6 +533,62 @@ describe("reduce：turn 状态翻转", () => {
 	});
 });
 
+describe("reduceChatAction：发送即展示", () => {
+	it("send-start 立即追加乐观用户条目并进入 running", () => {
+		let state = createInitialState();
+		state = reduceChatAction(state, { type: "send-start", content: "写测试" });
+
+		expect(state.turn).toBe("running");
+		expect(state.pendingUser).toBe(true);
+		expect(state.transcript).toHaveLength(1);
+		expect(state.transcript[0]).toMatchObject({
+			kind: "user",
+			id: "local-user",
+			agentId: "main",
+			content: "写测试",
+		});
+	});
+
+	it("durable user_msg 原位替换乐观条目，不产生重复气泡", () => {
+		let state = createInitialState();
+		state = reduceChatAction(state, { type: "send-start", content: "写测试" });
+		state = reduce(state, log(1, userMsg("u-1", "写测试")));
+
+		expect(state.pendingUser).toBe(false);
+		expect(state.transcript).toHaveLength(1);
+		expect(state.transcript[0]).toMatchObject({ kind: "user", id: "u-1" });
+	});
+
+	it("send-cancel 撤销乐观条目并回到 idle", () => {
+		let state = createInitialState();
+		state = reduceChatAction(state, { type: "send-start", content: "写测试" });
+		state = reduceChatAction(state, { type: "send-cancel" });
+
+		expect(state.turn).toBe("idle");
+		expect(state.pendingUser).toBe(false);
+		expect(state.transcript).toHaveLength(0);
+	});
+
+	it("turn(end) 兜底清理未替换的乐观条目", () => {
+		let state = createInitialState();
+		state = reduceChatAction(state, { type: "send-start", content: "写测试" });
+		state = reduce(state, { seq: 1, kind: "turn", phase: "end" });
+
+		expect(state.turn).toBe("idle");
+		expect(state.pendingUser).toBe(false);
+		expect(state.transcript).toHaveLength(0);
+	});
+
+	it("运行中 send-start 不插入新回合条目（发送仍走队列）", () => {
+		let state = createInitialState();
+		state = reduce(state, { seq: 1, kind: "turn", phase: "start" });
+		state = reduceChatAction(state, { type: "send-start", content: "排队" });
+
+		expect(state.transcript).toHaveLength(0);
+		expect(state.pendingUser).toBe(false);
+	});
+});
+
 describe("reduce：幂等去重", () => {
 	it("相同 id 的 log 事件重复投递不产生重复条目", () => {
 		let state = createInitialState();

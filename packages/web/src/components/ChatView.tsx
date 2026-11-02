@@ -789,10 +789,36 @@ function Composer({
 	);
 }
 
+// 处理中提示：点号 1→2→3 循环；仅在回合 running 时渲染，始终放在 main 输出最后一行。
+// 点号对读屏器隐藏，避免 aria-live 被动画刷屏
+function ProcessingIndicator(): ReactElement {
+	const [dots, setDots] = useState(1);
+	useEffect(() => {
+		const timer = setInterval(() => {
+			setDots((n) => (n % 3) + 1);
+		}, 400);
+		return () => {
+			clearInterval(timer);
+		};
+	}, []);
+	return (
+		<div
+			className="flex items-center text-xs text-muted-foreground"
+			role="status"
+		>
+			<span>正在处理中</span>
+			<span aria-hidden="true" className="inline-block w-4 text-left">
+				{".".repeat(dots)}
+			</span>
+		</div>
+	);
+}
+
 // 单个回合组：右侧用户气泡 + 左侧头像栏（过程区 + 常驻条目 + 最终回答/流式段）
 function TurnView({
 	group,
 	isLast,
+	running,
 	streaming,
 	pendingApprovals,
 	pendingPlan,
@@ -802,6 +828,7 @@ function TurnView({
 }: {
 	group: TurnGroup;
 	isLast: boolean;
+	running: boolean;
 	streaming: ChatState["streaming"];
 	pendingApprovals: ChatState["pendingApprovals"];
 	pendingPlan: ChatState["pendingPlan"];
@@ -824,6 +851,8 @@ function TurnView({
 	// 流式段只属于最后一个回合组，且视为最终回答生成中
 	const streamingHere =
 		isLast && streaming !== null && streaming.agentId === "main";
+	// 回合 running 时最后一组常驻「处理中」行：即使还没有任何输出也要露出左侧头像
+	const runningHere = isLast && running;
 	// 最终回答已落库或正在生成时，过程区默认折叠；用户可手动展开/收起
 	const defaultCollapsed = finalEntry !== undefined || streamingHere;
 	const [override, setOverride] = useState<boolean | null>(null);
@@ -837,7 +866,8 @@ function TurnView({
 			{(processItems.length > 0 ||
 				standingItems.length > 0 ||
 				finalEntry !== undefined ||
-				streamingHere) && (
+				streamingHere ||
+				runningHere) && (
 				/* xl+：内容列与 composer 同宽对齐，头像绝对定位到左缘之外；
 				   窄窗口回退为头像在左的横向布局，避免越界遮挡侧栏 */
 				<div className="relative flex items-start gap-3 xl:block">
@@ -904,6 +934,8 @@ function TurnView({
 						{streamingHere && (
 							<MessageBubble variant="streaming" text={streaming?.text ?? ""} />
 						)}
+						{/* 始终在 main 输出末尾：过程区/最终回答/流式段之后 */}
+						{runningHere && <ProcessingIndicator />}
 					</div>
 				</div>
 			)}
@@ -1184,6 +1216,7 @@ export function ChatView({
 								key={group.id}
 								group={group}
 								isLast={i === lastIndex}
+								running={state.turn === "running"}
 								streaming={state.streaming}
 								pendingApprovals={state.pendingApprovals}
 								pendingPlan={state.pendingPlan}

@@ -100,10 +100,15 @@ export interface StreamingSegment {
 	text: string;
 }
 
+// 乐观用户消息的临时 id：durable user_msg 到达后按此 id 原位替换
+const LOCAL_USER_ID = "local-user";
+
 export interface ChatState {
 	transcript: TranscriptEntry[];
 	agents: AgentNode[];
 	streaming: StreamingSegment | null;
+	// 本地乐观发送：用户提示已展示、仍在等服务端 user_msg 落库后原位替换
+	pendingUser: boolean;
 	// 待用户处理的工具审批，按 requestId 索引（并发多审批时全部保留；
 	// JS 对象字符串键保持插入序，渲染按到达顺序）
 	pendingApprovals: Record<string, PendingApproval>;
@@ -138,6 +143,7 @@ export function createInitialState(): ChatState {
 		transcript: [],
 		agents: [],
 		streaming: null,
+		pendingUser: false,
 		pendingApprovals: {},
 		pendingPlan: null,
 		turn: "idle",
@@ -181,11 +187,49 @@ export type ChatAction =
 	// M3 权限模式本地写入：进入会话时以 GET /permission（权威）为种子，
 	// 切换器乐观更新也走这里（失败由 App 回填旧值）
 	| { type: "permission"; mode: PermissionMode }
+	// 发送即展示：先把用户提示与处理中状态挂进 transcript，等 durable user_msg 替换；
+	// send-cancel 用于内置指令、会话创建失败与请求异常（撤销乐观条目）
+	| { type: "send-start"; content: string }
+	| { type: "send-cancel" }
 	| {
 			type: "approval-answered";
 			requestId: string;
 			decision: "approved" | "denied";
 	  };
+
+// 发送即展示：本地先落一条临时 user 条目并进入 running，左侧头像与 loading 立即出现。
+// 只在空闲时生效；durable user_msg 到达后原位替换，避免重复气泡
+function startPendingUser(state: ChatState, content: string): ChatState {
+	if (state.pendingUser || state.turn === "running") {
+		return state;
+	}
+	return {
+		...state,
+		turn: "running",
+		pendingUser: true,
+		transcript: [
+			...state.transcript.filter(
+				(t) => !(t.kind === "user" && t.id === LOCAL_USER_ID),
+			),
+			{ kind: "user", id: LOCAL_USER_ID, ts: "", agentId: "main", content },
+		],
+	};
+}
+
+// 撤销临时 user 条目：内置指令应答、会话创建失败、发送异常与 turn(end) 兜底共用
+function cancelPendingUser(state: ChatState): ChatState {
+	if (!state.pendingUser) {
+		return state;
+	}
+	return {
+		...state,
+		turn: "idle",
+		pendingUser: false,
+		transcript: state.transcript.filter(
+			(t) => !(t.kind === "user" && t.id === LOCAL_USER_ID),
+		),
+	};
+}
 
 export function reduceChatAction(
 	state: ChatState,
@@ -198,6 +242,10 @@ export function reduceChatAction(
 			return applyInboxSnapshot(state, action.snapshot);
 		case "permission":
 			return { ...state, permissionMode: action.mode };
+		case "send-start":
+			return startPendingUser(state, action.content);
+		case "send-cancel":
+			return cancelPendingUser(state);
 		case "approval-answered":
 			// 应答已送达服务端：与 decided 日志走同一折叠路径立即关闭审批框，
 			// 不等 SSE 往返；服务端 decided 日志随后到达时幂等
@@ -286,9 +334,10 @@ export function reduce(state: ChatState, event: WireEvent): ChatState {
 				};
 			}
 			// 回合结束：兜底清掉 pending 与流式段（LLM 失败时无 assistant_msg
-			// 定格，turn(end) 是最后收敛点）；agent 状态由 agent_end/log(error) 驱动
+			// 定格，turn(end) 是最后收敛点）；未等到 durable user_msg 的临时条目
+			// 一并撤销，避免幽灵用户气泡；agent 状态由 agent_end/log(error) 驱动
 			return {
-				...state,
+				...cancelPendingUser(state),
 				turn: "idle",
 				pendingApprovals: {},
 				pendingPlan: null,
@@ -374,7 +423,17 @@ function reduceLog(state: ChatState, event: SessionEvent): ChatState {
 				agentId: event.agentId,
 				content: event.content,
 			};
-			return { ...state, transcript: [...state.transcript, entry] };
+			// 乐观条目原位替换：保持气泡位置不变，避免先闪现再重复出现
+			const hasLocal = state.transcript.some(
+				(t) => t.kind === "user" && t.id === LOCAL_USER_ID,
+			);
+			const transcript =
+				state.pendingUser && hasLocal
+					? state.transcript.map((t) =>
+							t.kind === "user" && t.id === LOCAL_USER_ID ? entry : t,
+						)
+					: [...state.transcript, entry];
+			return { ...state, transcript, pendingUser: false };
 		}
 		case "internal_msg": {
 			// 编排层内部延续提示：进入模型历史，但不属于用户输入，UI 不渲染
