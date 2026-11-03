@@ -363,6 +363,67 @@ export async function listFs(
 	return body.entries;
 }
 
+// ---- 会话区路径点击预览（v1）：白名单 = 会话 cwd ∪ <home>/uploads（服务端校验） ----
+
+// fs/stat 响应：点击路径先判型，决定开文件 tab 还是文件夹 tab；
+// path 为服务端 realpath（软链归一，tab 与面包屑统一用它）
+export interface FsStatResult {
+	name: string;
+	path: string;
+	kind: "file" | "dir";
+}
+
+// fs/read 响应：文本预览内容 + 元信息
+export interface FsTextResult {
+	name: string;
+	path: string;
+	size: number;
+	content: string;
+}
+
+export async function statFs(
+	sessionId: string,
+	path: string,
+): Promise<FsStatResult> {
+	return (await request(
+		`/api/sessions/${encodeURIComponent(sessionId)}/fs/stat?path=${encodeURIComponent(path)}`,
+	)) as FsStatResult;
+}
+
+// 文件夹 tab 文件树：目录直接子级（跳过隐藏/node_modules，500 上限，dirs 优先）
+export async function listViewerDir(
+	sessionId: string,
+	path: string,
+): Promise<FsEntry[]> {
+	const body = (await request(
+		`/api/sessions/${encodeURIComponent(sessionId)}/fs/tree?path=${encodeURIComponent(path)}`,
+	)) as { entries: FsEntry[] };
+	return body.entries;
+}
+
+// 文本预览：扩展名白名单（md/ts/py 等）+ 1MB 上限（服务端 415/413）
+export async function readViewerText(
+	sessionId: string,
+	path: string,
+): Promise<FsTextResult> {
+	return (await request(
+		`/api/sessions/${encodeURIComponent(sessionId)}/fs/read?path=${encodeURIComponent(path)}`,
+	)) as FsTextResult;
+}
+
+// 图片预览二进制：走 authenticatedFetch 拿 Blob（<img> 标签带不了 Bearer，
+// 由调用方转 objectURL）；失败按统一 ensureOk 抛带服务端 message 的 Error
+export async function fetchViewerRaw(
+	sessionId: string,
+	path: string,
+): Promise<Blob> {
+	const res = await authenticatedFetch(
+		`/api/sessions/${encodeURIComponent(sessionId)}/fs/raw?path=${encodeURIComponent(path)}`,
+	);
+	await ensureOk(res);
+	return res.blob();
+}
+
 // GET/PUT /api/settings 的模型设置视图（server settings-store.ts 的 ModelSettingsView 镜像）
 export interface ModelRefWire {
 	provider: string;

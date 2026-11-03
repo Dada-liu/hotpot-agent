@@ -35,6 +35,7 @@
   - `logo.png`：产品 logo（侧栏、欢迎态、面板头部）；
   - `main_agent.png`：对话区助手头像；
   - `work_agent.png` / `work_agent_active.webp`、`task_agent.png` / `task_agent_active.webp`：右侧面板 worker/task 卡片，**运行中切换 `*_active` 动图**（见 `AgentPanel.nodeAvatarSrc`）。
+  - `video/startMV_alpha_282.webm`：启动动画（透明背景 VP9 WebM），由 `StartupAnimation` 全屏播放；每个标签页会话只播一次（`sessionStorage` 键 `hotpot.splashSeen`，刷新不重播），播完/点击/加载失败后覆盖层直接卸载，App 根布局 500ms 渐显（`prefers-reduced-motion` 下不渐显）。官网 `website/` 用同一份动画与同一个 storage 键。
 - 头像加载失败回退首字母圆点（`AgentPanel.Avatar` 的 `broken` 状态）。
 
 ## 5. 流式（打字机）性能约定

@@ -1,5 +1,8 @@
-// 右侧面板：只展示 work / task agent 卡片（main agent 不展示）。显隐由 App 控制：
-// worker 运行期间自动展示（可用顶栏开关/头部 X 收起），全部任务完成即整体消失；无空态。
+// 右侧面板：work / task agent 卡片（main agent 不展示）+ 会话区路径点击预览的文件 tab。
+// 显隐由 App 控制：worker 运行期间自动展示（可用顶栏开关/头部 X 收起），全部任务完成即
+// 整体消失；用户点击会话区本地文件/文件夹路径会新开文件 tab，此时面板即使无 worker 也展示
+// （关闭全部文件 tab 且无 running worker 即收起）。无空态。
+// 头部下方是 tab 条：固定「Agents」+ 动态文件 tab（图标 + 截断名 + × 关闭）。
 // 卡片状态（running/done/failed）数据源：durable 的 agent_end 日志事件（failed 不回退），
 // log(error) 即时标 failed；turn(end) 不翻转 agent 状态
 // 卡片 = 状态感头像（运行中切 *_active.webp 动图）+ 前端派生的短显示名（限 10 字符）
@@ -7,13 +10,23 @@
 // （左边线 + 缩进 + 弱化底色）；点击卡片头部区域弹出详情弹窗：
 // 任务提示词全文 + 该 agent 的实时输出（复用主对话区 TranscriptItem）。
 
-import { Check, Circle, Loader2, Wrench, X } from "lucide-react";
+import {
+	Check,
+	Circle,
+	FileText,
+	Folder,
+	Loader2,
+	Users,
+	Wrench,
+	X,
+} from "lucide-react";
 import { type ReactElement, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { baseName } from "@/lib/local-path";
 import { agentNameFromTask } from "@/lib/session-name";
 import { cn } from "@/lib/utils";
 import type { TodoItem } from "../protocol.ts";
@@ -24,6 +37,7 @@ import type {
 	UsageTotals,
 } from "../state/reducer.ts";
 import { TranscriptItem } from "./ChatView.tsx";
+import { FileViewer, type FileViewerTab } from "./FileViewer.tsx";
 
 interface AgentPanelProps {
 	agents: AgentNode[];
@@ -34,6 +48,16 @@ interface AgentPanelProps {
 	transcript: TranscriptEntry[];
 	// todo 工具清单：按 agentId 折叠的快照（todo/set 实时更新）
 	todosByAgent: Record<string, TodoItem[]>;
+	// 文件预览 tab：会话区本地路径点击产生（同路径只开一个，可关闭）
+	fileTabs: FileViewerTab[];
+	// 当前激活 tab："agents" 或文件 tab 的 path
+	activePanelTab: string;
+	onSelectPanelTab: (tab: string) => void;
+	onCloseFileTab: (path: string) => void;
+	// 文件树里点文件 → App 新开/激活文件 tab
+	onOpenPath: (path: string) => void;
+	// 当前会话 id（FileViewer 请求用）；null 时文件 tab 不会出现（保底回退 Agents）
+	sessionId: string | null;
 	onToggle: () => void;
 }
 
@@ -355,6 +379,12 @@ export function AgentPanel({
 	sessionName,
 	transcript,
 	todosByAgent,
+	fileTabs,
+	activePanelTab,
+	onSelectPanelTab,
+	onCloseFileTab,
+	onOpenPath,
+	sessionId,
 	onToggle,
 }: AgentPanelProps): ReactElement | null {
 	// 详情弹窗选中的 agent；会话切换时 App 以 key 重建本组件，状态自然归零
@@ -362,7 +392,12 @@ export function AgentPanel({
 	const selected = selectedId
 		? (agents.find((a) => a.agentId === selectedId) ?? null)
 		: null;
-	// 显隐由 App 控制：worker 运行期间展示（可收起），全部完成即隐藏；无空态
+	// 激活的文件 tab（activePanelTab 命中 fileTabs 才有；未命中回退 Agents 视图）
+	const activeFileTab =
+		activePanelTab === "agents"
+			? null
+			: (fileTabs.find((t) => t.path === activePanelTab) ?? null);
+	// 显隐由 App 控制：worker 运行期间展示（可收起）或存在文件预览 tab；无空态
 	if (!open) {
 		return null;
 	}
@@ -390,47 +425,119 @@ export function AgentPanel({
 					<X className="size-4" />
 				</Button>
 			</div>
-			<ScrollArea className="min-h-0 flex-1">
-				<div className="flex flex-col gap-2.5 p-3">
-					{agents
-						.filter((a) => a.parentAgentId === "main")
-						.map((node) => (
-							<AgentCard
-								key={node.agentId}
-								node={node}
-								agents={agents}
-								todosByAgent={todosByAgent}
-								onSelect={setSelectedId}
-							/>
-						))}
-				</div>
-			</ScrollArea>
-			{/* 用量卡片：按 tier 分组 */}
-			<div className="shrink-0 p-3 pt-0">
-				<Card className="gap-1.5 rounded-xl p-3 text-xs">
-					<div className="text-[11px] font-medium text-muted-foreground">
-						用量
-					</div>
-					{Object.entries(usage.byTier).map(([tier, bucket]) => (
-						<div key={tier} className="flex items-center justify-between gap-2">
-							<span className="font-mono text-[11px] text-muted-foreground">
-								{tier}
-							</span>
-							<span className="font-mono text-[11px]">
-								in {compact(bucket.input)} · out {compact(bucket.output)} ·{" "}
-								{bucket.count} 次
-							</span>
-						</div>
-					))}
-					<div className="mt-1 flex items-center justify-between gap-2 border-t border-dashed pt-1.5">
-						<span className="font-mono text-[11px] font-medium">total</span>
-						<span className="font-mono text-[11px] font-medium">
-							in {compact(usage.total.input)} · out{" "}
-							{compact(usage.total.output)}
-						</span>
-					</div>
-				</Card>
+			{/* tab 条：固定 Agents + 动态文件 tab（可关闭）；横向滚动防挤压 */}
+			<div className="flex h-9 shrink-0 items-center gap-1 overflow-x-auto border-b px-2">
+				<button
+					type="button"
+					onClick={() => {
+						onSelectPanelTab("agents");
+					}}
+					className={cn(
+						"flex shrink-0 items-center gap-1 rounded-md px-2 py-1 text-xs transition-colors",
+						activeFileTab === null
+							? "bg-background font-medium text-foreground shadow-sm"
+							: "text-muted-foreground hover:bg-secondary",
+					)}
+				>
+					<Users className="size-3.5" />
+					Agents
+				</button>
+				{fileTabs.map((t) => (
+					<span
+						key={t.path}
+						className={cn(
+							"flex shrink-0 items-center overflow-hidden rounded-md text-xs",
+							activePanelTab === t.path
+								? "bg-background font-medium text-foreground shadow-sm"
+								: "text-muted-foreground hover:bg-secondary",
+						)}
+					>
+						<button
+							type="button"
+							title={t.path}
+							onClick={() => {
+								onSelectPanelTab(t.path);
+							}}
+							className="flex max-w-28 items-center gap-1 truncate py-1 pl-2"
+						>
+							{t.kind === "dir" ? (
+								<Folder className="size-3.5 shrink-0" />
+							) : (
+								<FileText className="size-3.5 shrink-0" />
+							)}
+							<span className="truncate">{truncate(baseName(t.path), 16)}</span>
+						</button>
+						<button
+							type="button"
+							title="关闭"
+							aria-label={`关闭 ${baseName(t.path)}`}
+							onClick={() => {
+								onCloseFileTab(t.path);
+							}}
+							className="px-1.5 py-1 text-muted-foreground hover:text-foreground"
+						>
+							<X className="size-3" />
+						</button>
+					</span>
+				))}
 			</div>
+			{activeFileTab !== null && sessionId !== null ? (
+				<div className="flex min-h-0 flex-1 flex-col">
+					<FileViewer
+						key={activeFileTab.path}
+						sessionId={sessionId}
+						tab={activeFileTab}
+						onOpenPath={onOpenPath}
+					/>
+				</div>
+			) : (
+				<>
+					<ScrollArea className="min-h-0 flex-1">
+						<div className="flex flex-col gap-2.5 p-3">
+							{agents
+								.filter((a) => a.parentAgentId === "main")
+								.map((node) => (
+									<AgentCard
+										key={node.agentId}
+										node={node}
+										agents={agents}
+										todosByAgent={todosByAgent}
+										onSelect={setSelectedId}
+									/>
+								))}
+						</div>
+					</ScrollArea>
+					{/* 用量卡片：按 tier 分组 */}
+					<div className="shrink-0 p-3 pt-0">
+						<Card className="gap-1.5 rounded-xl p-3 text-xs">
+							<div className="text-[11px] font-medium text-muted-foreground">
+								用量
+							</div>
+							{Object.entries(usage.byTier).map(([tier, bucket]) => (
+								<div
+									key={tier}
+									className="flex items-center justify-between gap-2"
+								>
+									<span className="font-mono text-[11px] text-muted-foreground">
+										{tier}
+									</span>
+									<span className="font-mono text-[11px]">
+										in {compact(bucket.input)} · out {compact(bucket.output)} ·{" "}
+										{bucket.count} 次
+									</span>
+								</div>
+							))}
+							<div className="mt-1 flex items-center justify-between gap-2 border-t border-dashed pt-1.5">
+								<span className="font-mono text-[11px] font-medium">total</span>
+								<span className="font-mono text-[11px] font-medium">
+									in {compact(usage.total.input)} · out{" "}
+									{compact(usage.total.output)}
+								</span>
+							</div>
+						</Card>
+					</div>
+				</>
+			)}
 			<Dialog
 				open={selected !== null}
 				onOpenChange={(next) => {

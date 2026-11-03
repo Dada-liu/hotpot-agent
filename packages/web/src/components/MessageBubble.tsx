@@ -3,6 +3,7 @@
 
 import { memo, type ReactElement } from "react";
 import { cn } from "@/lib/utils";
+import { LinkifyText } from "./LinkifyText.tsx";
 import { Markdown } from "./Markdown.tsx";
 
 interface MessageBubbleProps {
@@ -18,7 +19,8 @@ export const MessageBubble = memo(function MessageBubble({
 	if (variant === "user") {
 		return (
 			<div className="ml-auto max-w-[80%] whitespace-pre-wrap break-words rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-primary-foreground">
-				{text}
+				{/* 附件 @路径 与裸本地路径可点击，在右侧面板预览 */}
+				<LinkifyText>{text}</LinkifyText>
 			</div>
 		);
 	}

@@ -1,6 +1,6 @@
 import { Slot } from "@radix-ui/react-slot";
 import { cva, type VariantProps } from "class-variance-authority";
-import type * as React from "react";
+import { type ComponentProps, forwardRef } from "react";
 import { cn } from "@/lib/utils";
 
 const buttonVariants = cva(
@@ -37,20 +37,29 @@ const buttonVariants = cva(
 	},
 );
 
-function Button({
-	className,
-	variant = "default",
-	size = "default",
-	asChild = false,
-	...props
-}: React.ComponentProps<"button"> &
-	VariantProps<typeof buttonVariants> & {
-		asChild?: boolean;
-	}) {
+// 必须 forwardRef：Tooltip/DropdownMenu 等 Radix 触发器的 asChild 依赖子组件 ref
+// 才能拿到锚点定位；普通函数组件会丢 ref，导致气泡定位到视口原点（0,0）看似不出现
+const Button = forwardRef<
+	HTMLButtonElement,
+	ComponentProps<"button"> &
+		VariantProps<typeof buttonVariants> & {
+			asChild?: boolean;
+		}
+>(function Button(
+	{
+		className,
+		variant = "default",
+		size = "default",
+		asChild = false,
+		...props
+	},
+	ref,
+) {
 	const Comp = asChild ? Slot : "button";
 
 	return (
 		<Comp
+			ref={ref}
 			data-slot="button"
 			data-variant={variant}
 			data-size={size}
@@ -58,6 +67,6 @@ function Button({
 			{...props}
 		/>
 	);
-}
+});
 
 export { Button, buttonVariants };

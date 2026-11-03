@@ -14,6 +14,8 @@
 //   文本上传（<home>/uploads/<sessionId>/<counter>-<净化名>，绝不覆盖，10 个/会话上限）；
 //   fs 浏览（realpath + startsWith 防逃逸，跳过隐藏/node_modules，500 条上限）；
 //   内置指令 /help、/permission（send() 里先于 prompt template 解析分发，本地应答）
+// - 会话区路径点击预览（v1）：statViewerPath/listViewerDir/readViewerText/readViewerRaw 四接口，
+//   访问白名单 = 会话 cwd ∪ <home>/uploads（realpath 前缀校验），文本 1MB 上限 + 扩展名白名单
 // - M4 Feature⑦ MCP：开关打开且 settings.mcpServers 非空时 connectMcpServers 建连，
 //   工具经 mcpTools 注入 runtime；mcp/attached 经 watermark.session 落盘；
 //   mcpCreateClient 为测试注入缝；manager.close 里 closeMcpConnections 统一关闭
@@ -35,13 +37,15 @@
 import { randomUUID } from "node:crypto";
 import {
 	mkdir,
+	open,
 	readdir,
+	readFile,
 	realpath,
 	rm,
 	stat,
 	writeFile,
 } from "node:fs/promises";
-import { join, resolve, sep } from "node:path";
+import { basename, extname, join, resolve, sep } from "node:path";
 import type { LlmAdapter, ModelInfo } from "@hotpot/ai";
 import {
 	ApprovalChain,
@@ -137,8 +141,8 @@ export class PromptCommandError extends Error {
 // M2 REST 4xx 映射：manager 方法对可预期非法输入（上传超限/含 NUL、fs 逃逸等）抛本错误，
 // 路由层按 status 转 {error}+状态码；message 即 {error} 文案。
 // status 收窄为字面量联合：Hono c.json 只接受具体状态码字面量。
-// 500 供工作区存储损坏（invalid-storage）使用
-export type SessionApiErrorStatus = 400 | 404 | 409 | 413 | 500;
+// 500 供工作区存储损坏（invalid-storage）使用；415 供文件预览的扩展名白名单拒绝使用
+export type SessionApiErrorStatus = 400 | 404 | 409 | 413 | 415 | 500;
 
 export class SessionApiError extends Error {
 	readonly status: SessionApiErrorStatus;
@@ -169,6 +173,68 @@ export interface FsEntry {
 	kind: "file" | "dir";
 }
 
+// fs/stat 结果：点击会话区路径时先判定 file/dir，前端据此决定 tab 类型；
+// path 为 realpath（macOS /tmp → /private/tmp 等软链归一），前端用它建 tab
+export interface FsStatResult {
+	name: string;
+	path: string;
+	kind: "file" | "dir";
+}
+
+// fs/read 结果：文本内容 + 元信息（path 为 realpath，前端面包屑/再请求用）
+export interface FsTextResult {
+	name: string;
+	path: string;
+	size: number;
+	content: string;
+}
+
+// 会话区路径点击预览（v1）的文本扩展名白名单（小写比较）：
+// 需求明列 md/ts/python，其余为常见代码/配置/日志格式
+const VIEWER_TEXT_EXTS: readonly string[] = [
+	"md",
+	"mdx",
+	"txt",
+	"json",
+	"js",
+	"jsx",
+	"ts",
+	"tsx",
+	"py",
+	"css",
+	"html",
+	"yml",
+	"yaml",
+	"toml",
+	"xml",
+	"sh",
+	"log",
+	"csv",
+];
+
+// 预览图片扩展名 → Content-Type（raw 路由用；自媒体常见格式 + svg/avif/bmp/ico）
+const VIEWER_IMAGE_TYPES: Record<string, string> = {
+	png: "image/png",
+	jpg: "image/jpeg",
+	jpeg: "image/jpeg",
+	webp: "image/webp",
+	gif: "image/gif",
+	svg: "image/svg+xml",
+	avif: "image/avif",
+	bmp: "image/bmp",
+	ico: "image/x-icon",
+};
+
+// 文本预览白名单判断（按扩展名，大小写不敏感）
+export function isViewerTextExt(name: string): boolean {
+	return VIEWER_TEXT_EXTS.includes(extname(name).slice(1).toLowerCase());
+}
+
+// 图片扩展名 → Content-Type；不在白名单返回 null（调用方转 415）
+export function viewerImageContentType(name: string): string | null {
+	return VIEWER_IMAGE_TYPES[extname(name).slice(1).toLowerCase()] ?? null;
+}
+
 // 权限模式合法值（与 core config 的 PERMISSION_MODES 同序；该常量未导出，此处镜像）
 const PERMISSION_MODE_VALUES: readonly string[] = [
 	"readonly",
@@ -184,6 +250,67 @@ const DRAFT_UPLOAD_MAX_FILES = 100;
 const UPLOAD_NAME_MAX = 120;
 // fs/ls 单次最多返回的目录项数
 const FS_MAX_ENTRIES = 500;
+// 文本预览单文件上限：1MB（更大的文件不往浏览器塞）
+const FS_READ_MAX_BYTES = 1024 * 1024;
+// 图片预览单文件上限：20MB（本地读进内存，防误点超大文件撑爆服务）
+const FS_RAW_MAX_BYTES = 20 * 1024 * 1024;
+
+// 目录项读取 + 排序公共逻辑（listFs 与预览 tree 共用）：跳过隐藏项与 node_modules
+// （.env 等敏感文件不经 web 预览），500 条上限，dirs 优先、同档名字典序
+async function readDirEntries(realTarget: string): Promise<FsEntry[]> {
+	const dirents = await readdir(realTarget, { withFileTypes: true });
+	const entries: FsEntry[] = [];
+	for (const d of dirents) {
+		// 跳过隐藏项与 node_modules（.git 属隐藏项已覆盖）
+		if (d.name.startsWith(".") || d.name === "node_modules") continue;
+		const kind = d.isDirectory() ? "dir" : d.isFile() ? "file" : null;
+		if (kind === null) continue;
+		entries.push({ name: d.name, path: join(realTarget, d.name), kind });
+		if (entries.length >= FS_MAX_ENTRIES) break;
+	}
+	// dirs 优先，同档按名字典序
+	entries.sort((a, b) =>
+		a.kind === b.kind
+			? a.name < b.name
+				? -1
+				: a.name > b.name
+					? 1
+					: 0
+			: a.kind === "dir"
+				? -1
+				: 1,
+	);
+	return entries;
+}
+
+// 预览路径统一入口：realpath 后必须等于/位于 realCwd 或 uploadsRoot 之下
+// （前缀带尾部分隔符，防 /foo/bar 误命中 /foo/bar2；uploadsRoot 为 null 时只校验 cwd）。
+// 不存在 → 400；越界 → 400。返回 realpath 后的绝对路径。
+async function resolveViewerPath(
+	cwd: string,
+	uploadsRoot: string | null,
+	rawPath: string,
+): Promise<string> {
+	let realTarget: string;
+	try {
+		// rawPath 为 "" 时 resolve 回 cwd 自身；绝对路径原样采用
+		realTarget = await realpath(resolve(cwd, rawPath));
+	} catch {
+		throw new SessionApiError(400, `path 不存在或不可访问: ${rawPath}`);
+	}
+	const roots: string[] = [await realpath(cwd)];
+	if (uploadsRoot !== null) roots.push(uploadsRoot);
+	for (const root of roots) {
+		const prefix = root.endsWith(sep) ? root : `${root}${sep}`;
+		if (realTarget === root || realTarget.startsWith(prefix)) {
+			return realTarget;
+		}
+	}
+	throw new SessionApiError(
+		400,
+		"path 越出允许访问范围（仅会话目录与上传目录可预览）",
+	);
+}
 
 // 上传文件名净化：剥掉路径分隔符（取末段）与 .. 段，trim 后限长；
 // 返回空串表示文件名非法（调用方转 400）
@@ -299,6 +426,20 @@ export interface SessionManager {
 	// M2 工作区浏览（web @ 补全）：列 cwd 子目录直接子级（dirs 优先、上限 500）；
 	// relPath 支持绝对/相对，realpath 后越出 cwd 抛 SessionApiError(400)
 	listFs(id: string, relPath: string): Promise<{ entries: FsEntry[] }>;
+	// 会话区路径点击预览（v1）：白名单 = 会话 cwd ∪ <home>/uploads（realpath 前缀校验）
+	statViewerPath(id: string, path: string): Promise<FsStatResult>;
+	listViewerDir(id: string, path: string): Promise<{ entries: FsEntry[] }>;
+	readViewerText(id: string, path: string): Promise<FsTextResult>;
+	// 图片二进制（data 为文件字节，调用方按 contentType 响应）
+	readViewerRaw(
+		id: string,
+		path: string,
+	): Promise<{
+		name: string;
+		size: number;
+		contentType: string;
+		data: Uint8Array<ArrayBuffer>;
+	}>;
 	steer(id: string, content: string): Promise<void>;
 	cancel(id: string): void;
 	answerToolApproval(
@@ -587,6 +728,16 @@ export function createSessionManager(
 	}
 
 	const picker = opts.picker ?? (() => pickDirectory());
+
+	// 预览白名单第二根：uploads 目录的 realpath。首次上传前目录可能不存在，
+	// 此时白名单只剩会话 cwd（返回 null 即可，resolveViewerPath 会跳过）
+	async function viewerUploadsRoot(): Promise<string | null> {
+		try {
+			return await realpath(join(resolveHome(opts.home), "uploads"));
+		} catch {
+			return null;
+		}
+	}
 
 	// M5 遥测旁路：整个 manager 共用一个运行时（未启用或 endpoint 不可用时为 null）。
 	// 读配置失败也只退化为 null——遥测问题不能影响服务启动与会话装配
@@ -1388,29 +1539,100 @@ export function createSessionManager(
 			if (realTarget !== realCwd && !realTarget.startsWith(prefix)) {
 				throw new SessionApiError(400, "path 越出会话工作目录");
 			}
-			const dirents = await readdir(realTarget, { withFileTypes: true });
-			const entries: FsEntry[] = [];
-			for (const d of dirents) {
-				// 跳过隐藏项与 node_modules（.git 属隐藏项已覆盖）
-				if (d.name.startsWith(".") || d.name === "node_modules") continue;
-				const kind = d.isDirectory() ? "dir" : d.isFile() ? "file" : null;
-				if (kind === null) continue;
-				entries.push({ name: d.name, path: join(realTarget, d.name), kind });
-				if (entries.length >= FS_MAX_ENTRIES) break;
-			}
-			// dirs 优先，同档按名字典序
-			entries.sort((a, b) =>
-				a.kind === b.kind
-					? a.name < b.name
-						? -1
-						: a.name > b.name
-							? 1
-							: 0
-					: a.kind === "dir"
-						? -1
-						: 1,
+			return { entries: await readDirEntries(realTarget) };
+		},
+
+		async statViewerPath(id: string, path: string): Promise<FsStatResult> {
+			const m = requireManaged(id);
+			const realTarget = await resolveViewerPath(
+				m.cwd,
+				await viewerUploadsRoot(),
+				path,
 			);
-			return { entries };
+			const s = await stat(realTarget);
+			return {
+				name: basename(realTarget),
+				path: realTarget,
+				kind: s.isDirectory() ? "dir" : "file",
+			};
+		},
+
+		async listViewerDir(
+			id: string,
+			path: string,
+		): Promise<{ entries: FsEntry[] }> {
+			const m = requireManaged(id);
+			const realTarget = await resolveViewerPath(
+				m.cwd,
+				await viewerUploadsRoot(),
+				path,
+			);
+			if (!(await stat(realTarget)).isDirectory()) {
+				throw new SessionApiError(400, "path 不是目录");
+			}
+			return { entries: await readDirEntries(realTarget) };
+		},
+
+		async readViewerText(id: string, path: string): Promise<FsTextResult> {
+			const m = requireManaged(id);
+			const realTarget = await resolveViewerPath(
+				m.cwd,
+				await viewerUploadsRoot(),
+				path,
+			);
+			if (!(await stat(realTarget)).isFile()) {
+				throw new SessionApiError(400, "path 不是普通文件");
+			}
+			if (!isViewerTextExt(realTarget)) {
+				throw new SessionApiError(415, "暂不支持的文件类型");
+			}
+			// 大小上限先经 open().stat() 判定再整读，避免误点超大文件先进内存
+			const handle = await open(realTarget, "r");
+			try {
+				const { size } = await handle.stat();
+				if (size > FS_READ_MAX_BYTES) {
+					throw new SessionApiError(413, "文件超过 1MB，暂不支持预览");
+				}
+				const content = await readFile(realTarget, "utf8");
+				return { name: basename(realTarget), path: realTarget, size, content };
+			} finally {
+				await handle.close();
+			}
+		},
+
+		async readViewerRaw(
+			id: string,
+			path: string,
+		): Promise<{
+			name: string;
+			size: number;
+			contentType: string;
+			data: Uint8Array<ArrayBuffer>;
+		}> {
+			const m = requireManaged(id);
+			const realTarget = await resolveViewerPath(
+				m.cwd,
+				await viewerUploadsRoot(),
+				path,
+			);
+			if (!(await stat(realTarget)).isFile()) {
+				throw new SessionApiError(400, "path 不是普通文件");
+			}
+			const contentType = viewerImageContentType(realTarget);
+			if (contentType === null) {
+				throw new SessionApiError(415, "暂不支持的文件类型");
+			}
+			const handle = await open(realTarget, "r");
+			try {
+				const { size } = await handle.stat();
+				if (size > FS_RAW_MAX_BYTES) {
+					throw new SessionApiError(413, "文件超过 20MB，暂不支持预览");
+				}
+				const data = await readFile(realTarget);
+				return { name: basename(realTarget), size, contentType, data };
+			} finally {
+				await handle.close();
+			}
 		},
 
 		async steer(id: string, content: string): Promise<void> {

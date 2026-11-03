@@ -1,7 +1,11 @@
 // 自定义主题入口：全局样式覆盖 + hero 图片悬浮组合，其余组件沿用默认主题
 import { normalizeImagePath } from "@rspress/core/runtime";
-import { HomeHero as BasicHomeHero } from "@rspress/core/theme-original";
+import {
+	HomeHero as BasicHomeHero,
+	Layout as BasicLayout,
+} from "@rspress/core/theme-original";
 import type { ComponentProps } from "react";
+import { StartupSplash } from "./StartupSplash";
 import "./index.css";
 
 // hero 右侧图：默认展示三层 agent 组合，悬浮时切换为 logo
@@ -35,5 +39,15 @@ function HomeHero(props: ComponentProps<typeof BasicHomeHero>) {
 	return <BasicHomeHero {...props} image={heroImage} />;
 }
 
-export { HomeHero };
+// 在默认布局之上叠加启动动画覆盖层（仅本次标签页首次进入时展示）
+function Layout(props: ComponentProps<typeof BasicLayout>) {
+	return (
+		<>
+			<BasicLayout {...props} />
+			<StartupSplash />
+		</>
+	);
+}
+
+export { HomeHero, Layout };
 export * from "@rspress/core/theme-original";

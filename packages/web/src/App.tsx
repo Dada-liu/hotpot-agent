@@ -1,7 +1,8 @@
 // 根组件：三栏布局（会话列表 | 对话 | agent 面板）与全局状态。
 // 全局状态 = useReducer(reduceChatAction) 折叠 WireEvent 流；切换会话时重置并重建 SSE 连接。
 // 顶栏：会话目录名 + 重连指示 + 面板开关（仅 worker 运行期间可见）。
-// agent 面板随 worker 运行自动展示、全部完成即消失，无空态。
+// agent 面板随 worker 运行自动展示、全部完成即消失，无空态；会话区本地路径可点击，
+// 点击在面板新开可关闭的文件预览 tab（此时即使无 worker 面板也展示，tab 全关即收起）。
 
 import { PanelRight } from "lucide-react";
 import { useCallback, useEffect, useReducer, useState } from "react";
@@ -32,13 +33,20 @@ import {
 	type SessionSummary,
 	sendMessage,
 	setPermission,
+	statFs,
 	steerQueued,
 	type WorkspaceWire,
 } from "./api.ts";
 import { AgentPanel } from "./components/AgentPanel.tsx";
 import { ChatView } from "./components/ChatView.tsx";
+import type { FileViewerTab } from "./components/FileViewer.tsx";
+import { OpenLocalPathContext } from "./components/LocalPathLink.tsx";
 import { SessionList } from "./components/SessionList.tsx";
 import { SettingsDialog } from "./components/SettingsDialog.tsx";
+import {
+	StartupAnimation,
+	startupSplashSeen,
+} from "./components/StartupAnimation.tsx";
 import { WorkspacePickerDialog } from "./components/WorkspacePickerDialog.tsx";
 import { type ConnectionState, connect } from "./events.ts";
 import { sessionNameFromPrompt } from "./lib/session-name.ts";
@@ -113,7 +121,19 @@ export function App() {
 	const [prompts, setPrompts] = useState<PromptInfo[]>([]);
 	// 面板收起是本地偏好：worker 运行期间可用顶栏开关展开/收起
 	const [panelCollapsed, setPanelCollapsed] = useState(false);
+	// 会话区路径点击预览的文件 tab（v1）：本地瞬态（类比弹窗态），切换会话清空；
+	// 无 running worker 且全部关闭时面板收起
+	const [fileTabs, setFileTabs] = useState<FileViewerTab[]>([]);
+	// 当前激活的右侧面板 tab："agents" 或文件 tab 的 path
+	const [activePanelTab, setActivePanelTab] = useState<string>("agents");
 	const [settingsOpen, setSettingsOpen] = useState(false);
+	// 启动动画结束（播完/点击/失败）后界面才渐显，避免开场白屏直接跳到完整布局；
+	// 本标签页已看过时首屏直接可见（刷新不再重播）
+	const [splashDone, setSplashDone] = useState(startupSplashSeen);
+
+	const handleSplashDone = useCallback(() => {
+		setSplashDone(true);
+	}, []);
 
 	const refreshSessions = useCallback(async () => {
 		try {
@@ -150,9 +170,11 @@ export function App() {
 	const [connEpoch, setConnEpoch] = useState(0);
 	// biome-ignore lint/correctness/useExhaustiveDependencies: connEpoch 是强制重建连接的计数信号，刻意不读具体值
 	useEffect(() => {
-		// 切换会话/回欢迎态：本地 notice 与创建错误不跨会话
+		// 切换会话/回欢迎态：本地 notice 与创建错误不跨会话；文件预览 tab 同为本地瞬态
 		setNotices([]);
 		setCreateError(null);
+		setFileTabs([]);
+		setActivePanelTab("agents");
 		if (currentId === null) {
 			setConnState("idle");
 			setPrompts([]);
@@ -195,6 +217,47 @@ export function App() {
 			void refreshInbox(currentId);
 		}
 	}, [currentId, chat.turn, refreshInbox]);
+
+	// 会话区路径点击（v1）：先 stat 判 file/dir，同路径复用已有 tab 只激活；
+	// tab 用服务端 realpath（软链归一，与文件树返回的路径同源，面包屑才能对齐）；
+	// 失败（不存在/越界等）落本地 notice 气泡
+	const openLocalPath = useCallback(
+		(path: string) => {
+			if (currentId === null) return;
+			const sessionId = currentId;
+			statFs(sessionId, path).then(
+				(s) => {
+					setFileTabs((tabs) =>
+						tabs.some((t) => t.path === s.path)
+							? tabs
+							: [...tabs, { path: s.path, kind: s.kind }],
+					);
+					setActivePanelTab(s.path);
+				},
+				(err: unknown) => {
+					setNotices((n) => [...n, `无法打开 ${path}：${errorMessage(err)}`]);
+				},
+			);
+		},
+		[currentId],
+	);
+
+	// 关闭文件 tab：关的是激活 tab 则回退到左侧邻居（无则 Agents）
+	const closeFileTab = useCallback(
+		(path: string) => {
+			const idx = fileTabs.findIndex((t) => t.path === path);
+			const rest = fileTabs.filter((t) => t.path !== path);
+			setFileTabs(rest);
+			if (activePanelTab === path) {
+				setActivePanelTab(
+					idx > 0 && rest[idx - 1] !== undefined
+						? rest[idx - 1].path
+						: "agents",
+				);
+			}
+		},
+		[fileTabs, activePanelTab],
+	);
 
 	// 生成临时会话（草稿）：绑定目标工作区（null = 未分组），侧栏立即出现「新会话」行；
 	// 不落盘，首条消息发送时才创建真正的会话
@@ -558,137 +621,170 @@ export function App() {
 	const workerRunning = chat.agents.some(
 		(a) => a.role === "worker" && a.status === "running",
 	);
+	// composer「当前工作区」入口：会话 cwd 作为文件夹名与右侧文件树打开目标
+	// （fs 预览白名单以 cwd 为准，不用工作区记录路径，避免两者不一致时越界）
+	const currentCwd = current?.cwd ?? null;
 
 	return (
 		<TooltipProvider>
-			<div className="flex h-screen overflow-hidden">
-				<SessionList
-					workspaces={workspaces}
-					sessions={sessions}
-					currentId={currentId}
-					draft={
-						draft === null
-							? null
-							: { id: draft.id, workspaceId: draft.workspaceId }
-					}
-					draftActive={currentId === null && draft !== null}
-					onSelectDraft={handleSelectDraft}
-					nameFor={(s) => names[s.id] ?? s.cwd}
-					onSelect={handleSelect}
-					onNewSessionIn={handleNewSessionIn}
-					onNewSessionGlobal={handleCreateGlobal}
-					onAddWorkspace={() => {
-						void handleAddWorkspace();
-					}}
-					addWorkspaceBusy={addWorkspaceBusy}
-					onRenameWorkspace={handleRenameWorkspace}
-					onDeleteWorkspace={handleDeleteWorkspace}
-					onReorderWorkspaces={handleReorderWorkspaces}
-					onDelete={(id) => {
-						void handleDelete(id);
-					}}
-					onArchive={(id) => {
-						void handleArchive(id);
-					}}
-					onOpenSettings={() => {
-						setSettingsOpen(true);
-					}}
-				/>
-				<SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
-				<WorkspacePickerDialog
-					open={pickerOpen}
-					onOpenChange={setPickerOpen}
-					onCreated={handleWorkspaceCreated}
-					startInManual
-				/>
-				<div className="flex min-w-0 flex-1 flex-col">
-					<header className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
-						<span
-							className="min-w-0 flex-1 truncate text-sm text-muted-foreground"
-							title={current?.cwd ?? draftWorkspace?.path ?? undefined}
-						>
-							{current
-								? currentName
-								: draft !== null
-									? draftWorkspace === null
-										? "新会话"
-										: `新会话 · ${draftWorkspace.title}`
-									: "hotpot-agent"}
-						</span>
-						<span
-							className={cn(
-								"flex items-center gap-1.5 text-xs text-brand",
-								connState !== "reconnecting" && "hidden",
-							)}
-						>
-							<span className="size-1.5 animate-pulse rounded-full bg-brand" />
-							重连中
-						</span>
-						<Button
-							variant="ghost"
-							size="icon"
-							className={cn("size-8", !workerRunning && "hidden")}
-							onClick={() => {
-								setPanelCollapsed((v) => !v);
-							}}
-							aria-label="切换右侧面板"
-						>
-							<PanelRight className="size-4" />
-						</Button>
-					</header>
-					{error !== null && (
-						<div className="bg-destructive/10 px-4 py-1.5 text-center text-xs text-destructive">
-							{error}
-						</div>
+			<StartupAnimation onDone={handleSplashDone} />
+			<OpenLocalPathContext.Provider value={openLocalPath}>
+				<div
+					className={cn(
+						"flex h-screen overflow-hidden transition-opacity duration-500 motion-reduce:transition-none",
+						splashDone ? "opacity-100" : "opacity-0",
 					)}
-					<ChatView
-						state={chat}
-						hasSession={currentId !== null}
-						welcome={currentId === null}
-						prompts={prompts}
-						notices={notices}
-						createError={createError}
+				>
+					<SessionList
+						workspaces={workspaces}
+						sessions={sessions}
+						currentId={currentId}
+						draft={
+							draft === null
+								? null
+								: { id: draft.id, workspaceId: draft.workspaceId }
+						}
+						draftActive={currentId === null && draft !== null}
+						onSelectDraft={handleSelectDraft}
+						nameFor={(s) => names[s.id] ?? s.cwd}
+						onSelect={handleSelect}
+						onNewSessionIn={handleNewSessionIn}
+						onNewSessionGlobal={handleCreateGlobal}
+						onAddWorkspace={() => {
+							void handleAddWorkspace();
+						}}
+						addWorkspaceBusy={addWorkspaceBusy}
+						onRenameWorkspace={handleRenameWorkspace}
+						onDeleteWorkspace={handleDeleteWorkspace}
+						onReorderWorkspaces={handleReorderWorkspaces}
+						onDelete={(id) => {
+							void handleDelete(id);
+						}}
+						onArchive={(id) => {
+							void handleArchive(id);
+						}}
+						onOpenSettings={() => {
+							setSettingsOpen(true);
+						}}
+					/>
+					<SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+					<WorkspacePickerDialog
+						open={pickerOpen}
+						onOpenChange={setPickerOpen}
+						onCreated={handleWorkspaceCreated}
+						startInManual
+					/>
+					<div className="flex min-w-0 flex-1 flex-col">
+						<header className="flex h-12 shrink-0 items-center gap-2 border-b px-4">
+							<span
+								className="min-w-0 flex-1 truncate text-sm text-muted-foreground"
+								title={current?.cwd ?? draftWorkspace?.path ?? undefined}
+							>
+								{current
+									? currentName
+									: draft !== null
+										? draftWorkspace === null
+											? "新会话"
+											: `新会话 · ${draftWorkspace.title}`
+										: "hotpot-agent"}
+							</span>
+							<span
+								className={cn(
+									"flex items-center gap-1.5 text-xs text-brand",
+									connState !== "reconnecting" && "hidden",
+								)}
+							>
+								<span className="size-1.5 animate-pulse rounded-full bg-brand" />
+								重连中
+							</span>
+							<Button
+								variant="ghost"
+								size="icon"
+								className={cn("size-8", !workerRunning && "hidden")}
+								onClick={() => {
+									setPanelCollapsed((v) => !v);
+								}}
+								aria-label="切换右侧面板"
+							>
+								<PanelRight className="size-4" />
+							</Button>
+						</header>
+						{error !== null && (
+							<div className="bg-destructive/10 px-4 py-1.5 text-center text-xs text-destructive">
+								{error}
+							</div>
+						)}
+						<ChatView
+							state={chat}
+							hasSession={currentId !== null}
+							welcome={currentId === null}
+							prompts={prompts}
+							notices={notices}
+							createError={createError}
+							sessionId={currentId}
+							workspacePath={currentCwd}
+							onOpenWorkspace={
+								currentCwd === null
+									? null
+									: () => {
+											openLocalPath(currentCwd);
+										}
+							}
+							permissionMode={chat.permissionMode}
+							permissionBusy={permissionBusy}
+							onPermissionChange={(mode) => {
+								void handlePermissionChange(mode);
+							}}
+							queueBusy={queueBusy}
+							onSteerQueued={(messageId) => {
+								void handleSteerQueued(messageId);
+							}}
+							onRemoveQueued={(messageId) => {
+								void handleRemoveQueued(messageId);
+							}}
+							onSend={(content) => {
+								void handleSend(content);
+							}}
+							onCancel={() => {
+								void handleCancel();
+							}}
+							onApproval={(requestId, decision) => {
+								void handleApproval(requestId, decision);
+							}}
+							approvalBusy={approvalBusy}
+							onPlanDecision={(decision, note) => {
+								void handlePlanDecision(decision, note);
+							}}
+						/>
+					</div>
+					<AgentPanel
+						key={currentId ?? "welcome"}
+						agents={chat.agents}
+						usage={chat.usage}
+						// worker 运行期间展示（可收起）；有文件预览 tab 时即使无 worker 也展示
+						open={(workerRunning && !panelCollapsed) || fileTabs.length > 0}
+						sessionName={currentName}
+						transcript={chat.transcript}
+						todosByAgent={chat.todosByAgent}
+						fileTabs={fileTabs}
+						activePanelTab={activePanelTab}
+						onSelectPanelTab={setActivePanelTab}
+						onCloseFileTab={closeFileTab}
+						onOpenPath={openLocalPath}
 						sessionId={currentId}
-						permissionMode={chat.permissionMode}
-						permissionBusy={permissionBusy}
-						onPermissionChange={(mode) => {
-							void handlePermissionChange(mode);
-						}}
-						queueBusy={queueBusy}
-						onSteerQueued={(messageId) => {
-							void handleSteerQueued(messageId);
-						}}
-						onRemoveQueued={(messageId) => {
-							void handleRemoveQueued(messageId);
-						}}
-						onSend={(content) => {
-							void handleSend(content);
-						}}
-						onCancel={() => {
-							void handleCancel();
-						}}
-						onApproval={(requestId, decision) => {
-							void handleApproval(requestId, decision);
-						}}
-						approvalBusy={approvalBusy}
-						onPlanDecision={(decision, note) => {
-							void handlePlanDecision(decision, note);
+						onToggle={() => {
+							// 面板只因文件 tab 存在时：X = 关掉全部文件 tab（面板随之收起）；
+							// 有 worker 时保持收起偏好语义
+							if (!workerRunning && fileTabs.length > 0) {
+								setFileTabs([]);
+								setActivePanelTab("agents");
+							} else {
+								setPanelCollapsed((v) => !v);
+							}
 						}}
 					/>
 				</div>
-				<AgentPanel
-					key={currentId ?? "welcome"}
-					agents={chat.agents}
-					usage={chat.usage}
-					open={workerRunning && !panelCollapsed}
-					sessionName={currentName}
-					transcript={chat.transcript}
-					todosByAgent={chat.todosByAgent}
-					onToggle={() => {
-						setPanelCollapsed((v) => !v);
-					}}
-				/>
-			</div>
+			</OpenLocalPathContext.Provider>
 		</TooltipProvider>
 	);
 }

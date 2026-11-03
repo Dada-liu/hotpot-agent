@@ -34,6 +34,7 @@ import {
 	TooltipContent,
 	TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { baseName } from "@/lib/local-path";
 import { cn } from "@/lib/utils";
 import {
 	listFs,
@@ -292,7 +293,8 @@ interface MentionState {
 
 // 输入卡片：welcome 态与对话底部共用。上下布局（textarea 在上，按钮区在下）：
 // - 空闲发送 = 新 turn；运行中发送 = 排队 next-turn（ListPlus 图标），取消钮移到 QueueBar
-// - 底部左侧：权限切换（Shield）+ 添加附件（Paperclip）；右侧：发送/排队。图标按钮
+// - 底部左侧：权限切换（Shield）+ 添加附件（Paperclip）+ 当前工作区（Folder + 文件夹名，
+//   点击在右侧面板打开工作区文件树 tab）；右侧：发送/排队。图标按钮
 //   tooltip 统一 side="top" + sideOffset={0}
 // - `/` 补全按 builtin 分组（内置指令 / 提示词模板）；内置指令命中后服务端 200 {reply}
 //   由 App 渲染本地 notice 气泡
@@ -311,6 +313,8 @@ function Composer({
 	onSend,
 	showCancel = false,
 	onCancel,
+	workspacePath = null,
+	onOpenWorkspace = null,
 }: {
 	running: boolean;
 	prompts: PromptInfo[];
@@ -324,6 +328,10 @@ function Composer({
 	// 回合运行中且队列为空时，取消钮放在底部按钮区（队列非空时由 QueueBar 承担）
 	showCancel?: boolean;
 	onCancel?: () => void;
+	// 当前会话的工作目录（工作区文件夹名展示用）；null 时不渲染「当前工作区」入口
+	workspacePath?: string | null;
+	// 点击「当前工作区」：App 把它作为文件夹 tab 打开到右侧面板
+	onOpenWorkspace?: (() => void) | null;
 }): ReactElement {
 	const [draft, setDraft] = useState("");
 	const [attachments, setAttachments] = useState<AttachmentChip[]>([]);
@@ -739,6 +747,29 @@ function Composer({
 								添加附件
 							</TooltipContent>
 						</Tooltip>
+						{/* 当前工作区入口：文件夹图标 + 文件夹名，点击在右侧面板打开文件树 tab */}
+						{workspacePath !== null && onOpenWorkspace !== null && (
+							<Tooltip>
+								<TooltipTrigger asChild>
+									<Button
+										type="button"
+										variant="ghost"
+										size="sm"
+										className="h-8 max-w-44 gap-1.5 rounded-full px-2 text-xs font-normal"
+										onClick={onOpenWorkspace}
+										aria-label="当前工作区"
+									>
+										<Folder className="size-4 shrink-0" />
+										<span className="min-w-0 truncate">
+											{baseName(workspacePath)}
+										</span>
+									</Button>
+								</TooltipTrigger>
+								<TooltipContent side="top" sideOffset={0}>
+									当前工作区
+								</TooltipContent>
+							</Tooltip>
+						)}
 					</div>
 					<div className="flex items-center gap-1">
 						{showCancel && onCancel !== undefined && (
@@ -1111,6 +1142,10 @@ interface ChatViewProps {
 	createError: string | null;
 	// 当前会话 id（附件上传与 @ 补全的 fs/ls 依赖；welcome 态为 null）
 	sessionId: string | null;
+	// 当前会话工作目录（composer「当前工作区」入口的文件夹名与打开目标；welcome 态 null）
+	workspacePath: string | null;
+	// 点击「当前工作区」：在右侧面板打开该目录的文件树 tab（App 提供）
+	onOpenWorkspace: (() => void) | null;
 	permissionMode: PermissionMode;
 	permissionBusy?: boolean;
 	onPermissionChange: (mode: PermissionMode) => void;
@@ -1137,6 +1172,8 @@ export function ChatView({
 	notices,
 	createError,
 	sessionId,
+	workspacePath,
+	onOpenWorkspace,
 	permissionMode,
 	permissionBusy = false,
 	onPermissionChange,
@@ -1261,6 +1298,8 @@ export function ChatView({
 							prompts={prompts}
 							hasSession
 							sessionId={sessionId}
+							workspacePath={workspacePath}
+							onOpenWorkspace={onOpenWorkspace}
 							permissionMode={permissionMode}
 							permissionDisabled={permissionBusy}
 							onPermissionChange={onPermissionChange}

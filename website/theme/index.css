@@ -243,3 +243,24 @@ html.dark .hero-team__agent {
 		transform: none;
 	}
 }
+
+/* 启动动画覆盖层：纯白底（视频原本是白底黑/橙图形），深色模式下也保持白底 */
+.startup-splash {
+	position: fixed;
+	inset: 0;
+	z-index: 9999;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: #ffffff;
+}
+
+.startup-splash__video {
+	width: min(92vw, 1080px);
+	opacity: 0;
+	transition: opacity 300ms ease;
+}
+
+.startup-splash__video--playing {
+	opacity: 1;
+}

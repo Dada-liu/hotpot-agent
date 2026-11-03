@@ -1484,6 +1484,160 @@ describe("M2 endpoints", () => {
 	}, 20000);
 });
 
+// ---- 会话区路径点击预览（v1）：白名单 = 会话 cwd ∪ <home>/uploads ----
+
+describe("会话区路径预览（fs viewer v1）", () => {
+	it("fs/stat：file/dir 判型；cwd 外且 uploads 外 → 400；不存在 → 400；未知会话 → 404", async () => {
+		const fx = await startApi(scriptedAdapter([]));
+		const { id } = await createSession(fx, fx.proj);
+		await mkdir(join(fx.proj, "docs"));
+
+		const stat = async (
+			p: string,
+		): Promise<{ status: number; body: unknown }> => {
+			const res = await fetch(
+				`${fx.base}/api/sessions/${id}/fs/stat?path=${encodeURIComponent(p)}`,
+			);
+			return { status: res.status, body: await res.json() };
+		};
+
+		const file = await stat(join(fx.proj, "note.txt"));
+		expect(file.status).toBe(200);
+		// path 为服务端 realpath（/tmp 等软链会归一），断言类型与名字即可
+		expect(file.body).toEqual(
+			expect.objectContaining({ name: "note.txt", kind: "file" }),
+		);
+
+		const dir = await stat(join(fx.proj, "docs"));
+		expect(dir.status).toBe(200);
+		expect(dir.body).toEqual(
+			expect.objectContaining({ name: "docs", kind: "dir" }),
+		);
+
+		// fx.home 不在 cwd 之下，也不是 uploads 子路径 → 越界 400
+		const escapeHome = await stat(fx.home);
+		expect(escapeHome.status).toBe(400);
+		expect((escapeHome.body as { error: string }).error).toContain(
+			"越出允许访问范围",
+		);
+		const missing = await stat(join(fx.proj, "no-such.md"));
+		expect(missing.status).toBe(400);
+		expect(
+			(
+				await fetch(
+					`${fx.base}/api/sessions/nope/fs/stat?path=${encodeURIComponent(fx.proj)}`,
+				)
+			).status,
+		).toBe(404);
+	}, 20000);
+
+	it("fs/tree：列目录（跳过隐藏/node_modules，dirs 优先）；文件路径 → 400", async () => {
+		const fx = await startApi(scriptedAdapter([]));
+		const { id } = await createSession(fx, fx.proj);
+		await mkdir(join(fx.proj, "alpha"));
+		await mkdir(join(fx.proj, "node_modules"));
+		await writeFile(join(fx.proj, ".hidden"), "s", "utf8");
+		await writeFile(join(fx.proj, "zeta.txt"), "z", "utf8");
+
+		const res = await fetch(
+			`${fx.base}/api/sessions/${id}/fs/tree?path=${encodeURIComponent(fx.proj)}`,
+		);
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as {
+			entries: { name: string; kind: string }[];
+		};
+		expect(body.entries.map((e) => `${e.kind}:${e.name}`)).toEqual([
+			"dir:alpha",
+			"file:note.txt",
+			"file:zeta.txt",
+		]);
+
+		const notDir = await fetch(
+			`${fx.base}/api/sessions/${id}/fs/tree?path=${encodeURIComponent(join(fx.proj, "note.txt"))}`,
+		);
+		expect(notDir.status).toBe(400);
+	}, 20000);
+
+	it("fs/read：文本内容返回；扩展名白名单外 → 415；超 1MB → 413", async () => {
+		const fx = await startApi(scriptedAdapter([]));
+		const { id } = await createSession(fx, fx.proj);
+		await mkdir(join(fx.home, "uploads", id), { recursive: true });
+		// 附件目录（cwd 外）放行：白名单第二根
+		const uploadPath = join(fx.home, "uploads", id, "1-note.md");
+		await writeFile(uploadPath, "from uploads", "utf8");
+		await writeFile(join(fx.proj, "data.bin"), "bin", "utf8");
+		// 1MB + 1 字节的 .md 触发 413
+		await writeFile(
+			join(fx.proj, "huge.md"),
+			`${"x".repeat(1024 * 1024)}y`,
+			"utf8",
+		);
+
+		const read = async (p: string): Promise<Response> =>
+			fetch(
+				`${fx.base}/api/sessions/${id}/fs/read?path=${encodeURIComponent(p)}`,
+			);
+
+		const ok = await read(join(fx.proj, "note.txt"));
+		expect(ok.status).toBe(200);
+		const okBody = (await ok.json()) as {
+			name: string;
+			size: number;
+			content: string;
+		};
+		expect(okBody.name).toBe("note.txt");
+		expect(okBody.size).toBe("hello hotpot\n".length);
+		expect(okBody.content).toBe("hello hotpot\n");
+
+		// uploads 目录内的附件可读
+		const uploaded = await read(uploadPath);
+		expect(uploaded.status).toBe(200);
+		expect(((await uploaded.json()) as { content: string }).content).toBe(
+			"from uploads",
+		);
+
+		// 白名单外扩展名 → 415；目录 → 400；超限 → 413
+		expect((await read(join(fx.proj, "data.bin"))).status).toBe(415);
+		expect((await read(fx.proj)).status).toBe(400);
+		expect((await read(join(fx.proj, "huge.md"))).status).toBe(413);
+	}, 20000);
+
+	it("fs/raw：图片字节 + Content-Type；白名单外 → 415；未知会话 → 404", async () => {
+		const fx = await startApi(scriptedAdapter([]));
+		const { id } = await createSession(fx, fx.proj);
+		// 最小 PNG 头字节即可（预览端只透传，不做解码校验）
+		const pngBytes = new Uint8Array([
+			0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+		]);
+		await writeFile(join(fx.proj, "pic.png"), pngBytes);
+		await writeFile(join(fx.proj, "clip.webp"), pngBytes);
+
+		const raw = async (p: string): Promise<Response> =>
+			fetch(
+				`${fx.base}/api/sessions/${id}/fs/raw?path=${encodeURIComponent(p)}`,
+			);
+
+		const png = await raw(join(fx.proj, "pic.png"));
+		expect(png.status).toBe(200);
+		expect(png.headers.get("content-type")).toBe("image/png");
+		expect(png.headers.get("cache-control")).toBe("no-store");
+		expect(new Uint8Array(await png.arrayBuffer())).toEqual(pngBytes);
+
+		const webp = await raw(join(fx.proj, "clip.webp"));
+		expect(webp.headers.get("content-type")).toBe("image/webp");
+
+		expect((await raw(join(fx.proj, "note.txt"))).status).toBe(415);
+		expect((await raw(fx.proj)).status).toBe(400);
+		expect(
+			(
+				await fetch(
+					`${fx.base}/api/sessions/nope/fs/raw?path=${encodeURIComponent(fx.proj)}`,
+				)
+			).status,
+		).toBe(404);
+	}, 20000);
+});
+
 // ---- 工作区注册表（W2）：CRUD、会话绑定与目录选择器 ----
 
 interface WorkspaceBody {

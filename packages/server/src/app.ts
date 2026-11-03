@@ -535,6 +535,75 @@ export function createApp(
 		}
 	});
 
+	// 会话区路径点击预览（v1）：访问白名单 = 会话 cwd ∪ <home>/uploads
+	// （realpath 前缀校验）；点击先 stat 判 file/dir，前端据此开对应 tab
+	app.get("/api/sessions/:id/fs/stat", async (c) => {
+		const rec = await requireSession(c.req.param("id"));
+		if (rec === null) return c.json({ error: "会话不存在" }, 404);
+		try {
+			return c.json(
+				await manager.statViewerPath(rec.id, c.req.query("path") ?? ""),
+			);
+		} catch (err) {
+			if (err instanceof SessionApiError) {
+				return c.json({ error: err.message }, err.status);
+			}
+			throw err;
+		}
+	});
+
+	// 文件夹 tab 文件树：目录直接子级（跳过隐藏/node_modules，500 上限，dirs 优先）
+	app.get("/api/sessions/:id/fs/tree", async (c) => {
+		const rec = await requireSession(c.req.param("id"));
+		if (rec === null) return c.json({ error: "会话不存在" }, 404);
+		try {
+			return c.json(
+				await manager.listViewerDir(rec.id, c.req.query("path") ?? ""),
+			);
+		} catch (err) {
+			if (err instanceof SessionApiError) {
+				return c.json({ error: err.message }, err.status);
+			}
+			throw err;
+		}
+	});
+
+	// 文本预览：扩展名白名单（md/ts/py 等）+ 1MB 上限，超限/不支持分别 413/415
+	app.get("/api/sessions/:id/fs/read", async (c) => {
+		const rec = await requireSession(c.req.param("id"));
+		if (rec === null) return c.json({ error: "会话不存在" }, 404);
+		try {
+			return c.json(
+				await manager.readViewerText(rec.id, c.req.query("path") ?? ""),
+			);
+		} catch (err) {
+			if (err instanceof SessionApiError) {
+				return c.json({ error: err.message }, err.status);
+			}
+			throw err;
+		}
+	});
+
+	// 图片预览：二进制字节流，Content-Type 按扩展名，no-store 防缓存
+	app.get("/api/sessions/:id/fs/raw", async (c) => {
+		const rec = await requireSession(c.req.param("id"));
+		if (rec === null) return c.json({ error: "会话不存在" }, 404);
+		try {
+			const { contentType, data } = await manager.readViewerRaw(
+				rec.id,
+				c.req.query("path") ?? "",
+			);
+			return new Response(data, {
+				headers: { "Content-Type": contentType, "Cache-Control": "no-store" },
+			});
+		} catch (err) {
+			if (err instanceof SessionApiError) {
+				return c.json({ error: err.message }, err.status);
+			}
+			throw err;
+		}
+	});
+
 	// M2：`/` 菜单数据源——内置指令（builtin: true）置顶 + prompt templates（builtin: false），
 	// web 端按标记分区展示
 	app.get("/api/sessions/:id/prompts", async (c) => {
