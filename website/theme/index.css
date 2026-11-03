@@ -253,6 +253,19 @@ html.dark .hero-team__agent {
 	align-items: center;
 	justify-content: center;
 	background: #ffffff;
+	/* 结束时 500ms 渐隐 */
+	transition: opacity 500ms ease;
+}
+
+.startup-splash--leaving {
+	opacity: 0;
+	pointer-events: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.startup-splash {
+		transition: none;
+	}
 }
 
 .startup-splash__video {

@@ -8,6 +8,8 @@ import { cn } from "@/lib/utils";
 const VIDEO_SRC = "/video/startMV_alpha_282.webm";
 // 视频迟迟加载不出来时不遮挡界面
 const LOAD_TIMEOUT_MS = 15000;
+// 结束渐隐时长（与 App 根布局的渐显时长一致）
+const FADE_MS = 500;
 // 每个标签页会话只播一次：刷新不重播，新开标签页仍算首次进入
 const SPLASH_SEEN_KEY = "hotpot.splashSeen";
 
@@ -38,16 +40,23 @@ export function StartupAnimation({ onDone }: StartupAnimationProps) {
 	const [mounted, setMounted] = useState(() => !startupSplashSeen());
 	// 视频首帧就绪前保持透明，避免白屏里突然闪现
 	const [playing, setPlaying] = useState(false);
+	// 结束时的渐隐：覆盖层淡出与界面渐显同时进行，500ms 后再卸载
+	const [leaving, setLeaving] = useState(false);
 	const exitedRef = useRef(false);
 	const videoRef = useRef<HTMLVideoElement | null>(null);
+	const hideTimerRef = useRef<number | null>(null);
 
 	const dismiss = useCallback(() => {
 		if (exitedRef.current) {
 			return;
 		}
 		exitedRef.current = true;
-		setMounted(false);
+		setLeaving(true);
+		// 通知 App 同时开始渐显，形成交叉过渡
 		onDone();
+		hideTimerRef.current = window.setTimeout(() => {
+			setMounted(false);
+		}, FADE_MS);
 	}, [onDone]);
 
 	useEffect(() => {
@@ -67,6 +76,9 @@ export function StartupAnimation({ onDone }: StartupAnimationProps) {
 		});
 		return () => {
 			window.clearTimeout(timer);
+			if (hideTimerRef.current !== null) {
+				window.clearTimeout(hideTimerRef.current);
+			}
 		};
 	}, [mounted, dismiss]);
 
@@ -76,7 +88,10 @@ export function StartupAnimation({ onDone }: StartupAnimationProps) {
 
 	return (
 		<div
-			className="fixed inset-0 z-50 flex items-center justify-center bg-background"
+			className={cn(
+				"fixed inset-0 z-50 flex items-center justify-center bg-background transition-opacity duration-500 motion-reduce:transition-none",
+				leaving ? "pointer-events-none opacity-0" : "opacity-100",
+			)}
 			onClick={dismiss}
 			aria-hidden="true"
 		>

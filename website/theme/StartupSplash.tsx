@@ -8,6 +8,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 const VIDEO_SRC = "/video/startMV_alpha_282.webm";
 // 视频迟迟加载不出来时不遮挡页面
 const LOAD_TIMEOUT_MS = 15000;
+// 结束渐隐时长
+const FADE_MS = 500;
 const SPLASH_SEEN_KEY = "hotpot.splashSeen";
 
 function splashSeen(): boolean {
@@ -32,8 +34,11 @@ export function StartupSplash() {
 	const [visible, setVisible] = useState(false);
 	// 视频首帧就绪前保持透明，避免白屏里突然闪现
 	const [playing, setPlaying] = useState(false);
+	// 结束时的渐隐：淡出 500ms 后再卸载
+	const [leaving, setLeaving] = useState(false);
 	const closedRef = useRef(false);
 	const videoRef = useRef<HTMLVideoElement | null>(null);
+	const hideTimerRef = useRef<number | null>(null);
 
 	useEffect(() => {
 		if (splashSeen()) {
@@ -49,7 +54,10 @@ export function StartupSplash() {
 			return;
 		}
 		closedRef.current = true;
-		setVisible(false);
+		setLeaving(true);
+		hideTimerRef.current = window.setTimeout(() => {
+			setVisible(false);
+		}, FADE_MS);
 	}, []);
 
 	useEffect(() => {
@@ -67,6 +75,9 @@ export function StartupSplash() {
 		});
 		return () => {
 			window.clearTimeout(timer);
+			if (hideTimerRef.current !== null) {
+				window.clearTimeout(hideTimerRef.current);
+			}
 		};
 	}, [visible, close]);
 
@@ -75,7 +86,15 @@ export function StartupSplash() {
 	}
 
 	return (
-		<div className="startup-splash" onClick={close} aria-hidden="true">
+		<div
+			className={
+				leaving
+					? "startup-splash startup-splash--leaving"
+					: "startup-splash"
+			}
+			onClick={close}
+			aria-hidden="true"
+		>
 			<video
 				ref={videoRef}
 				className={
