@@ -276,7 +276,7 @@ html:has(.home-feature-intro--running) {
 	}
 }
 
-/* 首帧前的启动 loading（由 rspress.config.ts 内联脚本注入，React 的覆盖层接管后移除） */
+/* 首次访问首帧前的启动 loading（由 rspress.config.ts 内联脚本注入，React 的覆盖层接管后移除） */
 #startup-splash-boot {
 	position: fixed;
 	inset: 0;
