@@ -1,7 +1,7 @@
-/* 首页 hero 背景：淡橙色。
+/* 首页 hero 背景：橙色自上而下渐变。
 
    默认主题通过 CSS 变量 --rp-home-background-bg 绘制 hero 背景
-   （:where() 包裹，优先级为 0），此处覆盖为淡橙色渐变。 */
+   （:where() 包裹，优先级为 0），此处覆盖为线性渐变。 */
 :root {
 	/* 浅色模式品牌色：橙色（链接、导航选中态、hero 标题与按钮渐变） */
 	--rp-c-brand: #ea580c;
@@ -12,23 +12,12 @@
 	--rp-c-brand-tint: #ff7a181f;
 	--rp-home-hero-secondary-color: #ff9a4d;
 
-	--rp-home-background-bg:
-		radial-gradient(
-			42.12% 56.13% at 100% 0%,
-			rgba(255, 167, 94, 0.32) 0%,
-			rgba(255, 250, 245, 0) 100%
-		),
-		radial-gradient(
-			42.01% 79.63% at 52.86% 0%,
-			rgba(255, 122, 24, 0.22) 0%,
-			rgba(255, 250, 245, 0) 100%
-		),
-		radial-gradient(
-			79.67% 58.09% at 0% 0%,
-			rgba(255, 196, 140, 0.35) 0%,
-			rgba(255, 250, 245, 0) 100%
-		),
-		#fffaf5;
+	--rp-home-background-bg: linear-gradient(
+		180deg,
+		#ffdcbb 0%,
+		#fff2e4 50%,
+		#ffffff 100%
+	);
 }
 
 /* 深色模式：暖橙暗渐变，与浅色模式保持同一色系 */
@@ -44,23 +33,13 @@ html.dark {
 	/* hero 标题与品牌按钮的渐变（brand-dark → secondary） */
 	--rp-home-hero-secondary-color: #ffb37a;
 
-	--rp-home-background-bg:
-		radial-gradient(
-			42.12% 56.13% at 100% 0%,
-			rgba(122, 66, 20, 0.55) 0%,
-			rgba(23, 16, 10, 0) 100%
-		),
-		radial-gradient(
-			55.81% 87.78% at 48.37% 0%,
-			rgba(0, 0, 0, 0.9) 0%,
-			rgba(23, 16, 10, 0) 89.55%
-		),
-		radial-gradient(
-			122.65% 88.24% at 0% 0%,
-			rgba(140, 78, 22, 0.5) 0%,
-			rgba(23, 16, 10, 0) 100%
-		),
-		#17100a;
+	/* 首页背景：暖橙到纯黑的自上而下渐变 */
+	--rp-home-background-bg: linear-gradient(
+		180deg,
+		#472a16 0%,
+		#261810 50%,
+		#000000 100%
+	);
 }
 
 /* 深色模式下 logo 黑线转白：反色 + 色相旋转 180°，
@@ -70,7 +49,7 @@ html.dark img[src*="logo.png"] {
 	filter: invert(1) hue-rotate(180deg);
 }
 
-/* hero 右侧图：默认展示三层 agent 组合，悬浮时切换为 logo */
+/* hero 右侧图：默认展示 logo，悬浮时切换为三层 agent 组合 */
 .hero-team {
 	position: relative;
 	inline-size: min(100%, 400px);
@@ -78,25 +57,25 @@ html.dark img[src*="logo.png"] {
 	aspect-ratio: 1;
 }
 
-/* logo 默认隐藏，悬浮时淡入 */
+/* logo 默认展示，悬浮时淡出缩小 */
 .hero-team__logo {
 	position: absolute;
 	inset: 0;
 	inline-size: 100%;
 	block-size: 100%;
 	object-fit: contain;
-	opacity: 0;
-	transform: scale(0.92);
+	opacity: 1;
+	transform: none;
 	transition:
 		opacity 0.3s ease,
 		transform 0.3s ease;
 }
 
-/* 三张 agent 图默认展示，悬浮时淡出下沉 */
+/* 三张 agent 图默认隐藏，悬浮时淡入 */
 .hero-team__agent {
 	position: absolute;
-	opacity: 1;
-	transform: none;
+	opacity: 0;
+	transform: translateY(10px) scale(0.96);
 	transition:
 		opacity 0.3s ease,
 		transform 0.3s ease;
@@ -126,15 +105,16 @@ html.dark img[src*="logo.png"] {
 	z-index: 3;
 }
 
+/* 悬浮时切换为三层 agent 组合 */
 .hero-team:hover .hero-team__logo {
-	opacity: 1;
-	transform: scale(1);
-	transition-delay: 0.12s;
+	opacity: 0;
+	transform: scale(0.92);
 }
 
 .hero-team:hover .hero-team__agent {
-	opacity: 0;
-	transform: translateY(10px) scale(0.96);
+	opacity: 1;
+	transform: none;
+	transition-delay: 0.12s;
 }
 
 /* 深色模式下 agent 黑线转白（与 logo 同一处理） */
@@ -242,6 +222,30 @@ html.dark .hero-team__agent {
 	.hero-team:hover .hero-team__agent {
 		transform: none;
 	}
+}
+
+/* 首页特性卡片入场动画：开场动画结束后，卡片从左上角飞入。
+   armed 阶段只隐藏卡片、保留占位；飞行期间放开容器裁切并抬高层级，
+   避免被 hero 悬浮图（z-index 1-3）盖住。 */
+.home-feature-intro--armed .rp-home-feature,
+.home-feature-intro--running .rp-home-feature {
+	overflow: visible;
+}
+
+.home-feature-intro--armed .rp-home-feature__item {
+	opacity: 0;
+}
+
+.home-feature-intro--running .rp-home-feature__item {
+	z-index: 10;
+	pointer-events: none;
+	will-change: transform, opacity;
+}
+
+/* 右上角起飞会把卡片推到视口右侧之外：飞行期间在根元素裁掉横向溢出，
+   避免出现横向滚动条；纵向滚动不受影响 */
+html:has(.home-feature-intro--running) {
+	overflow-x: hidden;
 }
 
 /* 启动动画覆盖层：纯白底（视频原本是白底黑/橙图形），深色模式下也保持白底 */

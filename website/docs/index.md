@@ -32,7 +32,7 @@ features:
     details: hotpot web 一键启动；工作区按目录分组会话并支持拖拽排序；排队优先输入框、附件与 @ 文件提及；agent 面板展示任务清单与用量，点击本地路径可预览文件。
   - icon: /icons/target.svg
     title: Benchmark 驱动
-    details: SWE-bench Lite 10 题 9/10 通过（patch-only 基线），单题 token 与耗时进报告；任何增加开销的功能都必须用数据证明收益。
+    details: 使用 SWE-bench 和自建的金融、软件开发、自媒体 benchmark；任何增加开销的功能都必须用数据证明收益。
 ---
 
 ## 为什么做 hotpot-agent

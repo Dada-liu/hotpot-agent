@@ -1,14 +1,15 @@
-// 自定义主题入口：全局样式覆盖 + hero 图片悬浮组合，其余组件沿用默认主题
+// 自定义主题入口：全局样式覆盖 + hero 图片悬浮组合 + 首页卡片入场动画，其余组件沿用默认主题
 import { normalizeImagePath } from "@rspress/core/runtime";
 import {
 	HomeHero as BasicHomeHero,
 	Layout as BasicLayout,
 } from "@rspress/core/theme-original";
 import type { ComponentProps } from "react";
+import { HomeFeature } from "./HomeFeatureIntro";
 import { StartupSplash } from "./StartupSplash";
 import "./index.css";
 
-// hero 右侧图：默认展示三层 agent 组合，悬浮时切换为 logo
+// hero 右侧图：默认展示 logo，悬浮时切换为三层 agent 组合
 // （main 在上方，work / task 在下方并叠在 main 之上，部分遮盖 main）
 const heroImage = (
 	<div className="hero-team">
@@ -49,5 +50,5 @@ function Layout(props: ComponentProps<typeof BasicLayout>) {
 	);
 }
 
-export { HomeHero, Layout };
+export { HomeFeature, HomeHero, Layout };
 export * from "@rspress/core/theme-original";

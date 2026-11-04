@@ -1,9 +1,11 @@
 // 官网启动动画：首次进入站点时全屏播放透明背景 WebM（白底 + 黑/橙图形），
 // 播完或点击任意处后直接卸载覆盖层；用 sessionStorage 记住，后续刷新不再展示。
 // 新开标签页算一次新的访问，会重新播放。
+// 覆盖层消失（或本次不播放）时通过 splashState 通知首页卡片入场动画起飞。
 
 import { normalizeImagePath } from "@rspress/core/runtime";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { markSplashFinished } from "./splashState";
 
 const VIDEO_SRC = "/video/startMV_alpha_282.webm";
 // 视频迟迟加载不出来时不遮挡页面
@@ -42,6 +44,8 @@ export function StartupSplash() {
 
 	useEffect(() => {
 		if (splashSeen()) {
+			// 本次不播放：通知首页卡片动画不必等待覆盖层
+			markSplashFinished();
 			return;
 		}
 		// 开始播放即记为已看过：播放中途刷新也不会重播
@@ -57,6 +61,8 @@ export function StartupSplash() {
 		setLeaving(true);
 		hideTimerRef.current = window.setTimeout(() => {
 			setVisible(false);
+			// 覆盖层已消失，首页卡片入场动画从这里起飞
+			markSplashFinished();
 		}, FADE_MS);
 	}, []);
 
