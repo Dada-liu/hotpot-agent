@@ -1,59 +1,41 @@
-// 官网启动动画：首次进入站点时全屏播放透明背景 WebM（白底 + 黑/橙图形），
-// 播完或点击任意处后直接卸载覆盖层；用 sessionStorage 记住，后续刷新不再展示。
-// 新开标签页算一次新的访问，会重新播放。
-// 覆盖层消失（或本次不播放）时通过 splashState 通知首页卡片入场动画起飞。
-// 视频在 HTML 解析阶段通过 rspress.config.ts 的 head 预加载；
-// 首帧就绪前在页面中间显示橙色圆环 loading。
+// 官网启动动画：永久只播放一次（localStorage 记录），后续访问只展示首屏 loading。
+// 严格顺序：页面 loading → 视频首帧就绪后播放 → 播完渐隐 → 首页卡片区滚动 → 卡片飞入。
+// 覆盖层消失前不会触发滚动，避免视频还没加载完页面就开始滚动。
+// 视频在 HTML 解析阶段通过 rspress.config.ts 的 head 预加载（已看过则不再预加载）；
+// 首帧就绪前在页面中间显示橙色三点 loading。
 
 import { normalizeImagePath } from "@rspress/core/runtime";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { introSeen, markIntroSeen } from "./introStorage";
 import { markSplashFinished } from "./splashState";
 
 const VIDEO_SRC = "/video/startMV_alpha_282.webm";
-// 视频迟迟加载不出来时不遮挡页面
-const LOAD_TIMEOUT_MS = 15000;
+// 兜底：视频迟迟加载不出来时不永久遮挡页面
+const LOAD_TIMEOUT_MS = 30000;
 // 结束渐隐时长
 const FADE_MS = 500;
-const SPLASH_SEEN_KEY = "hotpot.splashSeen";
-
-function splashSeen(): boolean {
-	try {
-		return sessionStorage.getItem(SPLASH_SEEN_KEY) === "1";
-	} catch {
-		// storage 不可用（隐私模式等）时不再反复弹
-		return true;
-	}
-}
-
-function markSplashSeen(): void {
-	try {
-		sessionStorage.setItem(SPLASH_SEEN_KEY, "1");
-	} catch {
-		// 忽略：下次加载会再次展示
-	}
-}
 
 export function StartupSplash() {
-	// 首帧与 SSR 都不渲染，等客户端确认未看过再挂载，避免 hydration 不一致
+	// 首帧与 SSR 都不渲染，等客户端挂载后再展示，避免 hydration 不一致
 	const [visible, setVisible] = useState(false);
 	// 视频首帧就绪前保持透明，避免白屏里突然闪现
 	const [playing, setPlaying] = useState(false);
 	// 结束时的渐隐：淡出 500ms 后再卸载
 	const [leaving, setLeaving] = useState(false);
 	const closedRef = useRef(false);
+	// 视频是否真正播放过：只有播放过才把开场序列记为已展示
+	const playedRef = useRef(false);
 	const videoRef = useRef<HTMLVideoElement | null>(null);
 	const hideTimerRef = useRef<number | null>(null);
 
 	useEffect(() => {
 		// 移除 HTML 解析阶段注入的启动 loading，由本覆盖层接管
 		document.getElementById("startup-splash-boot")?.remove();
-		if (splashSeen()) {
-			// 本次不播放：通知首页卡片动画不必等待覆盖层
+		if (introSeen()) {
+			// 已永久看过：本次只展示 loading，不再播放动画
 			markSplashFinished();
 			return;
 		}
-		// 开始播放即记为已看过：播放中途刷新也不会重播
-		markSplashSeen();
 		setVisible(true);
 	}, []);
 
@@ -65,6 +47,10 @@ export function StartupSplash() {
 		setLeaving(true);
 		hideTimerRef.current = window.setTimeout(() => {
 			setVisible(false);
+			// 视频正常播放过才算完成一次开场序列；加载失败等兜底路径下次仍会重试
+			if (playedRef.current) {
+				markIntroSeen();
+			}
 			// 覆盖层已消失，首页卡片入场动画从这里起飞
 			markSplashFinished();
 		}, FADE_MS);
@@ -102,7 +88,6 @@ export function StartupSplash() {
 					? "startup-splash startup-splash--leaving"
 					: "startup-splash"
 			}
-			onClick={close}
 			aria-hidden="true"
 		>
 			<video
@@ -118,6 +103,7 @@ export function StartupSplash() {
 				playsInline
 				preload="auto"
 				onPlaying={() => {
+					playedRef.current = true;
 					setPlaying(true);
 				}}
 				onEnded={close}

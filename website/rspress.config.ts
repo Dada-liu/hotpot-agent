@@ -11,10 +11,11 @@ export default defineConfig({
 	// 站点内容根目录（Markdown 源文件）
 	root: "docs",
 	base,
-	// 首次进入站点时，在 HTML 解析阶段就并行预加载开场视频：
-	// 会话里已看过开场动画则跳过，避免重复下载大文件
+	// 每次页面加载都在 HTML 解析阶段放一个橙色三点 loading 覆盖首屏
+	// （React 启动后由 StartupSplash 接管并移除）；首次访问才预加载开场视频。
+	// localStorage key / 视频路径与 theme/StartupSplash.tsx 保持一致。
 	head: [
-		`<script>try{var B="startup-splash-boot";if(!sessionStorage.getItem("hotpot.splashSeen")){var l=document.createElement("link");l.rel="preload";l.as="video";l.type="video/webm";l.href="${splashVideo}";document.head.appendChild(l);var boot=function(){if(!document.body){setTimeout(boot,10);return;}if(document.getElementById(B)){return;}var d=document.createElement("div");d.id=B;var s=document.createElement("span");s.className="startup-splash__spinner";d.appendChild(s);document.body.appendChild(d);setTimeout(function(){var e=document.getElementById(B);if(e){e.remove();}},25000);};boot();}}catch(e){}</script>`,
+		`<script>try{var B="startup-splash-boot";var seen=false;try{seen=localStorage.getItem("hotpot.introSeen")==="1"}catch(e){}if(!seen){var l=document.createElement("link");l.rel="preload";l.as="video";l.type="video/webm";l.href="${splashVideo}";document.head.appendChild(l)}var boot=function(){if(!document.body){setTimeout(boot,10);return;}if(document.getElementById(B)){return;}var d=document.createElement("div");d.id=B;var s=document.createElement("span");s.className="startup-splash__spinner";d.appendChild(s);document.body.appendChild(d);setTimeout(function(){var e=document.getElementById(B);if(e){e.remove();}},60000);};boot();}catch(e){}</script>`,
 	],
 	// GitHub Pages 不做干净 URL 重写，页面链接需要显式带 .html
 	route: {

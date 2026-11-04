@@ -1,5 +1,5 @@
 // 首页特性卡片入场动画的宿主：包一层默认 HomeFeature，不复制上游结构。
-// 与开场动画一样每个标签页会话只播放一次；开场动画结束后先把卡片区
+// 开场序列永久只展示一次（localStorage 记录）；开场动画结束后先把卡片区
 // 滚到视口中间，再逐张飞入。
 
 import { HomeFeature as BasicHomeFeature } from "@rspress/core/theme-original";
@@ -9,11 +9,13 @@ import {
 	playHomeFeatureIntro,
 	startFeatureScroll,
 } from "./homeFeatureIntroSequence";
+import { introSeen } from "./introStorage";
 import { isSplashFinished, onSplashFinished } from "./splashState";
 
-const INTRO_SEEN_KEY = "hotpot.homeIntroSeen";
-// 开场视频最长 15s 加载超时 + 0.5s 渐隐，留出余量后兜底播放
-const SPLASH_WAIT_TIMEOUT_MS = 20000;
+// 每次刷新重置；同一页面会话内不重复播放
+let introPlayed = false;
+// 开场视频最长 30s 加载兜底 + 0.5s 渐隐，留出余量后兜底播放
+const SPLASH_WAIT_TIMEOUT_MS = 35000;
 // 覆盖层消失后稍等一拍再起飞
 const START_DELAY_MS = 120;
 
@@ -21,34 +23,17 @@ const START_DELAY_MS = 120;
 const useIsomorphicLayoutEffect =
 	typeof window === "undefined" ? useEffect : useLayoutEffect;
 
-function introSeen(): boolean {
-	try {
-		return sessionStorage.getItem(INTRO_SEEN_KEY) === "1";
-	} catch {
-		// storage 不可用时与开场动画保持一致：不再播放
-		return true;
-	}
-}
-
-function markIntroSeen(): void {
-	try {
-		sessionStorage.setItem(INTRO_SEEN_KEY, "1");
-	} catch {
-		// 忽略：下次加载会再次播放
-	}
-}
-
 export function HomeFeature(props: ComponentProps<typeof BasicHomeFeature>) {
 	const rootRef = useRef<HTMLDivElement | null>(null);
 
 	// 用 layout effect 在首帧绘制前隐藏卡片，避免客户端导航回首页时闪一帧
 	useIsomorphicLayoutEffect(() => {
 		const root = rootRef.current;
-		if (!root || introSeen()) {
+		if (!root || introSeen() || introPlayed) {
 			return;
 		}
 		if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-			markIntroSeen();
+			introPlayed = true;
 			return;
 		}
 		const cards = Array.from(
@@ -92,7 +77,7 @@ export function HomeFeature(props: ComponentProps<typeof BasicHomeFeature>) {
 					// armed 与 running 在同一帧切换，动画的 fill: both 接管不可见状态
 					root.classList.remove("home-feature-intro--armed");
 					root.classList.add("home-feature-intro--running");
-					markIntroSeen();
+					introPlayed = true;
 					void playHomeFeatureIntro(cards).finally(() => {
 						root.classList.remove("home-feature-intro--running");
 					});
