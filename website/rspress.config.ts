@@ -1,11 +1,21 @@
 import { defineConfig } from "@rspress/core";
 
+// GitHub Pages 项目站部署在 /<repo>/ 子路径，由 CI 通过 RSPRESS_BASE 注入；本地开发默认 /
+const base = process.env.RSPRESS_BASE ?? "/";
+
+// 开场视频路径（与 theme/StartupSplash.tsx 的 VIDEO_SRC 保持一致）
+const splashVideo = `${base}video/startMV_alpha_282.webm`;
+
 // hotpot-agent 官网配置：结构参考 https://rspress.rs/zh/（首页 + 指南 + 深入 + 博客 + 更新日志）
 export default defineConfig({
 	// 站点内容根目录（Markdown 源文件）
 	root: "docs",
-	// GitHub Pages 项目站部署在 /<repo>/ 子路径，由 CI 通过 RSPRESS_BASE 注入；本地开发默认 /
-	base: process.env.RSPRESS_BASE ?? "/",
+	base,
+	// 首次进入站点时，在 HTML 解析阶段就并行预加载开场视频：
+	// 会话里已看过开场动画则跳过，避免重复下载大文件
+	head: [
+		`<script>try{var B="startup-splash-boot";if(!sessionStorage.getItem("hotpot.splashSeen")){var l=document.createElement("link");l.rel="preload";l.as="video";l.type="video/webm";l.href="${splashVideo}";document.head.appendChild(l);var boot=function(){if(!document.body){setTimeout(boot,10);return;}if(document.getElementById(B)){return;}var d=document.createElement("div");d.id=B;var s=document.createElement("span");s.className="startup-splash__spinner";d.appendChild(s);document.body.appendChild(d);setTimeout(function(){var e=document.getElementById(B);if(e){e.remove();}},25000);};boot();}}catch(e){}</script>`,
+	],
 	// GitHub Pages 不做干净 URL 重写，页面链接需要显式带 .html
 	route: {
 		cleanUrls: false,

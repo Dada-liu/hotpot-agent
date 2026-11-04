@@ -2,6 +2,8 @@
 // 播完或点击任意处后直接卸载覆盖层；用 sessionStorage 记住，后续刷新不再展示。
 // 新开标签页算一次新的访问，会重新播放。
 // 覆盖层消失（或本次不播放）时通过 splashState 通知首页卡片入场动画起飞。
+// 视频在 HTML 解析阶段通过 rspress.config.ts 的 head 预加载；
+// 首帧就绪前在页面中间显示橙色圆环 loading。
 
 import { normalizeImagePath } from "@rspress/core/runtime";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -43,6 +45,8 @@ export function StartupSplash() {
 	const hideTimerRef = useRef<number | null>(null);
 
 	useEffect(() => {
+		// 移除 HTML 解析阶段注入的启动 loading，由本覆盖层接管
+		document.getElementById("startup-splash-boot")?.remove();
 		if (splashSeen()) {
 			// 本次不播放：通知首页卡片动画不必等待覆盖层
 			markSplashFinished();
@@ -119,6 +123,16 @@ export function StartupSplash() {
 				onEnded={close}
 				onError={close}
 			/>
+			<div
+				className={
+					playing
+						? "startup-splash__loading startup-splash__loading--hidden"
+						: "startup-splash__loading"
+				}
+				aria-hidden="true"
+			>
+				<span className="startup-splash__spinner" />
+			</div>
 		</div>
 	);
 }

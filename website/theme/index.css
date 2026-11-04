@@ -270,6 +270,83 @@ html:has(.home-feature-intro--running) {
 	.startup-splash {
 		transition: none;
 	}
+
+	.startup-splash__spinner {
+		animation: none;
+	}
+}
+
+/* 首帧前的启动 loading（由 rspress.config.ts 内联脚本注入，React 的覆盖层接管后移除） */
+#startup-splash-boot {
+	position: fixed;
+	inset: 0;
+	z-index: 9999;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	background: #ffffff;
+}
+
+/* 视频加载中：页面中间显示橙色三点旋转 loading，首帧可播放后淡出 */
+.startup-splash__loading {
+	position: absolute;
+	inset: 0;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	transition: opacity 300ms ease;
+	pointer-events: none;
+}
+
+.startup-splash__loading--hidden {
+	opacity: 0;
+}
+
+.startup-splash__spinner {
+	position: relative;
+	margin: 40px;
+	inline-size: 30px;
+	block-size: 30px;
+	border-radius: 50%;
+	background-color: #ff7a18;
+	animation: startup-splash-ball-rotate 1s 0s
+		cubic-bezier(0.7, -0.13, 0.22, 0.86) infinite both;
+}
+
+.startup-splash__spinner::before,
+.startup-splash__spinner::after {
+	position: absolute;
+	inline-size: 30px;
+	block-size: 30px;
+	margin: 4px;
+	content: "";
+	opacity: 0.8;
+	border-radius: 50%;
+	background-color: #ff7a18;
+}
+
+.startup-splash__spinner::before {
+	top: 0;
+	left: -56px;
+}
+
+.startup-splash__spinner::after {
+	top: 0;
+	left: 50px;
+}
+
+@keyframes startup-splash-ball-rotate {
+	0% {
+		transform: rotate(0deg) scale(1);
+	}
+
+	50% {
+		transform: rotate(180deg) scale(0.6);
+	}
+
+	100% {
+		transform: rotate(360deg) scale(1);
+	}
 }
 
 .startup-splash__video {
