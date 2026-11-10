@@ -68,4 +68,4 @@ pnpm bench custom --domain finance   # 只跑金融域
 
 注意通过率是 **patch-only 基线**：agent 只改工作树，不装 repo 依赖、不跑 repo 测试，不是带测试反馈的完整 agent。
 
-参考数据：2026-10-19 Lite 10 题跑批，9/10 resolved，平均单题 input 908,943 / output 17,615 token、耗时 185s，估算成本约 $4.62（非高峰价）。详见 [Benchmarks](/advanced/benchmarks)。
+参考数据：2026-10-30 ~ 11-08 的 SWE-bench Lite 全量 300 题跑批（Kimi 档位，patch-only），168/300 resolved（56.0%），平均单题 input 393,787 / output 9,888 token、耗时 323s；另有一次 2026-10-19 的 Lite 10 题基线（DeepSeek 档位）9/10。两次模型档位不同，不能直接对比。详见 [Benchmarks](/advanced/benchmarks) 与仓库 `docs/benchmark-reports/2026-11-08-swebench-lite300.md`。

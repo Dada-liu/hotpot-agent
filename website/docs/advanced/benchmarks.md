@@ -26,9 +26,49 @@ pnpm bench custom
 
 M5 的 agent 只改工作树：不安装 repo 依赖、不执行 repo 测试、不 commit，提示词额外要求「不要装依赖/不要跑测试」。因此通过率是 patch-only 基线，不是带测试反馈的完整 agent；空 patch 写成空串由官方 harness 记为 unresolved，不伪造通过。`report.md` 会显式标注这一点。
 
-## 实测数据：SWE-bench Lite 10 题
+## 实测数据
 
-2026-10-19 跑批（macmini，模型为 DeepSeek 系，非高峰价估算）：
+两次正式跑批的模型档位不同，通过率不能直接对比。
+
+### SWE-bench Lite 300（2026-10-30 ~ 11-08）
+
+全量 300 题，high 档 `k3`、medium/low 档 `kimi-for-coding`（Kimi 订阅入口），patch-only：
+
+| 指标 | 数值 |
+|------|------|
+| 通过率 | **168/300 resolved（56.0%）** |
+| 平均单题 input token | 393,787（合计约 1.18 亿） |
+| 平均单题 output token | 9,888 |
+| 平均单题耗时 | 323s（约 5.4 分钟） |
+
+分仓库通过率：
+
+| 仓库 | 通过 | 仓库 | 通过 |
+|------|------|------|------|
+| django | 75/114 | sphinx-doc | 10/16 |
+| sympy | 40/77 | astropy | 4/6 |
+| scikit-learn | 15/23 | pylint-dev | 3/6 |
+| matplotlib | 11/23 | psf | 0/6 |
+| pytest-dev | 8/17 | pydata | 0/5 |
+| mwaskom | 2/4 | pallets | 0/3 |
+
+132 题失败的原因分布（以逐波 `report.json` 为准）：
+
+| 失败原因 | 题数 | 含义 |
+|----------|------|------|
+| `unresolved by official harness` | 59 | patch 已生成但官方测试未通过 |
+| `turn aborted` | 43 | agent 回合中断（超时或会话中断） |
+| `max_tokens` | 26 | 回合被输出上限截断 |
+| `empty patch` / 请求失败 / 进程终止 | 4 | 未产生 patch 或链路异常 |
+
+`turn aborted` 与 `max_tokens` 合计 69 题，属 agent / 配置侧中断，不代表 patch 内容一定错误。
+逐波通过数在 1/12 ~ 10/12 之间波动（wave 13 最低，wave 04、07 最高），低波次的失败以官方 unresolved 为主，
+不能全部归因于配额中断或超时；解读 56.0% 时应结合这一波动。逐题明细与跑批条件见仓库
+`docs/benchmark-reports/2026-11-08-swebench-lite300.md`。
+
+### SWE-bench Lite 10（2026-10-19，基线）
+
+2026-10-19 跑批（macmini，DeepSeek 档位，非高峰价估算）：
 
 | 指标 | 数值 |
 |------|------|

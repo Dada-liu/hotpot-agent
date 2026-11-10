@@ -104,7 +104,7 @@ M2 已完成：三层编排（main 难度路由 → worker 执行/并行拆分 �
 
 M3 已完成：Web 端交付——`packages/server`（REST + SSE，默认 4573 端口，断线重连从日志补发、CLI 与 web 可同时观察同一会话）+ `packages/web`（React SPA：会话列表、流式对话、工具卡片、plan 审查、审批、steer/中断、用量展示、右侧面板 agent 工作状态）。测试见 `packages/server/test/`（api / session-manager / tailer / static）与 `packages/web/test/`，验收标准见 `docs/archive/04-roadmap.md` M3 节。
 
-M5 已完成（本仓库部分）：`packages/telemetry` 匿名遥测客户端（cli/server 接入、事件白名单、脱敏、批量重试）+ `benchmarks/` benchmark runner（SWE-bench 实例导出/选择、普通 checkout + worktree、无交互 agent、predictions、官方 `swebench` harness 编排、报告、`benchmark_run` 遥测、自建题三类）。用法见 `benchmarks/README.md`；自建题沉淀流程见 `docs/benchmark-authoring.md`；Lite 10 题验收记录见 `docs/archive/04-roadmap.md` M5 节。遥测后台是仓库外独立项目 `../hotpot-telemetry/`，不进入工具产物。
+M5 已完成（本仓库部分）：`packages/telemetry` 匿名遥测客户端（cli/server 接入、事件白名单、脱敏、批量重试）+ `benchmarks/` benchmark runner（SWE-bench 实例导出/选择、普通 checkout + worktree、无交互 agent、predictions、官方 `swebench` harness 编排、报告、`benchmark_run` 遥测、自建题三类）。用法见 `benchmarks/README.md`；自建题沉淀流程见 `docs/benchmark-authoring.md`；Lite 10 题验收记录见 `docs/archive/04-roadmap.md` M5 节，Lite 300 全量跑批（168/300，patch-only）记录见 `docs/benchmark-reports/2026-11-08-swebench-lite300.md`。遥测后台是仓库外独立项目 `../hotpot-telemetry/`，不进入工具产物。
 
 M6 已完成：Web 端交互完善——运行中发送默认进入 next-turn 队列（QueueBar 固定在输入框上方；点击条目转 steer 注入、✕ 移除，消费即落盘，重开不会重复执行）；工作区是一等实体（`~/.hotpot/workspaces.json` 持久化注册表：路径/标题/会话归属/顺序），侧栏按工作区分组、组内新建会话、重命名/删除/拖拽排序，新增工作区走系统原生目录选择器（macOS `osascript`、Windows `FolderBrowserDialog`、Linux `zenity`/`kdialog`，不可用时降级手填路径）；权限三档（只读/危险操作询问/完全权限，按审批策略实现，composer 内实时切换并持久化）；composer 支持 `/` 内置指令（`/help`、`/permission`）与 prompt 模板、➕ 文本附件上传、`@` 工作区文件提及（main agent 新增 read 工具按引用读取）。
 

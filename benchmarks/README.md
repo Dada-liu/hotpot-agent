@@ -102,6 +102,18 @@ PY
 
 M5 的 agent 只改工作树：不安装 repo 依赖、不执行 repo 测试、不 commit。提示词额外要求「不要装依赖/不要跑测试」。因此通过率是 patch-only 基线，不是带测试反馈的完整 agent；`report.md` 会显式标注。空 patch 会写成空串，由官方 harness 记为 unresolved，不会伪造通过。
 
+### 全量跑批（Lite 300）
+
+300 题不要一次跑完：按 12 题一波切成 25 波，每波独立 `--output`，中断只损失当波。2026-11-08 的一次全量跑批记录见 `docs/benchmark-reports/2026-11-08-swebench-lite300.md`。
+
+- 仓库缓存：先用 `git clone --filter=blob:none --no-checkout` 预建持久缓存，每波把 `<output>/cache` 软链过去；直接跑会反复全量克隆，大仓库容易 EOF。
+- Python 隔离：只把 venv 的 `python3` 包一层放进 PATH 给 harness 用，避免 agent 在 venv 里执行 `pip install` 污染评测环境。
+- 镜像清理：单题镜像约 4GB，每波预拉后 `docker rmi` + `docker system prune -f`；磁盘低于 20G 必须先清理。
+- 配额中断：命中 `exceeded_current_quota_error` 立即停在该波、不推进进度；用单独目录重跑未完成题，再把 `passed` / token / predictions 并回主波目录。
+- 汇总：只聚合逐波 `report.json`，并校验 300 行、instance 集合与 `predictions.jsonl` 一致。
+
+**读报告注意**：续跑合并只改写 `report.json` 与 `predictions.jsonl`，逐波 `report.md` 与 `official/` 保留该波首次尝试的快照。通过率、token 与失败原因一律以 `report.json` 为准。
+
 ## 自建题（三类）
 
 ```bash
