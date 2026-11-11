@@ -8,5 +8,5 @@
 - `resolveModel(tier)` 走 `models/`；`decorateWorkerTool` 是装配层权限包装（`createPermissionModeDecorator`）的注入缝。
 - 权限模式（M1）：`permissionMode: { mode: PermissionMode }` 可变持有者在 runtime 上，装配时从 settings 初始化（默认 ask-on-dangerous），运行期可被 server API 改写（M2）；与装饰器工厂共享同一对象引用，改写立即对后续工具执行生效。
 - `createPermissionModeDecorator(holder)`：worker/task 工具的权限动态分派装饰器——readonly 下非 read 工具逐个预审批，ask-on-dangerous/full 原样放行；装配期总是设置，execute 时才读 mode。
-- 可选透传：`features`、`skills`、`mcpTools`、`webSearch` / `webSearchBackend`、`hooks`。
+- 可选透传：`features`、`compaction`、`skills`、`mcpTools`、`webSearch` / `webSearchBackend`、`hooks`。
 - `index.ts` 是本特性的对外出口。

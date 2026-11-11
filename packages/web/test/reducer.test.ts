@@ -964,6 +964,39 @@ describe("reduce：plan 卡片与正文去重", () => {
 	});
 });
 
+describe("reduce：compaction 审计事件", () => {
+	it("durable compaction 保留既有对话且不生成摘要气泡，重放按 id 幂等", () => {
+		let state = createInitialState();
+		state = reduce(state, log(1, userMsg("u-1", "原始问题")));
+		state = reduce(
+			state,
+			log(2, assistantMsg("a-1", "main", [{ type: "text", text: "原回答" }])),
+		);
+		const transcript = state.transcript;
+		const event: SessionEvent = {
+			type: "compaction",
+			id: "cp-1",
+			ts,
+			agentId: "main",
+			throughEventId: "u-1",
+			summary: "只供模型恢复的摘要",
+			usage: { input: 10, output: 5 },
+			model: "m",
+			tier: "high",
+		};
+
+		state = reduce(state, log(3, event));
+		state = reduce(state, log(4, event));
+
+		expect(state.transcript).toEqual(transcript);
+		expect(state.transcript).toHaveLength(2);
+		expect(JSON.stringify(state.transcript)).not.toContain(
+			"只供模型恢复的摘要",
+		);
+		expect(state.seenEventIds.filter((id) => id === "cp-1")).toHaveLength(1);
+	});
+});
+
 describe("reduce：internal_msg 与 plan 审计条目", () => {
 	it("internal_msg 不进入 transcript", () => {
 		let state = createInitialState();

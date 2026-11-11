@@ -133,6 +133,8 @@ export async function* runMainTurn(opts: {
 		),
 		tier: mainTier,
 		pollInbox,
+		features: runtime.features,
+		compaction: runtime.compaction,
 		hooks: runtime.hooks,
 	};
 	let stopReason: string | undefined;
@@ -200,6 +202,8 @@ export async function* runMainTurn(opts: {
 		),
 		tier: mainTier,
 		pollInbox,
+		features: runtime.features,
+		compaction: runtime.compaction,
 		hooks: runtime.hooks,
 	};
 	for await (const event of runTurn(execCfg, signal)) {

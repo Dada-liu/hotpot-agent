@@ -35,6 +35,7 @@ M3 服务层：在 cli 与 orchestrator 之上提供 REST + SSE API，负责会�
 - **新增路由**：`GET /api/sessions/:id/prompts`（`/` 补全列表）、`GET /api/sessions/:id/inbox`（steer/queue 两队列快照）。
 - **usage 扩展**：`summarizeUsage(events, features)` 增加 `features` 段（todo/hooks/skills/promptTemplates/webSearch/webFetch/mcp 的开关 + 事件/工具调用计数），满足 M4 遥测验收；M5 报表直接消费。
 - **hooks 生命周期**：`session_start` 在装配完成时触发；pre/post tool 与 turn_end 由 core / orchestrator 的回合路径触发，server 只负责装配与关闭。
+- **上下文自动压缩**：装配时透传用户级 `features` / `compaction`；瞬态 compaction 不另发 wire 变体，durable compaction 统一经 tailer 的 `log` 路径推送与重放。
 
 ## M5 增量
 

@@ -33,7 +33,7 @@
 ## 4. 功能需求
 
 ### P0 基础功能（M1-M3，除特别注明外已实现）
-1. 基础 agentic loop（turn/step 两级循环与中断已实现；上下文长度管理未实现）
+1. 基础 agentic loop（turn/step 两级循环、中断与上下文自动压缩已实现；压缩点持久化并支持重启恢复）
 2. 系统提示词（section 注册表，英文 prompt，分层组装）
 3. 四个基础工具：bash / read / write / edit（审批 waterfall，高危确认）
 4. LLM 适配器（流式、tool calling、用量统计、结构化错误已实现；模型请求的指数退避重试未实现）

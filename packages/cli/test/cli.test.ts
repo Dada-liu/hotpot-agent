@@ -547,6 +547,101 @@ describe("runChat", () => {
 		expect(userTexts).toContain("Deploy target: staging\n");
 		expect(userTexts).not.toContain("/deploy staging");
 	});
+
+	it("上下文超限先摘要再正式请求，CLI 提示不含摘要正文，重启后恢复压缩历史", async () => {
+		const session = await createSession(home, home);
+		const oldContent = "old-context-marker ".repeat(2000);
+		await session.append({
+			type: "user_msg",
+			id: "u-old-compaction",
+			ts: TS,
+			agentId: "main",
+			content: oldContent,
+		});
+
+		const requests: ChatRequest[] = [];
+		const inner = scriptedAdapter([
+			textRound("压缩摘要-marker"),
+			spawnWorkersRound("继续"),
+			textRound("worker 完成"),
+			textRound("正式回答"),
+		]);
+		const recording: LlmAdapter = {
+			api: inner.api,
+			streamChat(req, signal) {
+				requests.push(req);
+				return inner.streamChat(req, signal);
+			},
+		};
+		const output = new CollectedOutput();
+		await runChat({
+			cwd: home,
+			home,
+			sessionPath: session.filePath,
+			settings: {
+				...SETTINGS,
+				compaction: { triggerRatio: 0.5, keepRecentTokens: 200 },
+			},
+			llm: {
+				adapter: recording,
+				model: { ...TEST_MODEL, contextWindow: 20000, maxTokens: 1000 },
+			},
+			input: new ScriptedInput(["继续", "/exit"]),
+			output,
+		});
+
+		expect(output.text).toContain("[compaction]");
+		expect(output.text).toContain("正式回答");
+		expect(output.text).not.toContain("压缩摘要-marker");
+		expect(requests).toHaveLength(4);
+		expect(requests[0]?.tools).toEqual([]);
+		expect(requests[1]?.tools.length).toBeGreaterThan(0);
+		expect(requests[1]?.messages[0]?.content).toEqual([
+			{ type: "text", text: "压缩摘要-marker" },
+		]);
+
+		const compacted = await loadSession(session.filePath);
+		const compaction = compacted.events.find((e) => e.type === "compaction");
+		expect(compaction).toMatchObject({
+			agentId: "main",
+			throughEventId: "u-old-compaction",
+			summary: "压缩摘要-marker",
+			usage: { input: 2, output: 1 },
+			model: "test-model",
+			tier: "high",
+		});
+
+		const restartedRequests: ChatRequest[] = [];
+		const restartedInner = scriptedAdapter([
+			spawnWorkersRound("重启后继续"),
+			textRound("worker 重启完成"),
+			textRound("重启回答"),
+		]);
+		const restartedAdapter: LlmAdapter = {
+			api: restartedInner.api,
+			streamChat(req, signal) {
+				restartedRequests.push(req);
+				return restartedInner.streamChat(req, signal);
+			},
+		};
+		await runChat({
+			cwd: home,
+			home,
+			sessionPath: session.filePath,
+			settings: { ...SETTINGS, features: { compaction: false } },
+			llm: { adapter: restartedAdapter, model: TEST_MODEL },
+			input: new ScriptedInput(["重启后继续", "/exit"]),
+			output: new CollectedOutput(),
+		});
+
+		const restartedMessages = restartedRequests[0]?.messages ?? [];
+		expect(restartedMessages[0]?.content).toEqual([
+			{ type: "text", text: "压缩摘要-marker" },
+		]);
+		expect(JSON.stringify(restartedMessages)).not.toContain(
+			"old-context-marker",
+		);
+	});
 });
 
 describe("parseChatArgs", () => {

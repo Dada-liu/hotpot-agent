@@ -20,6 +20,7 @@ export interface TelemetryFeatureFlags {
 	webSearch?: boolean;
 	webFetch?: boolean;
 	mcp?: boolean;
+	compaction?: boolean;
 }
 
 // token 汇总：byTier/byModel 的值，以及 turn_end 的拆分维度。
@@ -163,6 +164,7 @@ const featureFlagsSchema = z
 		webSearch: z.boolean().optional(),
 		webFetch: z.boolean().optional(),
 		mcp: z.boolean().optional(),
+		compaction: z.boolean().optional(),
 	})
 	.strict();
 

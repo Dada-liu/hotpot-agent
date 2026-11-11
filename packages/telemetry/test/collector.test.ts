@@ -433,6 +433,74 @@ describe("createTelemetryCollector", () => {
 		expect(serialized).not.toContain("/Users");
 	});
 
+	it("counts compaction usage as an LLM call without counting an assistant message or leaking the summary", async () => {
+		const session = await createTurnSession([
+			{
+				type: "compaction",
+				id: "cp1",
+				ts: "2026-01-01T00:00:00.500Z",
+				agentId: "main",
+				throughEventId: "old-event",
+				summary: "summary must stay private",
+				usage: { input: 11, output: 4, cacheRead: 2, cacheWrite: 1 },
+				model: "compact-model",
+				tier: "high",
+			},
+			{
+				type: "assistant_msg",
+				id: "a1",
+				ts: "2026-01-01T00:00:01.000Z",
+				agentId: "main",
+				content: [{ type: "text", text: "answer must stay private" }],
+				usage: { input: 7, output: 3 },
+				model: "main-model",
+				tier: "high",
+			},
+		]);
+
+		const collector = createCollector(session, { compaction: false });
+		collector.start();
+		collector.observe({ type: "done", stopReason: "stop" });
+		const emitted = await collector.finish();
+		const [turnEnd] = eventsOfType(emitted, "turn_end");
+
+		expect(turnEnd).toMatchObject({
+			inputTokens: 18,
+			outputTokens: 7,
+			assistantMessages: 1,
+			mainSteps: 1,
+		});
+		expect(turnEnd.byTier).toEqual({
+			high: { inputTokens: 18, outputTokens: 7 },
+		});
+		expect(turnEnd.byModel).toEqual({
+			"compact-model": { inputTokens: 11, outputTokens: 4 },
+			"main-model": { inputTokens: 7, outputTokens: 3 },
+		});
+		expect(eventsOfType(emitted, "llm_call")).toMatchObject([
+			{
+				agentId: "main",
+				agentRole: "main",
+				model: "compact-model",
+				inputTokens: 11,
+				outputTokens: 4,
+				cacheReadTokens: 2,
+				cacheWriteTokens: 1,
+				stepIndex: 0,
+			},
+			{ model: "main-model", stepIndex: 0 },
+		]);
+		expect(eventsOfType(emitted, "feature_usage")).toMatchObject([
+			{ feature: "compaction", enabled: false, events: 1, toolCalls: 0 },
+		]);
+		const serialized = JSON.stringify(emitted);
+		expect(serialized).not.toContain("summary must stay private");
+		expect(serialized).not.toContain("answer must stay private");
+		for (const event of emitted) {
+			expect(telemetryEventSchema.safeParse(event).success).toBe(true);
+		}
+	});
+
 	it("does not reject finish when the session log contains a malformed record", async () => {
 		const session = await createTurnSession([
 			{

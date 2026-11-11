@@ -595,6 +595,7 @@ function reduceLog(state: ChatState, event: SessionEvent): ChatState {
 		case "skill/loaded":
 		case "prompt/invoked":
 		case "mcp/attached":
+		case "compaction":
 		case "permission/changed":
 			return state;
 		case "error": {

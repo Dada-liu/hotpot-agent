@@ -51,6 +51,7 @@
 - **todo**：`features.todo` 开时 worker/task 注册 todo 工具；`runAgentInline` 构建 prompt 前 `foldTodos`，把该 agent 的清单段（order 1500）注入系统提示词。
 - **skill**：装配层扫描出的清单经 `runtime.skills` 注入三角色 prompt（order 1400，只给 name/description/path）；worker/task 的 read 工具包一层追踪，命中 SKILL.md 时落 `skill/loaded`（每会话每文件一次）。
 - **hooks**：`runtime.hooks` 贯穿 main/worker/task 的 `LoopConfig`；`executeCall` 触发 pre/post tool，`runMainTurn` 与 `runAgentInline` 在回合收尾触发 turn_end，CLI/server 装配时触发 session_start。
+- **上下文自动压缩**：`runtime.features` 与 `runtime.compaction` 透传到初始轮、plan 轮、执行轮及 worker/task 的每个 `LoopConfig`；main 的瞬态压缩事件继续向 CLI/server 透传，下层事件仍按既有规则不外传。
 - **web 工具**：`runtime.webSearchBackend` 依 `settings.webSearch` 解析（duckduckgo 默认，可换 custom）；`features.webFetch`/`features.webSearch` 分别门控注册。
 
 ## 已知边界（留待后续里程碑）

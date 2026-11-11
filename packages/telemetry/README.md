@@ -51,8 +51,9 @@ schema v1 只允许以下字段（每个事件另有 `eventId`、`ts`）。所�
 | `feature_usage` | feature、enabled、events、toolCalls |
 | `benchmark_run` | benchmark、dataset、split、instanceId、passed、durationMs、inputTokens、outputTokens |
 
-- `features` 只含布尔开关：todo/hooks/skills/promptTemplates/webSearch/webFetch/mcp。
-- `turn_end` 的 token 汇总覆盖该用户 turn 的整棵 agent 树（main + worker + task），`byTier`/`byModel` 提供拆分。
+- `features` 只含布尔开关：todo/hooks/skills/promptTemplates/webSearch/webFetch/mcp/compaction。
+- `turn_end` 的 token 汇总覆盖该用户 turn 的整棵 agent 树（main + worker + task）以及压缩摘要请求，`byTier`/`byModel` 提供拆分；压缩摘要生成一条 `llm_call`，但不增加 `assistantMessages` 或 `mainSteps`。
+- durable `compaction` 折成 `feature_usage(feature="compaction")` 的 `events` 计数；摘要正文、保留点与消息内容均不上报。
 - `outcome` 为 `success` / `error` / `aborted`；`success` 必须显式观察到 `done(stop)`。
 - 批量信封：`{ schemaVersion: 1, kind, appVersion, installId, events }`，单批最多 500 条；`kind` 为 `user` 或 `benchmark`。
 

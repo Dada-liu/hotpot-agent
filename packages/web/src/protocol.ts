@@ -85,6 +85,18 @@ export type SessionEvent =
 			usage?: { input: number; output: number };
 			tier?: string;
 	  }
+	// compaction：durable 审计与模型历史保留点；reducer 不生成聊天消息
+	| {
+			type: "compaction";
+			id: string;
+			ts: string;
+			agentId: string;
+			throughEventId: string;
+			summary: string;
+			usage: { input: number; output: number };
+			model: string;
+			tier: "high" | "medium" | "low";
+	  }
 	| {
 			type: "tool_result";
 			id: string;
