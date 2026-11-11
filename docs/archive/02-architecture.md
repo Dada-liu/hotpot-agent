@@ -89,8 +89,8 @@
 ### packages/memory — 本地增量代码检索
 
 - OpenAI 兼容 embedding 客户端、JSONL 精确向量库与 `code_search` 工具；只服务代码检索，不读取/写入 `MEMORY.md`，不接入用户语义记忆。
-- `features.vector=true` 且用户级 `vector.embedding` 完整时，CLI/server 经 orchestrator 向 main/worker/task 注册工具。装配与项目启动不扫描、不联网；每次实际检索前才增量刷新 cwd。
-- 默认忽略 `.git/node_modules/dist/build/.hotpot`、符号链接、二进制/非 UTF-8 与超过 512KB 的文件；按最多 1200 字符、200 重叠分块，以内容哈希维护 chunk ID，修改替换、删除 tombstone，未修改文件零索引 embedding。
+- `features.vector=true` 且用户级 `vector.embedding` 完整时，CLI/server 直接实例化 memory（直接 `cli/server → memory`），再经 orchestrator 向 main/worker/task 注册工具。装配与项目启动不扫描、不联网；每次实际检索前才增量刷新 cwd。
+- 默认忽略 `.git/node_modules/dist/build/.hotpot`、解析后的 `<home>/memory/vectors` 子树、符号链接、二进制/非 UTF-8 与超过 512KB 的文件；按最多 1200 字符、200 重叠分块，以内容哈希维护 chunk ID，修改替换、删除 tombstone，未修改文件零索引 embedding；embedding 每批最多 16 个 chunk并按序合并向量。
 - 本地索引在 `<home>/memory/vectors/<sha256(cwd)>.jsonl`。仅检索时把待索引源码 chunk 和查询文本发往用户配置的 embedding endpoint；索引审计与遥测只保留计数，不含路径或源码。
 - 详见 [packages/memory/README.md](../../packages/memory/README.md)
 

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { readdir, readFile, stat } from "node:fs/promises";
-import { join, relative, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import type {
 	CodeIndexOptions,
 	CodeIndexService,
@@ -13,6 +13,7 @@ const CHUNK_SIZE = 1200;
 const CHUNK_OVERLAP = 200;
 const MAX_FILE_BYTES = 512 * 1024;
 const MAX_EXCERPT_CHARS = 800;
+const EMBEDDING_BATCH_SIZE = 16;
 const IGNORED_ENTRIES = new Set([
 	".git",
 	"node_modules",
@@ -43,15 +44,14 @@ function hash(value: string | Uint8Array): string {
 	return createHash("sha256").update(value).digest("hex");
 }
 
-function lineAt(text: string, offset: number): number {
-	let line = 1;
-	for (let index = 0; index < offset; index += 1) {
-		if (text[index] === "\n") line += 1;
-	}
-	return line;
-}
-
 function chunkFile(path: string, text: string): SourceChunk[] {
+	const lineByOffset: number[] = new Array(text.length + 1);
+	let line = 1;
+	for (let offset = 0; offset <= text.length; offset += 1) {
+		lineByOffset[offset] = line;
+		if (text[offset] === "\n") line += 1;
+	}
+
 	const chunks: SourceChunk[] = [];
 	for (
 		let start = 0;
@@ -64,14 +64,17 @@ function chunkFile(path: string, text: string): SourceChunk[] {
 			id: hash(`${path}\0${start}\0${chunk}`),
 			text: chunk,
 			path,
-			startLine: lineAt(text, start),
-			endLine: lineAt(text, Math.max(start, end - 1)),
+			startLine: lineByOffset[start] ?? 1,
+			endLine: lineByOffset[Math.max(start, end - 1)] ?? 1,
 		});
 	}
 	return chunks;
 }
 
-async function scanFiles(cwd: string): Promise<Map<string, DiscoveredFile>> {
+async function scanFiles(
+	cwd: string,
+	excludedDirectory: string,
+): Promise<Map<string, DiscoveredFile>> {
 	const files = new Map<string, DiscoveredFile>();
 
 	async function visit(directory: string): Promise<void> {
@@ -80,6 +83,16 @@ async function scanFiles(cwd: string): Promise<Map<string, DiscoveredFile>> {
 		for (const entry of entries) {
 			if (IGNORED_ENTRIES.has(entry.name) || entry.isSymbolicLink()) continue;
 			const absolute = join(directory, entry.name);
+			const fromStore = relative(excludedDirectory, absolute);
+			if (
+				fromStore === "" ||
+				(fromStore !== ".." &&
+					!fromStore.startsWith("../") &&
+					!fromStore.startsWith("..\\") &&
+					!isAbsolute(fromStore))
+			) {
+				continue;
+			}
 			if (entry.isDirectory()) {
 				await visit(absolute);
 				continue;
@@ -148,7 +161,10 @@ export function createCodeIndexService(
 
 	async function refresh(signal: AbortSignal): Promise<void> {
 		await loadManifest();
-		const discovered = await scanFiles(cwd);
+		const discovered = await scanFiles(
+			cwd,
+			resolve(options.home, "memory", "vectors"),
+		);
 		const removedIds: string[] = [];
 		let deletedFiles = 0;
 		const changed: {
@@ -173,10 +189,15 @@ export function createCodeIndexService(
 
 		const startedAt = Date.now();
 		const chunks = changed.flatMap((entry) => entry.chunks);
-		const vectors = await options.embedding.embed(
-			chunks.map((chunk) => chunk.text),
-			signal,
-		);
+		const vectors: number[][] = [];
+		for (let start = 0; start < chunks.length; start += EMBEDDING_BATCH_SIZE) {
+			const batch = chunks.slice(start, start + EMBEDDING_BATCH_SIZE);
+			const batchVectors = await options.embedding.embed(
+				batch.map((chunk) => chunk.text),
+				signal,
+			);
+			vectors.push(...batchVectors);
+		}
 		const store = await openStore();
 		await store.remove(removedIds);
 		if (chunks.length > 0) {

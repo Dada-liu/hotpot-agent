@@ -36,7 +36,7 @@ const results = await store.search(queryVector, { namespace: "code", limit: 10 }
 
 `createCodeIndexService(options)` 只构造惰性服务，不扫描目录、不打开向量库、不请求网络。首次 `search` 或实际执行 `code_search` 时才扫描当前 cwd，并在每次检索前增量刷新。首次刷新会从已有向量记录重建文件哈希与 chunk 清单，服务重启后未修改文件仍不重复索引，修改/删除也不会留下旧 chunk。同一 service 的并发检索串行刷新，避免重复写入与审计。chunk ID 由相对路径、字符偏移与 chunk 内容的 SHA-256 派生。
 
-默认忽略任意层级的 `.git`、`node_modules`、`dist`、`build`、`.hotpot`，并跳过符号链接、含 NUL 或非法 UTF-8 的文件、超过 512KB 的文件。文本按最多 1200 字符、200 字符重叠分块，保留相对路径与 1 起始止行。项目向量写入 `<home>/memory/vectors/<sha256(解析后的 cwd)>.jsonl`。
+默认忽略任意层级的 `.git`、`node_modules`、`dist`、`build`、`.hotpot`，并排除解析后的 `<home>/memory/vectors` 子树（即使 home 嵌套在 cwd 内也不会自索引），跳过符号链接、含 NUL 或非法 UTF-8 的文件、超过 512KB 的文件。文本按最多 1200 字符、200 字符重叠分块，保留相对路径与 1 起始止行；行号由一次前向扫描生成，不逐 chunk 重扫前缀。索引 embedding 每批最多 16 个 chunk，响应按请求顺序合并。项目向量写入 `<home>/memory/vectors/<sha256(解析后的 cwd)>.jsonl`。
 
 `createCodeSearchTool(service)` 暴露 `{ query, limit? }`，默认返回 5 条、最多 20 条；结果按 score 降序排列，包含 `path`、`startLine`、`endLine`、`score` 与最多 800 字符的 `excerpt`。无匹配时返回明确提示。索引变化通过 `onIndexed` 回调报告 `{ files, chunks, durationMs }`，回调与遥测不得加入路径或源码。
 

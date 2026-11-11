@@ -1,10 +1,12 @@
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createCodeIndexService } from "../src/code-index.ts";
 import type { EmbeddingClient } from "../src/embedding.ts";
 import type { CodeIndexAudit } from "../src/types.ts";
+import { VectorStore } from "../src/vector-store.ts";
 
 interface FakeEmbedding {
 	embedding: Pick<EmbeddingClient, "embed">;
@@ -85,6 +87,54 @@ describe("CodeIndexService", () => {
 				[2, 2],
 			],
 		);
+	});
+
+	it("首次索引按有界批次请求并保持 chunk 与向量顺序", async () => {
+		await writeFile(join(cwd, "many.ts"), `${"x".repeat(34_100)}needle`);
+		const batches: string[][] = [];
+		const fake: FakeEmbedding = {
+			batches,
+			embedding: {
+				async embed(texts, signal) {
+					signal.throwIfAborted();
+					batches.push([...texts]);
+					return texts.map((text) =>
+						text.includes("needle") ? [1, 0] : [0, 1],
+					);
+				},
+			},
+		};
+		const service = serviceWith(fake);
+
+		const results = await service.search(
+			"needle",
+			2,
+			new AbortController().signal,
+		);
+
+		expect(batches.map((batch) => batch.length)).toEqual([16, 16, 3, 1]);
+		const indexedTexts = batches.slice(0, 3).flat();
+		expect(indexedTexts).toHaveLength(35);
+		expect(indexedTexts[0]?.startsWith("xxx")).toBe(true);
+		expect(indexedTexts.at(-1)?.endsWith("needle")).toBe(true);
+		expect(results).toHaveLength(2);
+		expect(results.every((result) => result.score === 1)).toBe(true);
+
+		const store = await VectorStore.open({
+			home,
+			projectKey: createHash("sha256").update(resolve(cwd)).digest("hex"),
+			model: "embed-v1",
+		});
+		const records = await store.list("code");
+		expect(records).toHaveLength(35);
+		expect(
+			records.every((record) =>
+				record.vector.every(
+					(value, index) =>
+						value === (record.text.includes("needle") ? [1, 0] : [0, 1])[index],
+				),
+			),
+		).toBe(true);
 	});
 
 	it("内容未变化时刷新不产生索引 embedding 调用，也不重复写审计", async () => {
@@ -196,6 +246,22 @@ describe("CodeIndexService", () => {
 			{ files: 1, chunks: 1 },
 			{ files: 1, chunks: 0 },
 		]);
+	});
+
+	it("home 嵌套在 cwd 内时排除向量库目录，后续检索不自索引", async () => {
+		home = join(cwd, "nested-home");
+		await writeFile(join(cwd, "alpha.ts"), "export const alpha = 1;\n");
+		const fake = fakeEmbedding();
+		const service = serviceWith(fake);
+		const signal = new AbortController().signal;
+		await service.search("alpha", 5, signal);
+		const afterFirst = fake.batches.length;
+
+		const results = await service.search("alpha", 5, signal);
+
+		expect(fake.batches.slice(afterFirst)).toEqual([["alpha"]]);
+		expect(results.map((result) => result.path)).toEqual(["alpha.ts"]);
+		expect(fake.batches.flat().join("\n")).not.toContain('"type":"upsert"');
 	});
 
 	it("默认忽略指定目录、符号链接、二进制和超过 512KB 的文件", async () => {
