@@ -200,7 +200,7 @@ export function buildRoleSystemPrompt(
 	if (opts?.todos !== undefined && opts.todos.length > 0) {
 		sections.push(todosSection(opts.todos));
 	}
-	if (opts?.memory !== undefined && opts.memory !== "") {
+	if (opts?.memory !== undefined && opts.memory.trim() !== "") {
 		sections.push(memorySection(opts.memory));
 	}
 	sections.push(

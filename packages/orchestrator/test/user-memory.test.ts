@@ -212,6 +212,58 @@ describe("orchestrator user memory", () => {
 		expect(requests[2]?.system).toContain("The user uses pnpm workspaces.");
 	});
 
+	it("planning/revision 的真实请求读取记忆，修订前写入的内容立即可见", async () => {
+		await writeFile(
+			join(home, "MEMORY.md"),
+			"# User Memory\n- Initial planning preference.\n",
+			"utf8",
+		);
+		const firstPlan = `# Plan\n\n## Steps\n1. First draft\n\n## Files\na.ts\n\n## Acceptance criteria\nFirst draft passes`;
+		const revisedPlan = `# Plan\n\n## Steps\n1. Revised draft\n\n## Files\na.ts\n\n## Acceptance criteria\nRevised draft passes`;
+		const { runtime, requests } = await makeRuntime(
+			[textRound(firstPlan), textRound(revisedPlan), textRound("Executed.")],
+			{ memory: true },
+		);
+		const decisions: Array<"annotate" | "approve"> = ["annotate", "approve"];
+		for await (const event of runMainTurn({
+			runtime,
+			userMessage: "Plan a change",
+			signal: new AbortController().signal,
+			mainTier: "high",
+			onPlanApproval: async () => {
+				const decision = decisions.shift();
+				if (decision === "annotate") {
+					await appendMemory("Added immediately before revision.", home);
+					return { kind: "annotate", note: "Revise with latest memory" };
+				}
+				if (decision === "approve") return { kind: "approve" };
+				throw new Error("unexpected plan approval");
+			},
+		})) {
+			if (event.type === "error") throw new Error(event.error.message);
+		}
+
+		expect(requests).toHaveLength(3);
+		expect(requests[0]?.system).toContain("Initial planning preference.");
+		expect(requests[0]?.system).not.toContain(
+			"Added immediately before revision.",
+		);
+		expect(requests[1]?.tools).toEqual([]);
+		expect(requests[1]?.system).toContain("Initial planning preference.");
+		expect(requests[1]?.system).toContain("Added immediately before revision.");
+		expect(requests[2]?.system).toContain("Added immediately before revision.");
+	});
+
+	it("whitespace-only MEMORY.md 不在真实请求中产生空 memory section", async () => {
+		await writeFile(join(home, "MEMORY.md"), " \n\t\n", "utf8");
+		const { runtime, requests } = await makeRuntime([textRound("No memory.")], {
+			memory: true,
+		});
+
+		await runMain(runtime, "Answer without a memory section");
+		expect(requests[0]?.system).not.toContain("User memory");
+	});
+
 	it("memory 关闭时真实 ChatRequest 不含记忆正文或工具", async () => {
 		await writeFile(
 			join(home, "MEMORY.md"),
