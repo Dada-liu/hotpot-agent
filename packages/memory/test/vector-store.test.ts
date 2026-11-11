@@ -1,4 +1,4 @@
-import { appendFile, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdtemp, open, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -94,6 +94,21 @@ describe("VectorStore", () => {
 		).resolves.toEqual([]);
 	});
 
+	it("remove 混合空 id 时整批拒绝，当前实例与重启后都不删除记录", async () => {
+		const store = await openStore();
+		await store.upsert([record("chunk", "src", [1, 0])]);
+
+		await expect(store.remove(["chunk", ""])).rejects.toThrow(/id/i);
+		await expect(
+			store.search([1, 0], { namespace: "src", limit: 10 }),
+		).resolves.toMatchObject([{ id: "chunk" }]);
+
+		const reopened = await openStore();
+		await expect(
+			reopened.search([1, 0], { namespace: "src", limit: 10 }),
+		).resolves.toMatchObject([{ id: "chunk" }]);
+	});
+
 	it("新实例从 JSONL 重建最新状态，已删除记录不会复活", async () => {
 		const store = await openStore();
 		await store.upsert([
@@ -159,6 +174,43 @@ describe("VectorStore", () => {
 			limit: 10,
 		});
 		expect(results.map((result) => result.id)).toEqual(["valid"]);
+	});
+
+	it("FileHandle 短写时循环写完整内容，重启后可恢复记录", async () => {
+		const store = await openStore();
+		const probe = await open(store.filePath, "a");
+		const prototype = Object.getPrototypeOf(probe) as {
+			write(data: string | Uint8Array): Promise<{ bytesWritten: number }>;
+		};
+		await probe.close();
+		const originalWrite = prototype.write;
+		let writeCount = 0;
+		prototype.write = function (data) {
+			writeCount += 1;
+			const length = typeof data === "string" ? data.length : data.byteLength;
+			const shortLength = Math.max(1, Math.floor(length / 2));
+			return originalWrite.call(
+				this,
+				typeof data === "string"
+					? data.slice(0, shortLength)
+					: data.subarray(0, shortLength),
+			);
+		};
+		try {
+			await store.upsert([
+				record("short-write", "src", [1, 0], "private source text"),
+			]);
+			expect(writeCount).toBeGreaterThan(1);
+		} finally {
+			prototype.write = originalWrite;
+		}
+
+		const reopened = await openStore();
+		await expect(
+			reopened.search([1, 0], { namespace: "src", limit: 10 }),
+		).resolves.toMatchObject([
+			{ id: "short-write", text: "private source text" },
+		]);
 	});
 
 	it("重启时发现历史记录维度冲突会明确报错", async () => {

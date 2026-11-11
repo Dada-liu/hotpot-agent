@@ -1,6 +1,6 @@
 // 依赖白名单不允许引入 @types/node，在此只声明源码与测试实际使用的 Node API
 interface HotpotFileHandle {
-	write(data: string): Promise<unknown>;
+	write(data: Uint8Array): Promise<{ bytesWritten: number }>;
 	sync(): Promise<void>;
 	close(): Promise<void>;
 }

@@ -169,7 +169,16 @@ export class VectorStore {
 				.join("");
 			const handle = await open(this.filePath, "a");
 			try {
-				await handle.write(contents);
+				// FileHandle.write 可能短写；按实际字节数续写，完整落盘后才 fsync
+				const data = new TextEncoder().encode(contents);
+				let offset = 0;
+				while (offset < data.byteLength) {
+					const { bytesWritten } = await handle.write(data.subarray(offset));
+					if (bytesWritten <= 0) {
+						throw new Error("vector store write made no progress");
+					}
+					offset += bytesWritten;
+				}
 				await handle.sync();
 			} finally {
 				await handle.close();
@@ -212,6 +221,9 @@ export class VectorStore {
 	async remove(ids: string[]): Promise<void> {
 		if (ids.length === 0) {
 			return;
+		}
+		if (ids.some((id) => id === "")) {
+			throw new Error("vector record id must not be empty");
 		}
 		await this.enqueue(() => [
 			{ type: "tombstone", model: this.model, ids: [...ids] },

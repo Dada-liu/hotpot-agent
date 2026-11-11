@@ -30,7 +30,7 @@ const results = await store.search(queryVector, { namespace: "src", limit: 10 })
 
 记录包含 `id`、`namespace`、`text`、`vector`、`metadata`。`id` 在项目库内唯一；同 id 后写覆盖先写，tombstone 删除对应记录。检索按 namespace 隔离，使用精确余弦相似度降序排序，结果附带 `score`。
 
-数据文件为 `<home>/memory/vectors/<project-key>.jsonl`。每行是带模型的 upsert 或 tombstone；每批写操作一次 append 并 fsync，成功后才更新内存。`open` 按日志顺序重建最新状态，跳过坏 JSON 和形状非法的行；模型或维度冲突明确报错。写入在同一实例内串行执行，单批维度不一致会在写盘前整批拒绝。
+数据文件为 `<home>/memory/vectors/<project-key>.jsonl`。每行是带模型的 upsert 或 tombstone；每批写操作按 `bytesWritten` 循环 append，完整写入 UTF-8 内容后 fsync，成功后才更新内存。`open` 按日志顺序重建最新状态，跳过坏 JSON 和形状非法的行；模型或维度冲突明确报错。写入在同一实例内串行执行，单批维度不一致会在写盘前整批拒绝。`remove` 在入队前校验所有 ID 非空，保证已接受的 tombstone 与重启 replay 使用同一规则。
 
 本包只使用 Node 文件 API 和原生 `fetch`，没有原生数据库、SQLite 扩展或独立数据库服务依赖。
 
