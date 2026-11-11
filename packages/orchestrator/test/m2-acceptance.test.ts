@@ -35,6 +35,7 @@ import {
 	type OrchestrationRuntime,
 } from "../src/runtime/runtime.ts";
 import type { OrchestrationEvent } from "../src/types/types.ts";
+import { createConcurrencyCounter } from "./support/concurrency-gate.ts";
 
 let home: string;
 let proj: string;
@@ -178,19 +179,6 @@ interface Recording {
 	requests: ChatRequest[];
 }
 
-// 并发闸门：脚本事件同步连发会在一个微任务队列内耗尽整条流（真实适配器的网络
-// 延迟不会），每个 task 流先轮询等待 active 达到期望并发再回放，并发上限才可观测
-async function holdAtConcurrency(
-	active: () => number,
-	expected: number,
-	signal: AbortSignal,
-): Promise<void> {
-	const deadline = Date.now() + 100;
-	while (active() < expected && !signal.aborted && Date.now() < deadline) {
-		await new Promise<void>((resolve) => setImmediate(resolve));
-	}
-}
-
 // 分发规则（依次匹配）：messages 含 '"name":"spawn_tasks"' → worker 收尾步；
 // 含 '"name":"spawn_workers"'（main 收尾请求的历史已带该 tool_call 块与 tool_result）
 // → main 收尾步；含主流用户消息 → main 首轮步（simple 直派，请求仅有 user 消息）；
@@ -206,7 +194,9 @@ function makeDispatchAdapter(
 	expectedConcurrency: number,
 	recording: Recording,
 ): LlmAdapter {
-	let active = 0;
+	// 只把 task 流计入并发（见 support/concurrency-gate.ts 的说明）：主/worker 流
+	// 也在跑，混在一起算会让峰值虚高，掩盖 task 池没开满的问题
+	const taskStreams = createConcurrencyCounter();
 	return {
 		api: "recording",
 		streamChat(req, signal) {
@@ -232,11 +222,16 @@ function makeDispatchAdapter(
 				}
 			}
 			return (async function* (): AsyncGenerator<StreamEvent> {
-				active += 1;
-				recording.maxConcurrent = Math.max(recording.maxConcurrent, active);
+				if (isTask) {
+					taskStreams.enter();
+					recording.maxConcurrent = Math.max(
+						recording.maxConcurrent,
+						taskStreams.peak(),
+					);
+				}
 				try {
 					if (isTask) {
-						await holdAtConcurrency(() => active, expectedConcurrency, signal);
+						await taskStreams.waitForPeak(expectedConcurrency, signal);
 					}
 					if (entry === undefined) {
 						throw new Error("no scripted round matches this request");
@@ -248,7 +243,9 @@ function makeDispatchAdapter(
 						yield ev;
 					}
 				} finally {
-					active -= 1;
+					if (isTask) {
+						taskStreams.leave();
+					}
 				}
 			})();
 		},

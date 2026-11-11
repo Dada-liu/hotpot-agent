@@ -31,6 +31,7 @@ import {
 	createRuntime,
 	type OrchestrationRuntime,
 } from "../src/runtime/runtime.ts";
+import { createConcurrencyCounter } from "./support/concurrency-gate.ts";
 
 let home: string;
 let proj: string;
@@ -73,20 +74,9 @@ interface Recording {
 	requests: ChatRequest[];
 }
 
-// 并发闸门：脚本事件同步连发会在一个微任务队列内耗尽整条流（真实适配器的网络延迟
-// 不会），每个 task 流先轮询等待 active 达到期望并发（或 signal 中止 / 超时兜底）再
-// 回放 —— 上限内并发的流相互等齐，maxConcurrent 才观测得到真实池水位
-async function holdAtConcurrency(
-	active: () => number,
-	expected: number,
-	signal: AbortSignal,
-): Promise<void> {
-	const deadline = Date.now() + 100;
-	while (active() < expected && !signal.aborted && Date.now() < deadline) {
-		await new Promise<void>((resolve) => setImmediate(resolve));
-	}
-}
-
+// 并发闸门见 support/concurrency-gate.ts：脚本事件同步连发会在一个微任务队列内
+// 耗尽整条流（真实适配器的网络延迟不会），每个 task 流先等到期望并发都在飞再回放。
+// 等待用静默超时而非固定时限——固定时限会随机器负载提前放行，峰值因此抖动。
 function makeAdapter(
 	script: FlowScript,
 	tasks: { task: string }[],
@@ -94,7 +84,8 @@ function makeAdapter(
 	recording: Recording,
 	onTaskCall?: () => void,
 ): LlmAdapter {
-	let active = 0;
+	// 只把 task 流计入并发：主/worker 流也在跑，混在一起算会让峰值虚高
+	const taskStreams = createConcurrencyCounter();
 	return {
 		api: "recording",
 		streamChat(req, signal) {
@@ -122,11 +113,16 @@ function makeAdapter(
 			}
 			if (isTask) onTaskCall?.();
 			return (async function* (): AsyncGenerator<StreamEvent> {
-				active += 1;
-				recording.maxConcurrent = Math.max(recording.maxConcurrent, active);
+				if (isTask) {
+					taskStreams.enter();
+					recording.maxConcurrent = Math.max(
+						recording.maxConcurrent,
+						taskStreams.peak(),
+					);
+				}
 				try {
 					if (isTask) {
-						await holdAtConcurrency(() => active, expectedConcurrency, signal);
+						await taskStreams.waitForPeak(expectedConcurrency, signal);
 					}
 					if (entry === undefined) {
 						throw new Error("no scripted round matches this request");
@@ -141,7 +137,9 @@ function makeAdapter(
 						yield ev;
 					}
 				} finally {
-					active -= 1;
+					if (isTask) {
+						taskStreams.leave();
+					}
 				}
 			})();
 		},
