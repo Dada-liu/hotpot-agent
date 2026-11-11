@@ -27,7 +27,7 @@ export const modelsSchema = z.object({
 });
 export type ModelsSettings = z.infer<typeof modelsSchema>;
 
-// M4 功能开关：全部 optional boolean，读取侧统一经 featureEnabled 的 `?? true` 默认全开
+// M4 功能开关：全部 optional boolean；既有功能默认全开，memory 为避免隐式增加 prompt token 默认关闭
 const featuresSchema = z.object({
 	todo: z.boolean().optional(),
 	hooks: z.boolean().optional(),
@@ -36,6 +36,7 @@ const featuresSchema = z.object({
 	webSearch: z.boolean().optional(),
 	webFetch: z.boolean().optional(),
 	mcp: z.boolean().optional(),
+	memory: z.boolean().optional(),
 });
 
 // M4 hooks：Claude Code 配置形状（SessionStart/PreToolUse/PostToolUse/Stop，Stop 映射 turn_end）。
@@ -135,13 +136,14 @@ export type McpServersConfig = z.infer<typeof mcpServersSchema>;
 export type TelemetryConfig = z.infer<typeof telemetrySchema>;
 type ProjectSettings = z.infer<typeof projectSettingsSchema>;
 
-// 功能开关统一读取口：默认全开（`?? true`）。关闭开关 = 不注册工具/不挂钩子/不扫描目录，
+// 功能开关统一读取口：缺省时既有功能全开，memory 默认关闭。关闭开关 = 不注册工具/不挂钩子/不扫描目录，
 // 注册表与装配层一律经这里判读，不直接裸读 settings.features?.x
 export function featureEnabled(
 	features: Settings["features"] | undefined,
 	key: keyof NonNullable<Settings["features"]>,
 ): boolean {
-	return features?.[key] ?? true;
+	const configured = features?.[key];
+	return configured ?? key !== "memory";
 }
 
 // apiKey 的 $ENV 引用要求整串匹配，避免误伤字面值里恰好含 $ 的 key

@@ -44,7 +44,8 @@ agent 内核，不依赖任何 UI。
 - **hooks**（`src/hooks/hooks.ts`）：Claude Code 配置格式（SessionStart/PreToolUse/PostToolUse/Stop）；命令经 stdin 收 JSON、env 带 `HOTPOT_HOOK_EVENT`、60s 超时；PreToolUse 非零退出阻断工具，每条命令落 `hook/fired`。
 - **skill**（`src/skills/skills.ts`）：递归扫描 `SKILL.md`，最小 frontmatter 解析（`src/frontmatter/frontmatter.ts`，与 prompt templates 共用），只产出 name/description/path 清单。
 - **prompt templates**（`src/prompt-templates/prompt-templates.ts`）：`*.md` → `/命令`，支持 `$ARGUMENTS`/`$1..$9`；展开由 CLI / server 负责，落 `prompt/invoked`。
-- **设置扩展**（`src/config/config.ts`）：`features.*` 开关、`hooks`、`webSearch`、`mcpServers`、`skillsDirs`、`promptsDirs` 均仅用户级（安全理由见 schema 注释）；`featureEnabled` 为统一读取口（默认全开）。
+- **用户记忆**（`src/user-memory/`）：人工可编辑的 `<home>/MEMORY.md`，追加写入并 fsync；`memory_save` 是唯一写工具，成功时落不含正文的 `memory/saved` 审计事件；摘要读取最多 8,000 字符且失败降级为空。
+- **设置扩展**（`src/config/config.ts`）：`features.*` 开关、`hooks`、`webSearch`、`mcpServers`、`skillsDirs`、`promptsDirs` 均仅用户级（安全理由见 schema 注释）；`featureEnabled` 为统一读取口（既有功能默认全开，`memory` 默认关闭）。
 
 ## M6 工作区注册表
 
