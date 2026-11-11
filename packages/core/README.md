@@ -44,7 +44,8 @@ agent 内核，不依赖任何 UI。
 - **hooks**（`src/hooks/hooks.ts`）：Claude Code 配置格式（SessionStart/PreToolUse/PostToolUse/Stop）；命令经 stdin 收 JSON、env 带 `HOTPOT_HOOK_EVENT`、60s 超时；PreToolUse 非零退出阻断工具，每条命令落 `hook/fired`。
 - **skill**（`src/skills/skills.ts`）：递归扫描 `SKILL.md`，最小 frontmatter 解析（`src/frontmatter/frontmatter.ts`，与 prompt templates 共用），只产出 name/description/path 清单。
 - **prompt templates**（`src/prompt-templates/prompt-templates.ts`）：`*.md` → `/命令`，支持 `$ARGUMENTS`/`$1..$9`；展开由 CLI / server 负责，落 `prompt/invoked`。
-- **设置扩展**（`src/config/config.ts`）：`features.*` 开关、`hooks`、`webSearch`、`mcpServers`、`skillsDirs`、`promptsDirs` 均仅用户级（安全理由见 schema 注释）；`featureEnabled` 为统一读取口（默认全开）。
+- **上下文自动压缩**（`src/compaction/`）：正式请求前按模型上下文预算触发摘要；压缩点落 `compaction` 事件，恢复时由 `deriveMessages` 注入摘要并跳过旧历史。保留最近完整 tool 调用组，摘要失败或中断不写压缩事件。
+- **设置扩展**（`src/config/config.ts`）：`features.*` 开关、`compaction`、`hooks`、`webSearch`、`mcpServers`、`skillsDirs`、`promptsDirs` 均仅用户级（安全理由见 schema 注释）；`featureEnabled` 为统一读取口（默认全开）。压缩默认开启，触发比例与最近历史预算默认为 `0.8` / `20000`。
 
 ## M6 工作区注册表
 

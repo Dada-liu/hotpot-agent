@@ -399,6 +399,46 @@ describe("loadSettings M4 字段", () => {
 	});
 });
 
+describe("loadSettings compaction 字段", () => {
+	it("compaction 默认开启，triggerRatio 与 keepRecentTokens 可仅配置一项", async () => {
+		const data = validSettings() as Record<string, unknown>;
+		data.features = { compaction: false };
+		data.compaction = { triggerRatio: 0.65 };
+		await writeSettings(data);
+
+		const settings = loadSettings({ home, cwd: home });
+		expect(settings.features?.compaction).toBe(false);
+		expect(settings.compaction).toEqual({ triggerRatio: 0.65 });
+		expect(featureEnabled(undefined, "compaction")).toBe(true);
+		expect(featureEnabled({ compaction: true }, "compaction")).toBe(true);
+	});
+
+	it("项目级 features.compaction 与 compaction 设置被剥离", async () => {
+		const data = validSettings() as Record<string, unknown>;
+		data.features = { compaction: false };
+		data.compaction = { triggerRatio: 0.7, keepRecentTokens: 12345 };
+		await writeSettings(data);
+		await writeProjectSettings(home, {
+			features: { compaction: true },
+			compaction: { triggerRatio: 1, keepRecentTokens: 1 },
+		});
+
+		const settings = loadSettings({ home, cwd: home });
+		expect(settings.features?.compaction).toBe(false);
+		expect(settings.compaction).toEqual({
+			triggerRatio: 0.7,
+			keepRecentTokens: 12345,
+		});
+	});
+
+	it("非法 compaction 数值报错", async () => {
+		const data = validSettings() as Record<string, unknown>;
+		data.compaction = { triggerRatio: 0, keepRecentTokens: -1 };
+		await writeSettings(data);
+		expect(() => loadSettings({ home, cwd: home })).toThrow(/compaction/);
+	});
+});
+
 // M5 telemetry 段：仅用户级；token 的原样保留（$ENV 插值留给运行时 helper）
 describe("loadSettings telemetry 字段", () => {
 	function telemetrySettings(): Record<string, unknown> {

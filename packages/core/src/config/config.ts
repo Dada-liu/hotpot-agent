@@ -2,7 +2,7 @@
 // 用户级 <home>/settings.json 必填（含 models 与凭证）；home 解析复用 session/store.ts 的 resolveHome
 // （参数 > HOTPOT_HOME > ~/.hotpot），避免两处规则漂移。项目级自 cwd 向上逐级查找
 // .hotpot/settings.json，可选（找不到则跳过）；用收窄 schema 只解析白名单字段
-// （mainAgentTier/maxParallelTasks/planMaxRevisions），未知字段（含 models/permission）静默剥离，
+// （mainAgentTier/maxParallelTasks/planMaxRevisions），未知字段（含 models/permission/compaction）静默剥离，
 // 凭证与权限永远只来自用户级，规避恶意仓库窃取凭证或提升工具执行权限。
 // $ENV 插值：仅对用户级 apiKey 做；apiKey 整串形如 "$NAME" 时取环境变量；未设置（或为空）直接抛错并带变量名——
 // 静默传空 key 会把配置错误推迟成难以排查的远端 401（Review Focus 4）
@@ -36,6 +36,13 @@ const featuresSchema = z.object({
 	webSearch: z.boolean().optional(),
 	webFetch: z.boolean().optional(),
 	mcp: z.boolean().optional(),
+	compaction: z.boolean().optional(),
+});
+
+// M4 上下文压缩：触发比例与最近历史保留预算，仅用户级配置
+const compactionSchema = z.object({
+	triggerRatio: z.number().positive().max(1).optional(),
+	keepRecentTokens: z.number().int().positive().optional(),
 });
 
 // M4 hooks：Claude Code 配置形状（SessionStart/PreToolUse/PostToolUse/Stop，Stop 映射 turn_end）。
@@ -107,6 +114,7 @@ const settingsSchema = z.object({
 	planMaxRevisions: z.number().int().positive().optional(),
 	permission: permissionSchema.optional(),
 	features: featuresSchema.optional(),
+	compaction: compactionSchema.optional(),
 	hooks: hooksSchema.optional(),
 	webSearch: webSearchSchema.optional(),
 	mcpServers: mcpServersSchema.optional(),

@@ -1,5 +1,6 @@
 // turn/step 循环（M1 核心）：turn = 一次用户意图的完整处理，step = 一次 streamChat + 该消息全部 tool call 的执行
 // 不维护游离的内存消息数组：每个 step 前 loadSession + deriveMessages 从事件日志重建历史（不变量：模型可见 ⟺ 已记录）
+// M4 正式请求前先 maybeCompact：摘要复用当前 adapter/model 且无工具；失败/abort/仍超限均不发送正式请求
 // 防御语义（docs/archive/02-architecture.md 第 3、4 节）：
 // - finish=max_tokens 的消息，其 tool call 参数可能被截断 → 全部记 isError 不执行
 // - finish=error（provider 返回未映射的 stop reason）时工具同样不执行：全部记 isError 后 done(error) 结束 turn
@@ -16,6 +17,7 @@ import {
 	LlmError,
 	type Usage,
 } from "@hotpot/ai";
+import { maybeCompact } from "../compaction/compaction.ts";
 import { registerDefaultSections } from "../prompt/default-sections.ts";
 import { buildSystemPrompt } from "../prompt/sections.ts";
 import { deriveMessages } from "../session/derive.ts";
@@ -229,8 +231,34 @@ export async function* runTurn(
 			}
 		}
 
-		// 每个 step 从事件日志重建完整消息历史
-		const { events } = await loadSession(cfg.session.filePath);
+		// 每个 step 从事件日志重建历史；正式请求前先按需压缩并持久化保留点
+		const loaded = await loadSession(cfg.session.filePath);
+		let events = loaded.events;
+		try {
+			const result = await maybeCompact(cfg, system, events, signal);
+			events = result.events;
+			if (result.compaction) {
+				yield { type: "compaction", event: result.compaction };
+			}
+		} catch (err) {
+			if (signal.aborted) {
+				yield { type: "done", stopReason: "aborted" };
+				return;
+			}
+			const error =
+				err instanceof LlmError
+					? err
+					: new LlmError(
+							err instanceof Error ? err.message : String(err),
+							"stream_error",
+						);
+			yield* emitError(cfg, error);
+			return;
+		}
+		if (signal.aborted) {
+			yield { type: "done", stopReason: "aborted" };
+			return;
+		}
 		const req: ChatRequest = {
 			model: cfg.model,
 			apiKey: cfg.apiKey,
