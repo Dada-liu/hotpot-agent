@@ -37,7 +37,10 @@ interface HotpotStats {
 }
 
 declare module "node:fs/promises" {
-	export function open(path: string, flags: "a"): Promise<HotpotFileHandle>;
+	export function open(
+		path: string,
+		flags: "a" | "wx",
+	): Promise<HotpotFileHandle>;
 	export function mkdir(
 		path: string,
 		options?: { recursive?: boolean },
@@ -67,6 +70,7 @@ declare module "node:fs/promises" {
 	// 工作区注册表（core）编译进本包：realpath 校验目录，rename 原子替换存储
 	export function realpath(path: string): Promise<string>;
 	export function rename(oldPath: string, newPath: string): Promise<void>;
+	export function unlink(path: string): Promise<void>;
 }
 
 declare module "node:fs" {

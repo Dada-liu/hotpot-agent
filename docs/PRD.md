@@ -44,7 +44,7 @@
 ### P1 扩展功能（M4，按实施顺序）
 todo、steer/queue、hooks、skill、prompt templates、web_search/web_fetch、MCP、上下文自动压缩、用户记忆、向量数据库、后台任务 jobs、权限预设、tool_search、沙箱
 
-向量数据库项已完成代码检索部分：`features.vector=true` 且用户级 embedding 完整时启用 `code_search`，启动不扫描/不联网，仅检索时增量索引并把待索引 chunk 与查询发往所配 endpoint；本地数据存于 `<home>/memory/vectors/<sha256(cwd)>.jsonl`，审计/遥测不含路径或源码。用户记忆仍未开始，且不复用该代码索引做语义记忆。
+向量数据库项已完成代码检索部分：`features.vector=true` 且用户级 embedding 完整时启用 `code_search`，启动不扫描/不联网，仅检索时增量索引并把源码扩展与敏感文件策略筛选后的待索引 chunk 与查询发往所配 endpoint（不上传 `.env`、私钥、凭证、任意文本或 YAML/JSON 等部署配置）；本地数据存于 `<home>/memory/vectors/<sha256(cwd)>.jsonl`，审计/遥测不含路径或源码。用户记忆仍未开始，且不复用该代码索引做语义记忆。
 
 ### P2 配套（贯穿 + M5）
 测试（vitest 单元 + mock LLM 集成）、benchmarks（SWE-bench + 自建金融/软件开发/自媒体运营 bench，各领域先 1 题打底，后续从使用历史沉淀）、遥测（token/耗时/成功率；M5.1 已实现：工具向中心服务上报匿名指标与脱敏后的系统错误，后台管理界面为独立项目 `../hotpot-telemetry/`、不打进工具产物，不再以本地存储/导出为主路径）

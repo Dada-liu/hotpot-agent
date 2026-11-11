@@ -1,5 +1,12 @@
-import { createHash } from "node:crypto";
-import { readdir, readFile, stat } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import {
+	open,
+	readdir,
+	readFile,
+	rename,
+	stat,
+	unlink,
+} from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import type {
 	CodeIndexOptions,
@@ -21,10 +28,97 @@ const IGNORED_ENTRIES = new Set([
 	"build",
 	".hotpot",
 ]);
+const SOURCE_EXTENSIONS = new Set([
+	".ts",
+	".tsx",
+	".mts",
+	".cts",
+	".js",
+	".jsx",
+	".mjs",
+	".cjs",
+	".py",
+	".pyi",
+	".rs",
+	".go",
+	".java",
+	".kt",
+	".kts",
+	".swift",
+	".c",
+	".h",
+	".cc",
+	".hh",
+	".cpp",
+	".cxx",
+	".hpp",
+	".cs",
+	".rb",
+	".php",
+	".scala",
+	".sc",
+	".sh",
+	".bash",
+	".zsh",
+	".fish",
+	".sql",
+	".vue",
+	".svelte",
+	".astro",
+	".dart",
+	".ex",
+	".exs",
+	".erl",
+	".hrl",
+	".fs",
+	".fsx",
+	".clj",
+	".cljs",
+	".lua",
+	".r",
+	".m",
+	".mm",
+	".pl",
+	".pm",
+	".zig",
+]);
+const SENSITIVE_BASENAMES = new Set([
+	".env",
+	".netrc",
+	".npmrc",
+	".pypirc",
+	"id_rsa",
+	"id_dsa",
+	"id_ecdsa",
+	"id_ed25519",
+]);
+const SENSITIVE_STEMS = new Set([
+	"secret",
+	"secrets",
+	"credential",
+	"credentials",
+	"password",
+	"passwords",
+	"token",
+	"tokens",
+	"private-key",
+	"private_key",
+]);
+const PRIVATE_KEY_SUFFIXES = [
+	".pem",
+	".key",
+	".p12",
+	".pfx",
+	".jks",
+	".keystore",
+	".kdbx",
+	".gpg",
+	".asc",
+];
 
 interface DiscoveredFile {
 	hash: string;
-	text: string;
+	text?: string;
 }
 
 interface IndexedFile {
@@ -71,9 +165,30 @@ function chunkFile(path: string, text: string): SourceChunk[] {
 	return chunks;
 }
 
+function isEligibleSource(name: string): boolean {
+	const lower = name.toLowerCase();
+	if (lower === ".env" || lower.startsWith(".env.")) return false;
+	if (
+		SENSITIVE_BASENAMES.has(lower) ||
+		PRIVATE_KEY_SUFFIXES.some((suffix) => lower.endsWith(suffix))
+	) {
+		return false;
+	}
+	let extension: string | undefined;
+	for (const candidate of SOURCE_EXTENSIONS) {
+		if (lower.endsWith(candidate)) {
+			extension = candidate;
+			break;
+		}
+	}
+	if (extension === undefined) return false;
+	return !SENSITIVE_STEMS.has(lower.slice(0, -extension.length));
+}
+
 async function scanFiles(
 	cwd: string,
 	excludedDirectory: string,
+	completeFileHashes: ReadonlyMap<string, string>,
 ): Promise<Map<string, DiscoveredFile>> {
 	const files = new Map<string, DiscoveredFile>();
 
@@ -97,19 +212,24 @@ async function scanFiles(
 				await visit(absolute);
 				continue;
 			}
-			if (!entry.isFile()) continue;
+			if (!entry.isFile() || !isEligibleSource(entry.name)) continue;
 			const info = await stat(absolute);
 			if (!info.isFile() || info.size > MAX_FILE_BYTES) continue;
 			const bytes = await readFile(absolute);
 			if (bytes.includes(0)) continue;
+			const path = relative(cwd, absolute).split(/[\\/]/).join("/");
+			const contentHash = hash(bytes);
+			if (completeFileHashes.get(path) === contentHash) {
+				files.set(path, { hash: contentHash });
+				continue;
+			}
 			let text: string;
 			try {
 				text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
 			} catch {
 				continue;
 			}
-			const path = relative(cwd, absolute).split(/[\\/]/).join("/");
-			files.set(path, { hash: hash(bytes), text });
+			files.set(path, { hash: contentHash, text });
 		}
 	}
 
@@ -123,15 +243,124 @@ function excerpt(text: string): string {
 		: `${text.slice(0, MAX_EXCERPT_CHARS - 1)}…`;
 }
 
+function isObject(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function parseManifest(value: unknown): Map<string, IndexedFile> | null {
+	if (!isObject(value) || value.version !== 1 || !isObject(value.files)) {
+		return null;
+	}
+	const files = new Map<string, IndexedFile>();
+	for (const [path, entry] of Object.entries(value.files)) {
+		if (
+			path === "" ||
+			!isObject(entry) ||
+			typeof entry.hash !== "string" ||
+			!Array.isArray(entry.chunkIds) ||
+			!entry.chunkIds.every((id) => typeof id === "string" && id !== "")
+		) {
+			return null;
+		}
+		files.set(path, { hash: entry.hash, chunkIds: [...entry.chunkIds] });
+	}
+	return files;
+}
+
+async function readManifest(
+	path: string,
+): Promise<Map<string, IndexedFile> | null> {
+	try {
+		return parseManifest(JSON.parse(await readFile(path, "utf8")) as unknown);
+	} catch {
+		return null;
+	}
+}
+
+async function writeManifest(
+	path: string,
+	indexed: Map<string, IndexedFile>,
+): Promise<void> {
+	const temporary = `${path}.${randomUUID()}.tmp`;
+	try {
+		const handle = await open(temporary, "wx");
+		try {
+			const data = new TextEncoder().encode(
+				JSON.stringify({ version: 1, files: Object.fromEntries(indexed) }),
+			);
+			let offset = 0;
+			while (offset < data.byteLength) {
+				const { bytesWritten } = await handle.write(data.subarray(offset));
+				if (bytesWritten <= 0)
+					throw new Error("manifest write made no progress");
+				offset += bytesWritten;
+			}
+			await handle.sync();
+		} finally {
+			await handle.close();
+		}
+		await rename(temporary, path);
+	} catch (error) {
+		await unlink(temporary).catch(() => {});
+		throw error;
+	}
+}
+
+function errorCode(error: unknown): string | undefined {
+	return isObject(error) && typeof error.code === "string"
+		? error.code
+		: undefined;
+}
+
+function waitForLock(signal: AbortSignal): Promise<void> {
+	signal.throwIfAborted();
+	return new Promise<void>((resolve, reject) => {
+		const onAbort = () => {
+			clearTimeout(timer);
+			reject(signal.reason);
+		};
+		const timer = setTimeout(() => {
+			signal.removeEventListener("abort", onAbort);
+			resolve();
+		}, 25);
+		signal.addEventListener("abort", onAbort, { once: true });
+	});
+}
+
+async function acquireProjectLock(
+	path: string,
+	signal: AbortSignal,
+): Promise<() => Promise<void>> {
+	for (;;) {
+		signal.throwIfAborted();
+		try {
+			const handle = await open(path, "wx");
+			try {
+				await handle.close();
+			} catch (error) {
+				await unlink(path).catch(() => {});
+				throw error;
+			}
+			return async () => {
+				await unlink(path);
+			};
+		} catch (error) {
+			if (errorCode(error) !== "EEXIST") throw error;
+		}
+		await waitForLock(signal);
+	}
+}
+
 // 仅在实际检索时扫描和打开向量库；文件内容哈希用于跳过未修改文件的 embedding。
 export function createCodeIndexService(
 	options: CodeIndexOptions,
 ): CodeIndexService {
 	const cwd = resolve(options.cwd);
 	const projectKey = hash(cwd);
+	const storeDirectory = resolve(options.home, "memory", "vectors");
+	const manifestPath = join(storeDirectory, `${projectKey}.manifest.json`);
 	const indexed = new Map<string, IndexedFile>();
 	let storePromise: Promise<VectorStore> | null = null;
-	let manifestLoaded = false;
 
 	function openStore(): Promise<VectorStore> {
 		storePromise ??= VectorStore.open({
@@ -142,30 +371,69 @@ export function createCodeIndexService(
 		return storePromise;
 	}
 
-	async function loadManifest(): Promise<void> {
-		if (manifestLoaded) return;
+	async function loadState(): Promise<{
+		records: Awaited<ReturnType<VectorStore["list"]>>;
+		manifestMissing: boolean;
+	}> {
 		const records = await (await openStore()).list(CODE_NAMESPACE);
-		for (const record of records) {
-			const path = record.metadata.path;
-			if (typeof path !== "string") continue;
-			const fileHash =
-				typeof record.metadata.fileHash === "string"
-					? record.metadata.fileHash
-					: "";
-			const current = indexed.get(path) ?? { hash: fileHash, chunkIds: [] };
-			current.chunkIds.push(record.id);
-			indexed.set(path, current);
+		const manifest = await readManifest(manifestPath);
+		indexed.clear();
+		if (manifest !== null) {
+			for (const [path, file] of manifest) indexed.set(path, file);
+		} else {
+			for (const record of records) {
+				const path = record.metadata.path;
+				if (typeof path !== "string") continue;
+				const fileHash =
+					typeof record.metadata.fileHash === "string"
+						? record.metadata.fileHash
+						: "";
+				const current = indexed.get(path) ?? { hash: fileHash, chunkIds: [] };
+				current.chunkIds.push(record.id);
+				indexed.set(path, current);
+			}
 		}
-		manifestLoaded = true;
+		return { records, manifestMissing: manifest === null };
 	}
 
 	async function refresh(signal: AbortSignal): Promise<void> {
-		await loadManifest();
-		const discovered = await scanFiles(
-			cwd,
-			resolve(options.home, "memory", "vectors"),
+		await openStore();
+		const release = await acquireProjectLock(
+			join(storeDirectory, `${projectKey}.lock`),
+			signal,
+		);
+		try {
+			const store = await VectorStore.open({
+				home: options.home,
+				projectKey,
+				model: options.model,
+			});
+			storePromise = Promise.resolve(store);
+			await refreshLocked(signal);
+		} finally {
+			await release();
+		}
+	}
+
+	async function refreshLocked(signal: AbortSignal): Promise<void> {
+		const { records, manifestMissing } = await loadState();
+		const actualIds = new Set(records.map((record) => record.id));
+		const expectedIds = new Set(
+			[...indexed.values()].flatMap((file) => file.chunkIds),
 		);
 		const removedIds: string[] = [];
+		if (!manifestMissing) {
+			for (const id of actualIds) {
+				if (!expectedIds.has(id)) removedIds.push(id);
+			}
+		}
+		const completeFileHashes = new Map<string, string>();
+		for (const [path, file] of indexed) {
+			if (file.chunkIds.every((id) => actualIds.has(id))) {
+				completeFileHashes.set(path, file.hash);
+			}
+		}
+		const discovered = await scanFiles(cwd, storeDirectory, completeFileHashes);
 		let deletedFiles = 0;
 		const changed: {
 			path: string;
@@ -181,11 +449,23 @@ export function createCodeIndexService(
 		}
 		for (const [path, file] of discovered) {
 			const previous = indexed.get(path);
-			if (previous?.hash === file.hash) continue;
+			const missingChunks =
+				previous?.chunkIds.some((id) => !actualIds.has(id)) === true;
+			if (previous?.hash === file.hash && !missingChunks) continue;
+			if (file.text === undefined) {
+				throw new Error("changed source content was not retained");
+			}
 			if (previous !== undefined) removedIds.push(...previous.chunkIds);
 			changed.push({ path, file, chunks: chunkFile(path, file.text) });
 		}
-		if (changed.length === 0 && deletedFiles === 0) return;
+		if (
+			changed.length === 0 &&
+			deletedFiles === 0 &&
+			removedIds.length === 0 &&
+			!manifestMissing
+		) {
+			return;
+		}
 
 		const startedAt = Date.now();
 		const chunks = changed.flatMap((entry) => entry.chunks);
@@ -199,7 +479,7 @@ export function createCodeIndexService(
 			vectors.push(...batchVectors);
 		}
 		const store = await openStore();
-		await store.remove(removedIds);
+		await store.remove([...new Set(removedIds)]);
 		if (chunks.length > 0) {
 			await store.upsert(
 				chunks.map((chunk, index) => ({
@@ -226,11 +506,14 @@ export function createCodeIndexService(
 				chunkIds: entry.chunks.map((chunk) => chunk.id),
 			});
 		}
-		await options.onIndexed?.({
-			files: changed.length + deletedFiles,
-			chunks: chunks.length,
-			durationMs: Math.max(0, Date.now() - startedAt),
-		});
+		await writeManifest(manifestPath, indexed);
+		if (changed.length + deletedFiles > 0 || removedIds.length > 0) {
+			await options.onIndexed?.({
+				files: changed.length + deletedFiles,
+				chunks: chunks.length,
+				durationMs: Math.max(0, Date.now() - startedAt),
+			});
+		}
 	}
 
 	async function search(

@@ -48,7 +48,7 @@ interface HotpotDirent {
 declare module "node:fs/promises" {
 	export function open(
 		path: string,
-		flags: "r" | "a",
+		flags: "r" | "a" | "wx",
 	): Promise<HotpotFileHandle>;
 	export function mkdir(
 		path: string,
@@ -91,6 +91,7 @@ declare module "node:fs/promises" {
 	export function realpath(path: string): Promise<string>;
 	// 工作区注册表（core）原子写盘
 	export function rename(oldPath: string, newPath: string): Promise<void>;
+	export function unlink(path: string): Promise<void>;
 }
 
 declare module "node:fs" {

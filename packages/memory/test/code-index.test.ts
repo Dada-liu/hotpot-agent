@@ -61,6 +61,14 @@ function serviceWith(
 	});
 }
 
+function openProjectStore(): Promise<VectorStore> {
+	return VectorStore.open({
+		home,
+		projectKey: createHash("sha256").update(resolve(cwd)).digest("hex"),
+		model: "embed-v1",
+	});
+}
+
 describe("CodeIndexService", () => {
 	it("首次索引按约 1200 字符、200 重叠分块，并返回相对路径与准确行号", async () => {
 		await mkdir(join(cwd, "src", "nested"), { recursive: true });
@@ -231,6 +239,124 @@ describe("CodeIndexService", () => {
 		expect(await serviceWith(fake).search("alpha", 5, signal)).toEqual([]);
 	});
 
+	it("两个 service 交错索引时，重开后只保留当前文件版本", async () => {
+		const file = join(cwd, "concurrent.ts");
+		await writeFile(file, "export const alpha = 'v1';\n");
+		let delayFirst = true;
+		let started: (() => void) | undefined;
+		let release: (() => void) | undefined;
+		const embeddingStarted = new Promise<void>((resolve) => {
+			started = resolve;
+		});
+		const gate = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		const fakeA: FakeEmbedding = {
+			batches: [],
+			embedding: {
+				async embed(texts, signal) {
+					signal.throwIfAborted();
+					if (delayFirst) {
+						delayFirst = false;
+						started?.();
+						await gate;
+					}
+					return texts.map((text) =>
+						text.includes("alpha") ? [1, 0] : [0, 1],
+					);
+				},
+			},
+		};
+		const pendingA = serviceWith(fakeA).search(
+			"alpha",
+			5,
+			new AbortController().signal,
+		);
+		await embeddingStarted;
+
+		await writeFile(file, "export const beta = 'v2';\n");
+		const pendingB = serviceWith(fakeEmbedding()).search(
+			"beta",
+			5,
+			new AbortController().signal,
+		);
+		release?.();
+		await Promise.all([pendingA, pendingB]);
+
+		const reopened = await openProjectStore();
+		expect((await reopened.list("code")).map((record) => record.text)).toEqual([
+			"export const beta = 'v2';\n",
+		]);
+	});
+
+	it("embedding 异常或中止都会释放项目锁，允许后续 service 重试", async () => {
+		const file = join(cwd, "cleanup.ts");
+		for (const mode of ["error", "abort"] as const) {
+			await writeFile(file, `export const ${mode} = '${mode}';\n`);
+			const controller = new AbortController();
+			const failing: FakeEmbedding = {
+				batches: [],
+				embedding: {
+					async embed(_texts, signal) {
+						if (mode === "abort") controller.abort();
+						signal.throwIfAborted();
+						throw new Error("embedding failed");
+					},
+				},
+			};
+			await expect(
+				serviceWith(failing).search("alpha", 5, controller.signal),
+			).rejects.toBeDefined();
+
+			const results = await serviceWith(fakeEmbedding()).search(
+				"alpha",
+				5,
+				new AbortController().signal,
+			);
+			expect(results).toHaveLength(1);
+		}
+	});
+
+	it("空文件写入持久 manifest，重启后不重复审计", async () => {
+		await writeFile(join(cwd, "empty.ts"), "");
+		const fake = fakeEmbedding();
+		const audits: CodeIndexAudit[] = [];
+
+		await serviceWith(fake, audits).search(
+			"alpha",
+			5,
+			new AbortController().signal,
+		);
+		await serviceWith(fake, audits).search(
+			"alpha",
+			5,
+			new AbortController().signal,
+		);
+
+		expect(audits).toHaveLength(1);
+		expect(audits[0]).toMatchObject({ files: 1, chunks: 0 });
+	});
+
+	it("重启发现多 chunk 索引缺记录时按 manifest 补齐", async () => {
+		await writeFile(join(cwd, "partial.ts"), "x".repeat(2500));
+		const fake = fakeEmbedding();
+		const signal = new AbortController().signal;
+		await serviceWith(fake).search("alpha", 5, signal);
+		const initialStore = await openProjectStore();
+		const initialRecords = await initialStore.list("code");
+		expect(initialRecords).toHaveLength(3);
+		const missingId = initialRecords[1]?.id;
+		if (missingId === undefined) throw new Error("missing test chunk");
+		await initialStore.remove([missingId]);
+		const audits: CodeIndexAudit[] = [];
+
+		await serviceWith(fake, audits).search("alpha", 5, signal);
+
+		const restored = await openProjectStore();
+		expect(await restored.list("code")).toHaveLength(3);
+		expect(audits).toMatchObject([{ files: 1, chunks: 3 }]);
+	});
+
 	it("纯删除刷新也落一条按变更文件计数的匿名审计", async () => {
 		const file = join(cwd, "deleted.ts");
 		await writeFile(file, "export const alpha = true;\n");
@@ -262,6 +388,31 @@ describe("CodeIndexService", () => {
 		expect(fake.batches.slice(afterFirst)).toEqual([["alpha"]]);
 		expect(results.map((result) => result.path)).toEqual(["alpha.ts"]);
 		expect(fake.batches.flat().join("\n")).not.toContain('"type":"upsert"');
+	});
+
+	it("只索引源码并排除常见密钥/凭证文件，敏感内容不进入 embedding", async () => {
+		const fixtures: Record<string, string> = {
+			".env": "DO_NOT_UPLOAD=env",
+			".env.local": "DO_NOT_UPLOAD=env-local",
+			id_rsa: "DO_NOT_UPLOAD private key",
+			"credentials.json": '{"token":"DO_NOT_UPLOAD"}',
+			"secrets.ts": 'export const secret = "DO_NOT_UPLOAD";',
+			"private-key.pem": "DO_NOT_UPLOAD pem",
+			"deploy.yaml": "ARBITRARY_TEXT: true",
+			"notes.txt": "ARBITRARY_TEXT notes",
+			"allowed.ts": "export const alpha = 'safe source';",
+		};
+		for (const [name, content] of Object.entries(fixtures)) {
+			await writeFile(join(cwd, name), content);
+		}
+		const fake = fakeEmbedding();
+
+		await serviceWith(fake).search("alpha", 20, new AbortController().signal);
+
+		const embedded = fake.batches.flat().join("\n");
+		expect(embedded).toContain("safe source");
+		expect(embedded).not.toContain("DO_NOT_UPLOAD");
+		expect(embedded).not.toContain("ARBITRARY_TEXT");
 	});
 
 	it("默认忽略指定目录、符号链接、二进制和超过 512KB 的文件", async () => {

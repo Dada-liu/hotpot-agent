@@ -90,8 +90,9 @@
 
 - OpenAI 兼容 embedding 客户端、JSONL 精确向量库与 `code_search` 工具；只服务代码检索，不读取/写入 `MEMORY.md`，不接入用户语义记忆。
 - `features.vector=true` 且用户级 `vector.embedding` 完整时，CLI/server 直接实例化 memory（直接 `cli/server → memory`），再经 orchestrator 向 main/worker/task 注册工具。装配与项目启动不扫描、不联网；每次实际检索前才增量刷新 cwd。
-- 默认忽略 `.git/node_modules/dist/build/.hotpot`、解析后的 `<home>/memory/vectors` 子树、符号链接、二进制/非 UTF-8 与超过 512KB 的文件；按最多 1200 字符、200 重叠分块，以内容哈希维护 chunk ID，修改替换、删除 tombstone，未修改文件零索引 embedding；embedding 每批最多 16 个 chunk并按序合并向量。
-- 本地索引在 `<home>/memory/vectors/<sha256(cwd)>.jsonl`。仅检索时把待索引源码 chunk 和查询文本发往用户配置的 embedding endpoint；索引审计与遥测只保留计数，不含路径或源码。
+- 默认忽略 `.git/node_modules/dist/build/.hotpot`、解析后的 `<home>/memory/vectors` 子树、符号链接、二进制/非 UTF-8 与超过 512KB 的文件；只接受常见源码扩展，排除 `.env*`、私钥、凭证/密码/token 文件、任意文本与 YAML/JSON 等部署配置。按最多 1200 字符、200 重叠分块；embedding 每批最多 16 个 chunk并按序合并向量。
+- 本地索引在 `<home>/memory/vectors/<sha256(cwd)>.jsonl`，旁边原子保存含空文件与预期 chunk ID 的 manifest。每次刷新重读 store/manifest并修复缺失/孤儿 chunk；完整未修改文件不保留文本。项目级 `wx` 锁协调跨 service/进程写入，异常与 abort 均释放。
+- 仅检索时把通过上述策略筛选的待索引源码 chunk 和查询文本发往用户配置的 embedding endpoint；索引审计与遥测只保留计数，不含路径或源码。
 - 详见 [packages/memory/README.md](../../packages/memory/README.md)
 
 ## 3.1 模块目录约定（core / orchestrator）

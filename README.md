@@ -151,7 +151,7 @@ M6 已完成：Web 端交互完善——运行中发送默认进入 next-turn �
 }
 ```
 
-项目装配与启动不会扫描或联网。只有实际调用 `code_search` 时才增量扫描当前工作区，并把待索引源码 chunk 与查询文本 POST 到所配 OpenAI 兼容 embedding endpoint；未修改文件不会重复请求索引 embedding。默认忽略 `.git`、`node_modules`、`dist`、`build`、`.hotpot`、符号链接、二进制与超过 512KB 的文件。本地索引存于 `~/.hotpot/memory/vectors/<sha256(cwd)>.jsonl`；审计与遥测只含计数，不含路径或源码。该能力不读取/写入 `MEMORY.md`，也不是用户记忆。详见 [packages/memory/README.md](packages/memory/README.md)。
+项目装配与启动不会扫描或联网。只有实际调用 `code_search` 时才增量扫描当前工作区，并把待索引源码 chunk 与查询文本 POST 到所配 OpenAI 兼容 embedding endpoint；未修改文件不会重复请求索引 embedding。默认忽略 `.git`、`node_modules`、`dist`、`build`、`.hotpot`、符号链接、二进制与超过 512KB 的文件，并且只索引常见源码扩展；`.env*`、私钥、凭证/密码/token 文件、任意文本以及 YAML/JSON 等部署配置不会进入 embedding。本地索引存于 `~/.hotpot/memory/vectors/<sha256(cwd)>.jsonl`；审计与遥测只含计数，不含路径或源码。该能力不读取/写入 `MEMORY.md`，也不是用户记忆。详见 [packages/memory/README.md](packages/memory/README.md)。
 
 ## 发布 npm 包
 

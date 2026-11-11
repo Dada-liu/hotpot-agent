@@ -933,7 +933,7 @@ describe("code_search 装配", () => {
 		expect(embeddingCalls).toHaveLength(2);
 		const { events: fileEvents } = await loadSession(rec.filePath);
 		const audit = fileEvents.find((event) => event.type === "vector/indexed");
-		expect(audit).toMatchObject({ files: 2, chunks: 2 });
+		expect(audit).toMatchObject({ files: 1, chunks: 1 });
 		expect(JSON.stringify(audit)).not.toContain("auth.ts");
 		expect(JSON.stringify(audit)).not.toContain("alphaAuth");
 		await sm.close(rec.id);

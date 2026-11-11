@@ -19,10 +19,14 @@ interface HotpotHash {
 
 declare module "node:crypto" {
 	export function createHash(algorithm: "sha256"): HotpotHash;
+	export function randomUUID(): string;
 }
 
 declare module "node:fs/promises" {
-	export function open(path: string, flags: "a"): Promise<HotpotFileHandle>;
+	export function open(
+		path: string,
+		flags: "a" | "wx",
+	): Promise<HotpotFileHandle>;
 	export function mkdir(
 		path: string,
 		options?: { recursive?: boolean },
@@ -38,6 +42,8 @@ declare module "node:fs/promises" {
 	): Promise<{ size: number; isFile(): boolean }>;
 	export function symlink(target: string, path: string): Promise<void>;
 	export function appendFile(path: string, data: string): Promise<void>;
+	export function rename(oldPath: string, newPath: string): Promise<void>;
+	export function unlink(path: string): Promise<void>;
 	export function writeFile(
 		path: string,
 		data: string,

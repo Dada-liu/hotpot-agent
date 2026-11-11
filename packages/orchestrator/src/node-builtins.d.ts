@@ -29,7 +29,10 @@ interface HotpotChildStream {
 }
 
 declare module "node:fs/promises" {
-	export function open(path: string, flags: "a"): Promise<HotpotFileHandle>;
+	export function open(
+		path: string,
+		flags: "a" | "wx",
+	): Promise<HotpotFileHandle>;
 	export function mkdir(
 		path: string,
 		options?: { recursive?: boolean },
@@ -60,6 +63,7 @@ declare module "node:fs/promises" {
 	): Promise<{ size: number; isDirectory(): boolean; isFile(): boolean }>;
 	export function realpath(path: string): Promise<string>;
 	export function rename(oldPath: string, newPath: string): Promise<void>;
+	export function unlink(path: string): Promise<void>;
 }
 
 declare module "node:fs" {
