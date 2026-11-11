@@ -131,6 +131,8 @@ How to run:
 
 2. The CLI command is `hotpot` (available after installation; source-repo dev equivalent: `pnpm dev cli chat`); it starts line-based chat: `/exit` quits, Ctrl-C interrupts the current turn; high-risk commands and overwrites ask for `y/n` approval (default n).
 3. Sessions are persisted as JSONL under `~/.hotpot/sessions/`; `hotpot chat --session <session file path>` resumes history and continues the conversation (source-repo dev equivalent: `pnpm dev cli chat --session <session file path>`).
+
+   Optional user memory is disabled by default. Set `"features": {"memory": true}` in user-level settings to let main/worker agents save stable preferences or facts with `memory_save`; task agents are read-only. Memory lives in `~/.hotpot/MEMORY.md` (overridable with `HOTPOT_HOME`), remains human-editable Markdown, and only its latest bounded summary is injected per turn. Do not save secrets, credentials, or temporary task state. Telemetry reports only the flag and counts, never memory content; neither `memory_search` nor vector retrieval is provided.
 4. Web: after installation run `hotpot web` (listens on http://127.0.0.1:4573 by default, generates an API token at startup, and opens a `?token=` URL once ready; same settings, sessions shared with CLI); in the source repo use `pnpm dev web`. The browser moves the token into session storage and removes it from the address bar, so REST/SSE remain authenticated after refreshes. For manual access, use the full URL printed in the terminal. When developing the frontend, run `pnpm --filter @hotpot/web dev` in another terminal and Vite proxies `/api` to 4573.
 
 ## Publishing the npm Package

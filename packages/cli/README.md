@@ -36,3 +36,4 @@
 - **skill**：启动扫描 `<home>/skills`、`<cwd>/.hotpot/skills` 与 `skillsDirs`，清单注入三角色提示词（渐进式，模型按需 read）。
 - **MCP**：按 `settings.mcpServers` 连接（stdio/HTTP），`[mcp] attached: ...` 提示，工具桥接为 `mcp__<server>__<tool>`；退出时关闭连接。
 - **todo / web 工具**：由 orchestrator 按 `features.*` 注入 worker/task，CLI 无需额外接线。
+- **用户记忆**：`runChat` 把显式 `home` 透传给 runtime；`features.memory=true` 时新会话与 `--session` 恢复会话都从同一 `<home>/MEMORY.md` 构建 prompt，main 可直接调用 `memory_save`。默认关闭。

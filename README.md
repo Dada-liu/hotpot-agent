@@ -131,6 +131,8 @@ M6 已完成：Web 端交互完善——运行中发送默认进入 next-turn �
 
 2. 命令行入口为 `hotpot`（安装后直接可用；源码仓库开发态：`pnpm dev cli chat`），启动行式对话：`/exit` 退出，Ctrl-C 中断当前回合；高危命令与覆盖写会询问 `y/n` 审批（默认 n）。
 3. 会话以 JSONL 落盘在 `~/.hotpot/sessions/`；`hotpot chat --session <会话文件路径>` 恢复历史继续对话（源码仓库开发态：`pnpm dev cli chat --session <会话文件路径>`）。
+
+   可选用户记忆默认关闭；在用户级 settings 中设置 `"features": {"memory": true}` 后，main/worker 可用 `memory_save` 保存稳定偏好或事实，task 只读取。记忆存于 `~/.hotpot/MEMORY.md`（`HOTPOT_HOME` 可覆盖），是可人工编辑的 Markdown，每轮只注入最新有界摘要。不要保存密钥、凭证或临时任务状态；遥测只上报开关与次数，不上报记忆正文，也不提供 `memory_search` 或向量检索。
 4. Web 端：安装后运行 `hotpot web` 一键启动（默认监听 http://127.0.0.1:4573，启动时生成 API token，就绪后自动打开带 `?token=` 的地址；同一 settings 配置，会话与 CLI 互通）；源码仓库开发态运行 `pnpm dev web`。浏览器会将 token 存入会话存储并清理地址栏，刷新后 REST/SSE 仍携带认证。手动访问时使用终端打印的完整地址；开发态改前端时另开 `pnpm --filter @hotpot/web dev`，Vite 将 `/api` 代理到 4573。
 
 ## 发布 npm 包

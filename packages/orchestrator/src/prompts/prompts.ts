@@ -4,8 +4,8 @@
 // 同一进程内连续构建 main/worker/task 三种 prompt 互不污染（core 为此给 buildSystemPrompt
 // 增加了可选 sections 入参）。角色指令段插在 rules(2000) 与 env(3000) 之间的 2500。
 // M4 动态段（可选 opts，默认完全不出现、默认行为不变）：
-// skills 段 order 1400（Task 6 数据源：discoverSkills 扫描结果）、
-// todos 段 order 1500（Task 2 数据源：foldTodos fold 结果）；空列表不出段。
+// skills 段 order 1400（discoverSkills 扫描结果）、todos 段 order 1500（foldTodos 结果）、
+// memory 段 order 1600（每轮读取的有界 MEMORY.md 摘要）；空列表或空摘要不出段。
 // 文案内容对齐 docs/archive/03-agent-orchestration.md：
 // main —— §1 职责 + §2 难度判定/模型路由（含边界示例）；worker —— §1 职责 + §4 并行拆分三条件
 // 与正反例 + §5 摘要回传；task —— §1 职责 + §5 摘要回传。LLM 面向文案全英文。
@@ -165,13 +165,29 @@ function todosSection(todos: TodoItem[]): PromptSection {
 	};
 }
 
+// 用户记忆动态段：正文来自每轮重新读取的有界 MEMORY.md 摘要
+function memorySection(memory: string): PromptSection {
+	return {
+		name: "memory",
+		order: SECTION_ORDER.RULES - 400,
+		text:
+			`User memory (stable preferences and facts from previous sessions):\n${memory}\n` +
+			"Only stable user preferences and facts belong in memory. Do not save secrets, credentials, or temporary task state.",
+	};
+}
+
 // 基础四段 + 角色指令段，全部本地组装，不走全局注册表；
-// opts.skills/opts.todos 为可选动态段数据源（默认/空数组不出段，默认行为与 M2 一致）；
+// opts.skills/opts.todos/opts.memory 为可选动态段数据源（空值不出段）；
 // opts.instructions 覆盖角色指令段（main 的 plan / 执行阶段使用）
 export function buildRoleSystemPrompt(
 	role: AgentRole,
 	ctx: PromptContext,
-	opts?: { skills?: Skill[]; todos?: TodoItem[]; instructions?: string },
+	opts?: {
+		skills?: Skill[];
+		todos?: TodoItem[];
+		memory?: string;
+		instructions?: string;
+	},
 ): string {
 	const sections: PromptSection[] = [
 		identitySection,
@@ -183,6 +199,9 @@ export function buildRoleSystemPrompt(
 	}
 	if (opts?.todos !== undefined && opts.todos.length > 0) {
 		sections.push(todosSection(opts.todos));
+	}
+	if (opts?.memory !== undefined && opts.memory !== "") {
+		sections.push(memorySection(opts.memory));
 	}
 	sections.push(
 		roleInstructionSection(role, opts?.instructions ?? ROLE_INSTRUCTIONS[role]),

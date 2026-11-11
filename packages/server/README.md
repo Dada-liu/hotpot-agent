@@ -30,7 +30,7 @@ M3 服务层：在 cli 与 orchestrator 之上提供 REST + SSE API，负责会�
 
 ## M4 增量
 
-- **装配扩展**：`assemble()` 按 `settings.features` 装配 M4 能力——扫描 skill / prompt template 目录、连接 MCP server（成功落 `mcp/attached`）、构造 hooks 链并触发一次 `session_start`；功能开关、`webSearch` 后端与附件配置全部经 `createRuntime` 透传。
+- **装配扩展**：`assemble()` 按 `settings.features` 装配 M4 能力——扫描 skill / prompt template 目录、连接 MCP server（成功落 `mcp/attached`）、构造 hooks 链并触发一次 `session_start`；功能开关、`webSearch` 后端与附件配置全部经 `createRuntime` 透传。显式 `home` 同样透传，保证 `create` 与 `attachById` 恢复路径在 memory 开启时读取同一 `<home>/MEMORY.md`。
 - **prompt templates**：`send()` 对 `/name args` 统一展开并落 `prompt/invoked`；未知命令抛 `PromptCommandError`，REST 转 400（消息不进入回合）。
 - **新增路由**：`GET /api/sessions/:id/prompts`（`/` 补全列表）、`GET /api/sessions/:id/inbox`（steer/queue 两队列快照）。
 - **usage 扩展**：`summarizeUsage(events, features)` 增加 `features` 段（todo/hooks/skills/promptTemplates/webSearch/webFetch/mcp 的开关 + 事件/工具调用计数），满足 M4 遥测验收；M5 报表直接消费。

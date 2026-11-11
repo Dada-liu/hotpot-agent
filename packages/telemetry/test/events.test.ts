@@ -29,6 +29,32 @@ describe("telemetryBatchSchema", () => {
 		).toThrow();
 	});
 
+	it("accepts the memory feature flag without allowing memory content", () => {
+		const event = {
+			eventId: "e1",
+			ts: "2026-01-01T00:00:00.000Z",
+			type: "session_start",
+			sessionId: "s1",
+			resumed: false,
+			appVersion: "0.0.0",
+			features: { memory: true },
+		};
+		expect(
+			telemetryBatchSchema.parse({ ...base, events: [event] }).events[0],
+		).toEqual(event);
+		expect(() =>
+			telemetryBatchSchema.parse({
+				...base,
+				events: [
+					{
+						...event,
+						features: { memory: true, content: "private memory" },
+					},
+				],
+			}),
+		).toThrow();
+	});
+
 	it("rejects more than 500 events", () => {
 		expect(() =>
 			telemetryBatchSchema.parse({

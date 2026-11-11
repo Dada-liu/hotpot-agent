@@ -925,6 +925,7 @@ export function createSessionManager(
 		const baseRuntime = createRuntime({
 			session: watermark.session,
 			cwd,
+			home: opts.home,
 			approval,
 			models: settings.models,
 			maxParallelTasks: settings.maxParallelTasks,

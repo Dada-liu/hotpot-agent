@@ -588,13 +588,14 @@ function reduceLog(state: ChatState, event: SessionEvent): ChatState {
 				},
 				lastTodoAgentId: event.agentId,
 			};
-		// M3/M4 新增事件：与主对话渲染无关（hook/skill/prompt/mcp 由遥测与审计消费；
+		// M3/M4 新增事件：与主对话渲染无关（hook/skill/prompt/mcp/memory 由遥测与审计消费；
 		// permission/changed 为权限切换审计，档位由 wire permission 瞬态折叠），
 		// 幂等去重已在函数入口完成
 		case "hook/fired":
 		case "skill/loaded":
 		case "prompt/invoked":
 		case "mcp/attached":
+		case "memory/saved":
 		case "permission/changed":
 			return state;
 		case "error": {

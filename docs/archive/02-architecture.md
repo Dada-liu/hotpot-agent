@@ -60,11 +60,13 @@
   - 内置 bash / read / write / edit
   - 权限钩子：工具执行前 waterfall 审批链（借鉴 dsh `approval/asked|decided` 审计事件对）；高危命令确认、沙箱都挂在这条链上
   - 工具可声明 `isConcurrencySafe`，同批 tool call 默认并行，不安全的串行（借鉴 dsh/pi）
+  - 用户记忆：`<home>/MEMORY.md` 是人工可编辑的 Markdown；读取有界且失败降级，`memory_save` 只追加稳定偏好/事实并落不含正文的 `memory/saved` 审计事件，详见 [packages/core/src/user-memory/README.md](../../packages/core/src/user-memory/README.md)
 
 ### packages/orchestrator — 三层编排
 - MainAgent / WorkerAgent(从) / TaskAgent(子)，复用 core 的 turn/step 循环，差异在系统提示词与可用工具集
 - 难度评估 + 模型路由、plan 生成与审批、任务拆分与并行调度
 - steer/queue 双队列（见 03 文档第 7 节）
+- memory 开关开启时，main/worker 注册 `memory_save`，task 不写；三个角色每轮构建 prompt 前读取最新有界摘要，详见 [packages/orchestrator/README.md](../../packages/orchestrator/README.md)
 - 详见 `docs/03-agent-orchestration.md`
 
 ### packages/server — API 服务（M3）
@@ -108,7 +110,8 @@ packages/core/src/
 ├── prompt-templates/        # prompts/*.md → /命令
 ├── session/                 # 事件日志、derive、todo 折叠
 ├── skills/                  # SKILL.md 发现
-└── tools/                   # 工具框架与 bash/read/write/edit/todo/web 工具
+├── tools/                   # 工具框架与 bash/read/write/edit/todo/web 工具
+└── user-memory/             # MEMORY.md 有界读取、追加与 memory_save
 ```
 
 ```text
@@ -196,6 +199,7 @@ cli / server
 {"type":"skill/loaded","id":"...","ts":"...","agentId":"worker-1","skill":"commit","path":".../SKILL.md"}
 {"type":"prompt/invoked","id":"...","ts":"...","agentId":"main","name":"commit","args":"fix lint","content":"..."}
 {"type":"mcp/attached","id":"...","ts":"...","server":"fs","transport":"stdio","tools":["mcp__fs__read"]}
+{"type":"memory/saved","id":"...","ts":"...","agentId":"main"}
 {"type":"error","id":"...","ts":"...","agentId":"...","code":"...","message":"..."}
 ```
 
@@ -205,7 +209,7 @@ cli / server
 - 一个会话内所有 agent（含子 agent）写同一文件，`agentId` 区分
 - `request_header`：config + 工具 schema 快照变化时才记新条目（借鉴 dsh），支撑缓存命中分析
 - 队列变更（`inbox/spliced`）也落盘，崩溃恢复后 steering 队列不丢（借鉴 dsh）
-- M4 新增的 `todo/set`、`hook/fired`、`skill/loaded`、`prompt/invoked`、`mcp/attached` 均**不进模型历史**（`deriveMessages` 不折叠）：todo 由 `foldTodos` 重建清单并注入提示词段，其余供审计与遥测计数
+- M4 新增的 `todo/set`、`hook/fired`、`skill/loaded`、`prompt/invoked`、`mcp/attached`、`memory/saved` 均**不进模型历史**（`deriveMessages` 不折叠）：todo 由 `foldTodos` 重建清单并注入提示词段，其余供审计与遥测计数；memory/saved 不含记忆正文，Web 只按 id 去重而不渲染
 - 崩溃最多丢最后一行；关键事件写入后 fsync
 
 ## 6. 配置体系
@@ -221,7 +225,7 @@ cli / server
 ├── skills/           # M4 skill（<name>/SKILL.md）
 ├── prompts/          # M4 prompt templates（<name>.md → /命令）
 ├── telemetry/        # M5 匿名安装 ID（install-id；benchmark 用 benchmark-install-id）
-└── memory/           # 用户记忆（M4 后续项）
+└── MEMORY.md         # M4 用户记忆（人工可编辑 Markdown，默认关闭）
 ```
 
 **项目级 `./.hotpot/`**（自 cwd 向上逐级查找，首个含 `settings.json` 的目录生效）：
@@ -240,7 +244,7 @@ cli / server
 | **maxParallelTasks** | **10** | 用户级+项目级 | 并行 TaskAgent 上限 |
 | **planMaxRevisions** | **3** | 用户级+项目级 | plan 审批修订轮次上限 |
 | permission.mode | ask-on-dangerous | 仅用户级 | 权限三档：readonly（read 类放行，其余 worker 工具逐个审批）/ ask-on-dangerous（危险操作询问）/ full（全部放行）；项目级 permission 会被忽略 |
-| features.* | 全开 | 仅用户级 | M4 功能开关：todo/hooks/skills/promptTemplates/webSearch/webFetch/mcp |
+| features.* | memory 默认关闭，其余全开 | 仅用户级 | M4 功能开关：todo/hooks/skills/promptTemplates/webSearch/webFetch/mcp/memory；memory 关闭时不读 MEMORY.md、不注册 memory_save、不注入记忆段 |
 | hooks | 无 | 仅用户级 | Claude Code 钩子格式（SessionStart/PreToolUse/PostToolUse/Stop） |
 | webSearch | duckduckgo | 仅用户级 | web_search 后端（duckduckgo 或 custom + baseUrl/apiKey/headers） |
 | mcpServers | 无 | 仅用户级 | MCP server：stdio（command/args/env）或 streamable HTTP（url/headers） |
@@ -287,7 +291,7 @@ cli / server
 | MCP | core 工具注册表增加 MCP 工具适配器（工具名 `mcp__<server>__<tool>`，pi/dsh 同款命名） |
 | skill | 系统提示词 section 注册表加 skills 段：启动时只注入 name+description+路径，模型按需自行 read（pi 的渐进加载方式，省 token） |
 | hooks | 审批 waterfall 泛化为生命周期钩子链（session_start、pre/post tool、turn_end） |
-| 用户记忆 | server 会话启动时注入记忆摘要 section；写记忆走独立工具 |
+| 用户记忆 | 已实现：orchestrator 每轮注入有界摘要；main/worker 经 memory_save 追加，core 负责 Markdown 持久化 |
 | 向量数据库 | 独立 packages/memory 包（M4），core 不依赖 |
 | 沙箱 | 审批链上的执行器替换点，接口不变 |
 | steer/queue | orchestrator 的双队列，M2 预留 API，M4 完成 |

@@ -44,6 +44,8 @@
 ### P1 扩展功能（M4，按实施顺序）
 todo、steer/queue、hooks、skill、prompt templates、web_search/web_fetch、MCP、上下文自动压缩、用户记忆、向量数据库、后台任务 jobs、权限预设、tool_search、沙箱
 
+用户记忆已实现为默认关闭的用户级 `features.memory`：启用后每轮读取 `<home>/MEMORY.md`（默认 `~/.hotpot/MEMORY.md`）的有界摘要，main/worker 可用 `memory_save` 追加稳定偏好或事实，task 只读。Markdown 可由用户直接编辑；密钥、凭证与临时任务状态不得写入，记忆正文不进入遥测，且不提供向量检索或 `memory_search`。
+
 ### P2 配套（贯穿 + M5）
 测试（vitest 单元 + mock LLM 集成）、benchmarks（SWE-bench + 自建金融/软件开发/自媒体运营 bench，各领域先 1 题打底，后续从使用历史沉淀）、遥测（token/耗时/成功率；M5.1 已实现：工具向中心服务上报匿名指标与脱敏后的系统错误，后台管理界面为独立项目 `../hotpot-telemetry/`、不打进工具产物，不再以本地存储/导出为主路径）
 
