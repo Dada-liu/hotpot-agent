@@ -1,6 +1,6 @@
 // 无交互 agent runner 测试：scriptedAdapter 回放，不触网。
-// 覆盖：正常文本轮的成功与 token 汇总、危险命令的 allow-all 审批落盘、
-// 以及超时 abort（无限流式适配器周期性让出，保证 core 循环能观察 abort）。
+// 覆盖：正常文本轮的成功与 token 汇总、token 的档位分解（main/worker 分开）、
+// 危险命令的 allow-all 审批落盘，以及超时 abort（无限流式适配器周期性让出，保证 core 循环能观察 abort）。
 
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -88,9 +88,33 @@ describe("runAgentTurn", () => {
 		expect(result.outcome).toBe("success");
 		expect(result.inputTokens).toBe(11);
 		expect(result.outputTokens).toBe(3);
+		expect(result.tokensByTier.low).toEqual({ input: 11, output: 3 });
+		expect(result.tokensByTier.high).toEqual({ input: 0, output: 0 });
 		expect(result.durationMs).toBeGreaterThanOrEqual(0);
 		const { events } = await loadSession(result.sessionFilePath);
 		expect(events.some((event) => event.type === "assistant_msg")).toBe(true);
+	});
+
+	it("token 按档位分解：main 与 worker 分开归因", async () => {
+		const adapter = scriptedAdapter([
+			spawnWorkersRound("Say hello."),
+			textRound("hello from worker", 5, 2),
+			textRound("Done.", 6, 3),
+		]);
+		const result = await runAgentTurn({
+			cwd,
+			prompt: "Delegate the greeting.",
+			settings: SETTINGS,
+			modelTier: "high",
+			adapter,
+			model: TEST_MODEL,
+		});
+
+		expect(result.outcome).toBe("success");
+		expect(result.tokensByTier.high).toEqual({ input: 10, output: 4 });
+		expect(result.tokensByTier.low).toEqual({ input: 5, output: 2 });
+		expect(result.inputTokens).toBe(15);
+		expect(result.outputTokens).toBe(6);
 	});
 
 	it("危险命令经 allow-all 审批执行，并落盘 asked/decided", async () => {

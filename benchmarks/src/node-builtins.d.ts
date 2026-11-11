@@ -141,6 +141,12 @@ declare module "node:path" {
 
 declare module "node:crypto" {
 	export function randomUUID(): string;
+	// 运行清单用 sha256 标记题目集/被选实例集合：只要集合或题面变化，哈希就必须变
+	export interface HotpotHash {
+		update(data: string): HotpotHash;
+		digest(encoding: "hex"): string;
+	}
+	export function createHash(algorithm: string): HotpotHash;
 }
 
 declare module "node:url" {

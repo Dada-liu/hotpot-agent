@@ -9,7 +9,10 @@ M5 benchmark runner：在真实仓库上跑无交互 agent 生成 patch，调用
 | 文件                                 | 职责                                                                                                        |
 | ------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
 | `src/cli.ts` / `src/cli-args.ts` | `pnpm bench` 入口与参数解析                                                                               |
-| `src/agent-runner.ts`              | 无交互跑一个 task turn：临时 HOME、allow-all 审批（落盘审计）、plan 自动批准、超时 abort、整棵树 token 汇总 |
+| `src/agent-runner.ts`              | 无交互跑一个 task turn：临时 HOME、allow-all 审批（落盘审计）、plan 自动批准、超时 abort、整棵树 token 按档位汇总 |
+| `src/runtime-profile.ts`           | 运行档：特性开关、并行数、审批、超时、patch-only 的唯一来源；`BENCHMARK_RUNTIME` 是当前基线 |
+| `src/manifest.ts`                  | 运行清单 `manifest.json`：代码版本、模型指纹、运行档、题目集哈希，以及可比较性判定 |
+| `src/tokens.ts`                    | 按模型档位累加 usage（成本归因的纯函数） |
 | `src/workspace.ts`                 | `WorkspaceProvider` / `Workspace` 接口（未来容器 runner 的缝）                                          |
 | `src/swebench/workspace.ts`        | `CheckoutWorkspaceProvider`：仓库缓存 + 每题独立 git worktree；`capturePatch` 生成 diff                 |
 | `src/swebench/instances.ts`        | 实例 JSONL 解析与确定性选择（limit / instance ids / seed）                                                  |
@@ -18,7 +21,7 @@ M5 benchmark runner：在真实仓库上跑无交互 agent 生成 patch，调用
 | `src/custom/task.ts`               | 自建题 schema 与目录加载                                                                                    |
 | `src/custom/tasks/*.json`          | 三类种子任务（金融 / 软件开发 / 自媒体），一题一文件                                                        |
 | `src/custom/runner.ts`             | 自建题执行：临时 workspace + 校验命令                                                                       |
-| `src/report.ts`                    | `report.json` / `report.md`：通过率、平均 token、平均时长、失败列表                                     |
+| `src/report.ts`                    | `report.json` / `report.md`：通过率、均值/中位数/p90、分档位 token、失败列表，内嵌运行清单             |
 | `src/telemetry.ts`                 | `benchmark_run` 事件（`kind=benchmark`，独立安装 ID）                                                   |
 | `src/process.ts`                   | 子进程执行辅助（超时、输出捕获、流式日志回调）                                                              |
 | `scripts/export_instances.py`      | 用 `datasets` 从 HuggingFace 导出实例 JSONL                                                               |
@@ -60,9 +63,10 @@ pnpm bench swebench --instances-file instances.jsonl --eval-mode remote --eval-h
 
 ```text
 <output>/
+├── manifest.json          # 运行清单：本次跑批的实验条件（开跑即写，结束时更新为 completed）
 ├── predictions.jsonl      # 官方预测格式（空 patch 也保留一行）
 ├── official/              # harness 日志、exit-code、官方 report
-├── report.json            # 聚合报告
+├── report.json            # 聚合报告（内嵌 manifest）
 ├── report.md              # 人读报告
 ├── cache/                 # 仓库缓存（跨题复用）
 └── workspaces/            # 每题 worktree，跑完即清理
@@ -128,6 +132,23 @@ pnpm bench custom --domain finance
 `report.json` / `report.md` 只包含：suite、dataset/split、instance id、pass/fail、input/output token、时长、脱敏后的失败原因。不写 prompt、回复、patch 或文件内容；失败原因经 `sanitizeErrorMessage` 去除路径/URL/邮箱后再截断。
 
 有官方 report 时，pass/fail 以官方 `resolved` 列表为准；runner 自己的结果只用于对照与失败原因。
+
+指标口径：
+
+- 每个指标同时给 `mean` / `median` / `p90`。均值会被单题的长上下文拉偏（Lite300 里 `django-13710` 一题 2445 万 input token，把 300 题均值抬高约 20%），成本结论以中位数与 p90 为准。
+- `tokens.byTier` 按模型档位切开（main 与 worker/task 用不同档位），并给 `tierCoverage`（带分档位数据的题数占比）；覆盖率小于 1 时 `byTier` 只是下界。
+- `tokensPerResolved` 是每个通过题的平均 token 消耗；没有通过题时为 `null`，不伪装成 0。
+- `patchOnly` 由运行档（`src/runtime-profile.ts`）推导，不再恒为 true。
+
+## 可比较性
+
+`manifest.json` 是「两次跑批能不能放在一起比」的唯一依据，`report.json` 内嵌同一份清单。它记录：git commit 与 dirty、agent 包版本、node/platform、三档模型的 `provider/model/baseUrlHost/baseUrlPath`（不含 apiKey，也不含 baseUrl 查询串）、运行档（特性开关、并行数、审批、超时、patch-only）、题目集哈希（`idsHash` 与实际选中集合，`tasksetHash` 为自建题内容）、评测方式。
+
+判定规则（`describeManifestDiff`）：suite、运行档、任一模指纹、主 agent 档位、git commit、包版本、`idsHash`、`tasksetHash`、dataset/split、评测模式任一项不同，即视为不可比。因此：
+
+- 换模型、改 prompt、改开关都会体现在清单里，不需要在报告文档里手写「本次与上次不可对比」。
+- `status: "running"` 表示跑批没走完（进程被杀或抛错），此时目录里的结果不能用于结论。
+- 跑批中途注意：清单在开跑时先落一份 `running`，结束时改写为 `completed` 并补 `finishedAt` / `durationMs`。
 
 ## 遥测
 

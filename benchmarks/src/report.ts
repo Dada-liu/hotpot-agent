@@ -2,15 +2,25 @@
 // 明确不写 prompt、回复、diff、文件路径：失败原因先经 @hotpot/telemetry 的
 // sanitizeErrorMessage 归一化（绝对路径/URL/邮箱变占位符），再截断。
 // 有官方 report 时，通过与否以官方 resolved 列表为准；runner 自己的 passed 仅作参考。
+//
+// 指标口径：
+// - 同时给 mean / median / p90。Lite300 的均值被单题 2445 万 input token 抬高 20%，
+//   只看均值会让成本结论失真，中位数与 p90 才是稳定的比较口径。
+// - token 按 tier 切开：main/worker/task 用不同档位，合并成一个总数就看不出钱花在哪。
+// - 报告内嵌 manifest：没有实验条件的结果不能参与比较，两者必须一起走。
 
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { sanitizeErrorMessage } from "@hotpot/telemetry";
+import type { BenchmarkSuite, RunManifest } from "./manifest.ts";
 import type { OfficialReport } from "./swebench/evaluate.ts";
+import {
+	createTierTokens,
+	mergeTierTokens,
+	type TierTokens,
+} from "./tokens.ts";
 
 const FAILURE_REASON_MAX_CHARS = 300;
-
-export type BenchmarkSuite = "swebench" | "custom";
 
 export interface InstanceResult {
 	instanceId: string;
@@ -18,6 +28,8 @@ export interface InstanceResult {
 	durationMs: number;
 	inputTokens: number;
 	outputTokens: number;
+	// 缺省表示该题没有分档位数据（旧结果/自定义 runner），聚合时按 missing 计
+	tokensByTier?: TierTokens;
 	error?: string;
 }
 
@@ -26,20 +38,39 @@ export interface ReportFailure {
 	reason: string;
 }
 
+// nearest-rank 分位数 + 独立的中位数定义；空集合全部记 0，不产生 NaN
+export interface NumericStat {
+	mean: number;
+	median: number;
+	p90: number;
+	total: number;
+}
+
+export interface TokenAggregate {
+	input: NumericStat;
+	output: NumericStat;
+	byTier: TierTokens;
+	// 有分档位数据的题数 / 总题数：小于 1 时 byTier 只是下界
+	tierCoverage: number;
+}
+
 export interface BenchmarkReport {
 	suite: BenchmarkSuite;
 	dataset?: string;
 	split?: string;
 	runId?: string;
 	generatedAt: string;
-	// M5 基线：agent 只改文件，不装依赖、不跑仓库测试
+	// 实验条件；报告与清单一起落盘，缺一不可比
+	manifest: RunManifest;
+	// 由 manifest.runtime 推导，不单独赋值
 	patchOnly: boolean;
 	total: number;
 	passed: number;
 	passRate: number;
-	avgInputTokens: number;
-	avgOutputTokens: number;
-	avgDurationMs: number;
+	tokens: TokenAggregate;
+	durationMs: NumericStat;
+	// 每个「通过题」平均消耗的 token（input + output）；无通过题时为 null，不伪装成 0
+	tokensPerResolved: number | null;
 	instances: InstanceResult[];
 	failures: ReportFailure[];
 }
@@ -48,6 +79,7 @@ export interface BuildReportOptions {
 	suite: BenchmarkSuite;
 	dataset?: string;
 	split?: string;
+	manifest: RunManifest;
 }
 
 export interface ReportPaths {
@@ -91,21 +123,38 @@ export function buildReport(
 			reason: instance.error ?? "failed",
 		}));
 
+	const input = numericStat(instances.map((instance) => instance.inputTokens));
+	const output = numericStat(
+		instances.map((instance) => instance.outputTokens),
+	);
+	const withTier = instances.filter(
+		(instance) => instance.tokensByTier !== undefined,
+	);
+	const byTier = createTierTokens();
+	for (const instance of withTier) {
+		mergeTierTokens(byTier, instance.tokensByTier);
+	}
+
 	return {
 		suite: opts.suite,
 		...(opts.dataset === undefined ? {} : { dataset: opts.dataset }),
 		...(opts.split === undefined ? {} : { split: opts.split }),
 		...(official === undefined ? {} : { runId: official.runId }),
 		generatedAt: new Date().toISOString(),
-		patchOnly: true,
+		manifest: opts.manifest,
+		patchOnly: opts.manifest.runtime.patchOnly,
 		total,
 		passed,
 		passRate: total === 0 ? 0 : passed / total,
-		avgInputTokens: average(instances.map((instance) => instance.inputTokens)),
-		avgOutputTokens: average(
-			instances.map((instance) => instance.outputTokens),
-		),
-		avgDurationMs: average(instances.map((instance) => instance.durationMs)),
+		tokens: {
+			input,
+			output,
+			byTier,
+			tierCoverage: total === 0 ? 0 : withTier.length / total,
+		},
+		durationMs: numericStat(instances.map((instance) => instance.durationMs)),
+		tokensPerResolved:
+			passed === 0 ? null : (input.total + output.total) / passed,
 		instances,
 		failures,
 	};
@@ -124,25 +173,59 @@ export async function writeReport(
 }
 
 export function renderReportMarkdown(report: BenchmarkReport): string {
+	const manifest = report.manifest;
 	const lines = [
 		"# Benchmark report",
+		"",
+		"## Run",
 		"",
 		`- suite: ${report.suite}`,
 		...(report.dataset === undefined ? [] : [`- dataset: ${report.dataset}`]),
 		...(report.split === undefined ? [] : [`- split: ${report.split}`]),
-		...(report.runId === undefined ? [] : [`- run id: ${report.runId}`]),
+		`- run id: ${report.runId ?? manifest.runId}`,
 		`- generated at: ${report.generatedAt}`,
-		"- patch-only baseline: yes (the agent only edits files; it does not install dependencies or run repository tests)",
+		`- status: ${manifest.status}`,
+		`- git commit: ${formatCommit(manifest)}`,
+		`- agent package: ${manifest.agent.packageVersion}`,
+		`- node / platform: ${manifest.agent.node} / ${manifest.agent.platform}`,
+		`- main agent tier: ${manifest.mainAgentTier}`,
+		`- models: ${formatModels(manifest)}`,
+		`- runtime profile: ${manifest.runtime.label} (${formatRuntime(manifest)})`,
+		`- selected instances: ${manifest.selection.count} (ids sha256 ${shortHash(manifest.selection.idsHash)})`,
+		...(manifest.selection.tasksetHash === undefined
+			? []
+			: [`- task set sha256: ${shortHash(manifest.selection.tasksetHash)}`]),
+		...(manifest.eval === undefined
+			? []
+			: [
+					`- evaluation: ${manifest.eval.mode}, max workers ${manifest.eval.maxWorkers}`,
+				]),
+		`- patch-only baseline: ${report.patchOnly ? "yes (the agent only edits files; it does not install dependencies or run repository tests)" : "no"}`,
+		"",
+		"## Results",
+		"",
 		`- total: ${report.total}`,
 		`- passed: ${report.passed}`,
 		`- pass rate: ${(report.passRate * 100).toFixed(1)}%`,
-		`- average input tokens: ${report.avgInputTokens.toFixed(1)}`,
-		`- average output tokens: ${report.avgOutputTokens.toFixed(1)}`,
-		`- average duration: ${report.avgDurationMs.toFixed(1)} ms`,
+		`- tokens per resolved instance: ${report.tokensPerResolved === null ? "n/a (no resolved instance)" : report.tokensPerResolved.toFixed(1)}`,
 		"",
-		"## Failures",
+		"| metric | mean | median | p90 | total |",
+		"|---|---|---|---|---|",
+		`| input tokens | ${report.tokens.input.mean.toFixed(1)} | ${report.tokens.input.median.toFixed(1)} | ${report.tokens.input.p90.toFixed(1)} | ${report.tokens.input.total} |`,
+		`| output tokens | ${report.tokens.output.mean.toFixed(1)} | ${report.tokens.output.median.toFixed(1)} | ${report.tokens.output.p90.toFixed(1)} | ${report.tokens.output.total} |`,
+		`| duration (ms) | ${report.durationMs.mean.toFixed(1)} | ${report.durationMs.median.toFixed(1)} | ${report.durationMs.p90.toFixed(1)} | ${report.durationMs.total} |`,
 		"",
+		`Tokens by tier (coverage ${(report.tokens.tierCoverage * 100).toFixed(0)}% of instances):`,
+		"",
+		"| tier | input tokens | output tokens |",
+		"|---|---|---|",
 	];
+	for (const tier of ["high", "medium", "low"] as const) {
+		lines.push(
+			`| ${tier} | ${report.tokens.byTier[tier].input} | ${report.tokens.byTier[tier].output} |`,
+		);
+	}
+	lines.push("", "## Failures", "");
 	if (report.failures.length === 0) {
 		lines.push("None.");
 	} else {
@@ -166,6 +249,71 @@ export function renderReportMarkdown(report: BenchmarkReport): string {
 	return lines.join("\n");
 }
 
+function formatCommit(manifest: RunManifest): string {
+	const { commit, dirty } = manifest.agent.git;
+	if (commit === null) {
+		return "unknown (not a git checkout)";
+	}
+	return `${commit}${dirty === true ? " (dirty)" : dirty === false ? " (clean)" : ""}`;
+}
+
+function formatModels(manifest: RunManifest): string {
+	return (["high", "medium", "low"] as const)
+		.map((tier) => {
+			const model = manifest.models[tier];
+			const endpoint =
+				model.baseUrlHost === null
+					? "default endpoint"
+					: `${model.baseUrlHost}${model.baseUrlPath ?? ""}`;
+			return `${tier}=${model.provider}/${model.model}@${endpoint}`;
+		})
+		.join(", ");
+}
+
+function formatRuntime(manifest: RunManifest): string {
+	const runtime = manifest.runtime;
+	const disabled = Object.entries(runtime.features)
+		.filter(([, enabled]) => !enabled)
+		.map(([name]) => name);
+	const features =
+		disabled.length === 0 ? "all features on" : `off: ${disabled.join("/")}`;
+	return `maxParallelTasks=${runtime.maxParallelTasks}, plan auto-approve, permission=${runtime.permission}, timeout=${runtime.timeoutMs}ms, ${features}`;
+}
+
+function shortHash(hash: string): string {
+	return hash.slice(0, 12);
+}
+
+function numericStat(values: number[]): NumericStat {
+	if (values.length === 0) {
+		return { mean: 0, median: 0, p90: 0, total: 0 };
+	}
+	const sorted = [...values].sort((a, b) => a - b);
+	const total = values.reduce((sum, value) => sum + value, 0);
+	return {
+		mean: total / values.length,
+		median: median(sorted),
+		p90: nearestRank(sorted, 0.9),
+		total,
+	};
+}
+
+// 中位数：偶数个取中间两个的均值（nearest-rank 会偏向低值，不适合中位数）
+function median(sorted: number[]): number {
+	const mid = Math.floor(sorted.length / 2);
+	if (sorted.length % 2 === 1) {
+		return sorted[mid] ?? 0;
+	}
+	const lower = sorted[mid - 1] ?? 0;
+	const upper = sorted[mid] ?? 0;
+	return (lower + upper) / 2;
+}
+
+function nearestRank(sorted: number[], p: number): number {
+	const rank = Math.ceil(p * sorted.length) - 1;
+	return sorted[Math.min(sorted.length - 1, Math.max(0, rank))] ?? 0;
+}
+
 function sanitizeReason(reason: string): string {
 	const sanitized = sanitizeErrorMessage(reason).trim();
 	if (sanitized === "") {
@@ -178,11 +326,4 @@ function sanitizeReason(reason: string): string {
 
 function escapeTableCell(text: string): string {
 	return text.replace(/\|/g, "\\|").replace(/\s+/g, " ");
-}
-
-function average(values: number[]): number {
-	if (values.length === 0) {
-		return 0;
-	}
-	return values.reduce((sum, value) => sum + value, 0) / values.length;
 }

@@ -8,13 +8,18 @@ import { randomUUID } from "node:crypto";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { runCommand } from "../process.ts";
+import type { TierTokens } from "../tokens.ts";
 import type { CustomTask } from "./task.ts";
 
 export type AgentRunner = (opts: {
 	cwd: string;
 	prompt: string;
 	timeoutMs?: number;
-}) => Promise<{ inputTokens: number; outputTokens: number }>;
+}) => Promise<{
+	inputTokens: number;
+	outputTokens: number;
+	tokensByTier?: TierTokens;
+}>;
 
 export interface CustomTaskDeps {
 	runAgent: AgentRunner;
@@ -29,6 +34,7 @@ export interface CustomTaskResult {
 	durationMs: number;
 	inputTokens: number;
 	outputTokens: number;
+	tokensByTier?: TierTokens;
 	error?: string;
 }
 
@@ -44,6 +50,7 @@ export async function runCustomTask(
 	let stdout = "";
 	let inputTokens = 0;
 	let outputTokens = 0;
+	let tokensByTier: TierTokens | undefined;
 	let error: string | undefined;
 
 	try {
@@ -61,6 +68,7 @@ export async function runCustomTask(
 		});
 		inputTokens = usage.inputTokens;
 		outputTokens = usage.outputTokens;
+		tokensByTier = usage.tokensByTier;
 
 		const validation = await runCommand(
 			"bash",
@@ -107,6 +115,7 @@ export async function runCustomTask(
 		durationMs: Date.now() - started,
 		inputTokens,
 		outputTokens,
+		...(tokensByTier === undefined ? {} : { tokensByTier }),
 		...(error === undefined ? {} : { error }),
 	};
 }

@@ -19,11 +19,25 @@ import {
 import { runCustomTask } from "./custom/runner.ts";
 import { loadCustomTasks } from "./custom/task.ts";
 import {
+	type BenchmarkSuite,
+	collectAgentFacts,
+	collectModelFingerprints,
+	createRunManifest,
+	finalizeRunManifest,
+	hashStrings,
+	hashTaskSet,
+	type ManifestEvaluation,
+	type ManifestSelection,
+	type RunManifest,
+	writeRunManifest,
+} from "./manifest.ts";
+import {
 	buildReport,
 	type InstanceResult,
 	type ReportPaths,
 	writeReport,
 } from "./report.ts";
+import { BENCHMARK_RUNTIME } from "./runtime-profile.ts";
 import { runOfficialEvaluation } from "./swebench/evaluate.ts";
 import { loadInstances, selectInstances } from "./swebench/instances.ts";
 import {
@@ -36,6 +50,8 @@ import {
 } from "./swebench/workspace.ts";
 import { reportBenchmarkRun } from "./telemetry.ts";
 
+// 只在 patch-only 档位追加：约束与 report 里的 patchOnly 来自同一个运行档，
+// 不允许出现「prompt 要求别装依赖，报告却说跑了完整 agent」这种不一致。
 const BENCH_PROMPT_SUFFIX =
 	"\n\nYou are running in an offline benchmark. Only modify files in the repository to fix the issue. Do not install dependencies, do not run the repository test suite, and do not commit. Leave your changes in the working tree.";
 
@@ -93,6 +109,32 @@ async function runSwebenchSuite(command: SwebenchCommand): Promise<number> {
 		workspaceRoot,
 	});
 
+	// 先落 running 版清单：跑批中途被杀时，目录里能看出「这次条件是什么、没有跑完」，
+	// 而不是只留下一堆无法判断来源的 report。
+	const startedMs = Date.now();
+	const manifest = await createManifest({
+		runId,
+		suite: "swebench",
+		startedMs,
+		settings,
+		modelTier,
+		selection: {
+			dataset: command.dataset,
+			split: command.split,
+			seed: command.seed,
+			...(command.limit === undefined ? {} : { limit: command.limit }),
+			count: instances.length,
+			idsHash: hashStrings(instances.map((instance) => instance.instance_id)),
+		},
+		eval: {
+			mode: command.evalMode,
+			maxWorkers: command.maxWorkers,
+			...(command.evalMode === "remote" ? { host: command.evalHost } : {}),
+		},
+	});
+	await writeRunManifest(manifest, outputDir);
+
+	const promptSuffix = BENCHMARK_RUNTIME.patchOnly ? BENCH_PROMPT_SUFFIX : "";
 	const results: InstanceResult[] = [];
 	const predictions: PredictionEntry[] = [];
 	for (let index = 0; index < instances.length; index += 1) {
@@ -103,6 +145,7 @@ async function runSwebenchSuite(command: SwebenchCommand): Promise<number> {
 		const started = Date.now();
 		let inputTokens = 0;
 		let outputTokens = 0;
+		let tokensByTier: InstanceResult["tokensByTier"];
 		let patch = "";
 		let error: string | undefined;
 		let workspace: Awaited<ReturnType<typeof provider.prepare>> | undefined;
@@ -111,12 +154,13 @@ async function runSwebenchSuite(command: SwebenchCommand): Promise<number> {
 			workspace = await provider.prepare(instance);
 			const turn = await runAgentTurn({
 				cwd: workspace.cwd,
-				prompt: `${instance.problem_statement}${BENCH_PROMPT_SUFFIX}`,
+				prompt: `${instance.problem_statement}${promptSuffix}`,
 				settings,
 				modelTier,
 			});
 			inputTokens = turn.inputTokens;
 			outputTokens = turn.outputTokens;
+			tokensByTier = turn.tokensByTier;
 			if (turn.outcome !== "success") {
 				error = `agent ${turn.outcome}: ${turn.error ?? "unknown"}`;
 			}
@@ -140,6 +184,7 @@ async function runSwebenchSuite(command: SwebenchCommand): Promise<number> {
 			durationMs: Date.now() - started,
 			inputTokens,
 			outputTokens,
+			...(tokensByTier === undefined ? {} : { tokensByTier }),
 			...(error === undefined ? {} : { error }),
 		});
 		console.log(
@@ -166,11 +211,18 @@ async function runSwebenchSuite(command: SwebenchCommand): Promise<number> {
 		cwd: process.cwd(),
 	});
 
+	const completed = finalizeRunManifest(manifest, {
+		status: "completed",
+		finishedAt: new Date().toISOString(),
+		durationMs: Date.now() - startedMs,
+	});
 	const report = buildReport(results, official, {
 		suite: "swebench",
 		dataset: command.dataset,
 		split: command.split,
+		manifest: completed,
 	});
+	await writeRunManifest(completed, outputDir);
 	const paths = await writeReport(report, outputDir);
 	await reportTelemetry(settings, report, {
 		benchmark: "swebench",
@@ -198,6 +250,22 @@ async function runCustomSuite(command: CustomCommand): Promise<number> {
 		return 1;
 	}
 
+	const startedMs = Date.now();
+	const manifest = await createManifest({
+		runId: `bench-${timestamp()}-${randomUUID().slice(0, 8)}`,
+		suite: "custom",
+		startedMs,
+		settings,
+		modelTier,
+		selection: {
+			count: tasks.length,
+			idsHash: hashStrings(tasks.map((task) => task.id)),
+			// 题面或校验脚本改动会让旧基线失效，必须能被检测到
+			tasksetHash: hashTaskSet(tasks),
+		},
+	});
+	await writeRunManifest(manifest, outputDir);
+
 	const results: InstanceResult[] = [];
 	const workspaceRoot = join(outputDir, "workspaces");
 	for (let index = 0; index < tasks.length; index += 1) {
@@ -218,6 +286,7 @@ async function runCustomSuite(command: CustomCommand): Promise<number> {
 				return {
 					inputTokens: turn.inputTokens,
 					outputTokens: turn.outputTokens,
+					tokensByTier: turn.tokensByTier,
 				};
 			},
 		});
@@ -227,6 +296,9 @@ async function runCustomSuite(command: CustomCommand): Promise<number> {
 			durationMs: result.durationMs,
 			inputTokens: result.inputTokens,
 			outputTokens: result.outputTokens,
+			...(result.tokensByTier === undefined
+				? {}
+				: { tokensByTier: result.tokensByTier }),
 			...(result.error === undefined ? {} : { error: result.error }),
 		});
 		console.log(
@@ -234,7 +306,16 @@ async function runCustomSuite(command: CustomCommand): Promise<number> {
 		);
 	}
 
-	const report = buildReport(results, undefined, { suite: "custom" });
+	const completed = finalizeRunManifest(manifest, {
+		status: "completed",
+		finishedAt: new Date().toISOString(),
+		durationMs: Date.now() - startedMs,
+	});
+	const report = buildReport(results, undefined, {
+		suite: "custom",
+		manifest: completed,
+	});
+	await writeRunManifest(completed, outputDir);
 	const paths = await writeReport(report, outputDir);
 	await reportTelemetry(settings, report, {
 		benchmark: "custom",
@@ -268,11 +349,38 @@ function printSummary(
 	report: ReturnType<typeof buildReport>,
 	paths: ReportPaths,
 ): void {
+	const input = report.tokens.input;
 	console.log(
-		`${report.passed}/${report.total} passed (${(report.passRate * 100).toFixed(1)}%), avg tokens ${report.avgInputTokens.toFixed(1)}/${report.avgOutputTokens.toFixed(1)}, avg ${report.avgDurationMs.toFixed(0)}ms`,
+		`${report.passed}/${report.total} passed (${(report.passRate * 100).toFixed(1)}%), input tokens mean ${input.mean.toFixed(1)} median ${input.median.toFixed(1)} p90 ${input.p90.toFixed(1)}, duration median ${(report.durationMs.median / 1000).toFixed(1)}s`,
 	);
 	console.log(`report: ${paths.jsonPath}`);
 	console.log(`markdown: ${paths.markdownPath}`);
+}
+
+interface CreateManifestInput {
+	runId: string;
+	suite: BenchmarkSuite;
+	startedMs: number;
+	settings: ReturnType<typeof loadSettings>;
+	modelTier: ModelTier;
+	selection: ManifestSelection;
+	eval?: ManifestEvaluation;
+}
+
+async function createManifest(
+	input: CreateManifestInput,
+): Promise<RunManifest> {
+	return createRunManifest({
+		runId: input.runId,
+		suite: input.suite,
+		startedAt: new Date(input.startedMs).toISOString(),
+		agent: await collectAgentFacts(process.cwd()),
+		models: collectModelFingerprints(input.settings.models),
+		mainAgentTier: input.modelTier,
+		runtime: BENCHMARK_RUNTIME,
+		selection: input.selection,
+		...(input.eval === undefined ? {} : { eval: input.eval }),
+	});
 }
 
 function resolveModelTier(

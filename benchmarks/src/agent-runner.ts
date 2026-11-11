@@ -3,9 +3,9 @@
 // - 临时 HOTPOT_HOME（mkdtemp），不污染用户会话与 telemetry 安装 ID；
 // - 显式 allow-all 工具审批（经 audited 包装落盘 asked/decided），plan 自动批准；
 //   不用 permission.mode 门控（基准场景要求零打断，显式链头放行语义更直接）；
-// - 关闭 todo/hooks/skills/promptTemplates/web/mcp，只留 bash/read/write/edit 等基础工具；
-// - maxParallelTasks=1，benchmark 不做并行拆分压测；
-// - 只回传 outcome、整棵树的 token、时长与会话路径，不把对话内容带回上层。
+// - 装配参数来自 runtime profile（默认 BENCHMARK_RUNTIME：特性全关、串行、patch-only），
+//   不再写死在函数里——否则报告无从判断两次跑批是否同一条件；
+// - 只回传 outcome、整棵树的 token（含分档位分解）、时长与会话路径，不把对话内容带回上层。
 
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -25,8 +25,17 @@ import {
 	type OrchestrationRuntime,
 	runMainTurn,
 } from "@hotpot/orchestrator";
-
-const DEFAULT_TIMEOUT_MS = 600000;
+import {
+	BENCHMARK_RUNTIME,
+	type BenchmarkRuntime,
+	runtimeFeatures,
+} from "./runtime-profile.ts";
+import {
+	addTierUsage,
+	createTierTokens,
+	type TierTokens,
+	tierTokensTotal,
+} from "./tokens.ts";
 
 export interface RunAgentTurnOptions {
 	cwd: string;
@@ -35,6 +44,8 @@ export interface RunAgentTurnOptions {
 	settings?: Settings;
 	modelTier: ModelTier;
 	timeoutMs?: number;
+	// 默认 BENCHMARK_RUNTIME；能力档位/消融实验经此替换
+	profile?: BenchmarkRuntime;
 	// 测试注入：两者同时提供时覆盖全部档位的模型解析
 	adapter?: LlmAdapter;
 	model?: ModelInfo;
@@ -44,6 +55,8 @@ export interface AgentTurnResult {
 	outcome: "success" | "error" | "aborted";
 	inputTokens: number;
 	outputTokens: number;
+	// 同一批 token 按模型档位切开，用于成本归因
+	tokensByTier: TierTokens;
 	durationMs: number;
 	sessionFilePath: string;
 	error?: string;
@@ -53,6 +66,15 @@ export async function runAgentTurn(
 	opts: RunAgentTurnOptions,
 ): Promise<AgentTurnResult> {
 	const started = Date.now();
+	const profile = opts.profile ?? BENCHMARK_RUNTIME;
+	// 自动批准写在这里而不是配置里：真放开审批等待，跑批会静默挂住，
+	// 所以换 profile 时必须显式改 runner，而不是让一个布尔值悄悄改变语义。
+	if (!profile.planAutoApprove) {
+		throw new Error(
+			"benchmark runner only supports plan auto-approve; a profile that waits for approval cannot run unattended",
+		);
+	}
+
 	const settings = opts.settings ?? loadSettings();
 	const home = await mkdtemp(join(tmpdir(), "hotpot-bench-"));
 	const session = await createSession(opts.cwd, home);
@@ -69,20 +91,12 @@ export async function runAgentTurn(
 		cwd: opts.cwd,
 		approval,
 		models: settings.models,
-		maxParallelTasks: 1,
-		features: {
-			todo: false,
-			hooks: false,
-			skills: false,
-			promptTemplates: false,
-			webSearch: false,
-			webFetch: false,
-			mcp: false,
-		},
+		maxParallelTasks: profile.maxParallelTasks,
+		features: runtimeFeatures(profile),
 	});
 	const injectedAdapter = opts.adapter;
 	const injectedModel = opts.model;
-	const runtime: OrchestrationRuntime =
+	const orchestration: OrchestrationRuntime =
 		injectedAdapter !== undefined && injectedModel !== undefined
 			? {
 					...baseRuntime,
@@ -97,7 +111,7 @@ export async function runAgentTurn(
 	const controller = new AbortController();
 	const timer = setTimeout(
 		() => controller.abort(),
-		opts.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+		opts.timeoutMs ?? profile.timeoutMs,
 	);
 	let stopReason: string | undefined;
 	let sawError = false;
@@ -105,7 +119,7 @@ export async function runAgentTurn(
 
 	try {
 		for await (const event of runMainTurn({
-			runtime,
+			runtime: orchestration,
 			userMessage: opts.prompt,
 			signal: controller.signal,
 			mainTier: opts.modelTier,
@@ -125,7 +139,8 @@ export async function runAgentTurn(
 		clearTimeout(timer);
 	}
 
-	const usage = await sumUsage(session.filePath);
+	const tokensByTier = await sumUsage(session.filePath);
+	const usage = tierTokensTotal(tokensByTier);
 	const outcome = controller.signal.aborted
 		? "aborted"
 		: sawError || stopReason !== "stop"
@@ -143,32 +158,29 @@ export async function runAgentTurn(
 
 	return {
 		outcome,
-		inputTokens: usage.inputTokens,
-		outputTokens: usage.outputTokens,
+		inputTokens: usage.input,
+		outputTokens: usage.output,
+		tokensByTier,
 		durationMs: Date.now() - started,
 		sessionFilePath: session.filePath,
 		...(errorMessage === undefined ? {} : { error: errorMessage }),
 	};
 }
 
-// 从会话日志折叠整棵 agent 树（main + worker + task）的 assistant usage。
+// 从会话日志折叠整棵 agent 树（main + worker + task）的 assistant usage，并按 tier 分开。
 // 日志损坏时按 0 计，不掩盖 runner 的 outcome。
-async function sumUsage(
-	filePath: string,
-): Promise<{ inputTokens: number; outputTokens: number }> {
-	let inputTokens = 0;
-	let outputTokens = 0;
+async function sumUsage(filePath: string): Promise<TierTokens> {
+	const tokens = createTierTokens();
 	try {
 		const { events } = await loadSession(filePath);
 		for (const event of events) {
 			if (event.type !== "assistant_msg") {
 				continue;
 			}
-			inputTokens += event.usage.input;
-			outputTokens += event.usage.output;
+			addTierUsage(tokens, event.tier, event.usage);
 		}
 	} catch {
 		// 读不到日志：token 记 0
 	}
-	return { inputTokens, outputTokens };
+	return tokens;
 }
