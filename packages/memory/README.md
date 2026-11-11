@@ -1,6 +1,6 @@
 # `@hotpot/memory`
 
-代码检索基础设施：OpenAI 兼容 embedding 客户端与本地精确向量库。本包不读取或写入 `MEMORY.md`，不提供用户记忆、语义记忆或自动事实提取。
+代码检索基础设施：OpenAI 兼容 embedding 客户端、本地精确向量库、增量代码索引与 `code_search` 工具。本包不读取或写入 `MEMORY.md`，不提供用户记忆、语义记忆或自动事实提取。
 
 ## EmbeddingClient
 
@@ -25,18 +25,26 @@ const store = await VectorStore.open({
 });
 await store.upsert(records);
 await store.remove(["chunk-id"]);
-const results = await store.search(queryVector, { namespace: "src", limit: 10 });
+const results = await store.search(queryVector, { namespace: "code", limit: 10 });
 ```
 
-记录包含 `id`、`namespace`、`text`、`vector`、`metadata`。`id` 在项目库内唯一；同 id 后写覆盖先写，tombstone 删除对应记录。检索按 namespace 隔离，使用精确余弦相似度降序排序，结果附带 `score`。
+记录包含 `id`、`namespace`、`text`、`vector`、`metadata`。`id` 在项目库内唯一；同 id 后写覆盖先写，tombstone 删除对应记录。`list(namespace)` 返回该命名空间的最新记录；检索按 namespace 隔离，使用精确余弦相似度降序排序，结果附带 `score`。
 
 数据文件为 `<home>/memory/vectors/<project-key>.jsonl`。每行是带模型的 upsert 或 tombstone；每批写操作按 `bytesWritten` 循环 append，完整写入 UTF-8 内容后 fsync，成功后才更新内存。`open` 按日志顺序重建最新状态，跳过坏 JSON 和形状非法的行；模型或维度冲突明确报错。写入在同一实例内串行执行，单批维度不一致会在写盘前整批拒绝。`remove` 在入队前校验所有 ID 非空，保证已接受的 tombstone 与重启 replay 使用同一规则。
 
-本包只使用 Node 文件 API 和原生 `fetch`，没有原生数据库、SQLite 扩展或独立数据库服务依赖。
+## 增量代码索引与 code_search
+
+`createCodeIndexService(options)` 只构造惰性服务，不扫描目录、不打开向量库、不请求网络。首次 `search` 或实际执行 `code_search` 时才扫描当前 cwd，并在每次检索前增量刷新。首次刷新会从已有向量记录重建文件哈希与 chunk 清单，服务重启后未修改文件仍不重复索引，修改/删除也不会留下旧 chunk。同一 service 的并发检索串行刷新，避免重复写入与审计。chunk ID 由相对路径、字符偏移与 chunk 内容的 SHA-256 派生。
+
+默认忽略任意层级的 `.git`、`node_modules`、`dist`、`build`、`.hotpot`，并跳过符号链接、含 NUL 或非法 UTF-8 的文件、超过 512KB 的文件。文本按最多 1200 字符、200 字符重叠分块，保留相对路径与 1 起始止行。项目向量写入 `<home>/memory/vectors/<sha256(解析后的 cwd)>.jsonl`。
+
+`createCodeSearchTool(service)` 暴露 `{ query, limit? }`，默认返回 5 条、最多 20 条；结果按 score 降序排列，包含 `path`、`startLine`、`endLine`、`score` 与最多 800 字符的 `excerpt`。无匹配时返回明确提示。索引变化通过 `onIndexed` 回调报告 `{ files, chunks, durationMs }`，回调与遥测不得加入路径或源码。
+
+**外发边界**：本地扫描与向量库读写不外发；只有调用 `code_search` 时，待索引的源码 chunk 与查询文本才会 POST 到用户配置的 `vector.embedding.baseUrl`。未修改内容的后续检索只外发查询文本，不重复请求索引 embedding。启动项目或装配 CLI/server 不会扫描或联网。
 
 ## 配置
 
-`features.vector` 默认 `false`，只有显式设为 `true` 才允许上层装配代码检索。`vector.embedding` 仅允许用户级 `<home>/settings.json`：
+`features.vector` 默认 `false`，只有显式设为 `true` 且 embedding 配置完整时才由上层向 main/worker/task 注册 `code_search`。`vector.embedding` 仅允许用户级 `<home>/settings.json`：
 
 ```json
 {
@@ -53,10 +61,12 @@ const results = await store.search(queryVector, { namespace: "src", limit: 10 })
 
 `apiKey` 支持整串 `$ENV`；项目级 `.hotpot/settings.json` 中的 `features.vector`、`vector` 和 `embedding` 都会被剥离，防止仓库重定向代码与凭证。
 
+本包只使用 Node 文件 API、原生 `fetch` 和 `zod`（工具 schema），没有原生数据库、SQLite 扩展、独立数据库服务或 workspace 依赖。
+
 ## 测试
 
 ```bash
 pnpm exec vitest run packages/memory/test packages/core/test/config.test.ts
 ```
 
-测试覆盖批量请求、Authorization、乱序响应、HTTP/形状/维度错误、abort、最近邻排序、namespace 隔离、更新/删除、重启恢复、坏行容忍、模型/维度冲突与配置安全边界。
+测试覆盖批量请求、Authorization、乱序响应、HTTP/形状/维度错误、abort、最近邻排序、namespace 隔离、更新/删除、重启恢复、坏行容忍、模型/维度冲突、固定窗口分块、增量刷新、忽略规则、路径/行号、匿名审计与配置安全边界。

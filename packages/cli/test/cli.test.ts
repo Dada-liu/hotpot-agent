@@ -549,6 +549,138 @@ describe("runChat", () => {
 	});
 });
 
+describe("runChat code_search 装配", () => {
+	const embeddingConfig: Settings["vector"] = {
+		embedding: {
+			model: "embed-v1",
+			baseUrl: "https://embed.example.test/v1",
+			apiKey: "embed-key",
+		},
+	};
+
+	function fakeEmbeddingFetch(calls: string[][]): typeof fetch {
+		return async (_input, init) => {
+			const body = JSON.parse(String(init?.body)) as { input: string[] };
+			calls.push([...body.input]);
+			return new Response(
+				JSON.stringify({
+					data: body.input.map((text, index) => ({
+						index,
+						embedding: text.includes("alpha") ? [1, 0] : [0, 1],
+					})),
+				}),
+				{ status: 200, headers: { "content-type": "application/json" } },
+			);
+		};
+	}
+
+	it("开关与 embedding 完整时 main 可真实检索代码并落匿名索引审计", async () => {
+		const project = join(home, "project");
+		await mkdir(project);
+		await writeFile(
+			join(project, "auth.ts"),
+			"export const alphaAuth = true;\n",
+		);
+		const embeddingCalls: string[][] = [];
+		const requests: ChatRequest[] = [];
+		const inner = scriptedAdapter([
+			toolCallRound("code-1", "code_search", '{"query":"alpha"}'),
+			textRound("检索完成"),
+		]);
+		const recording: LlmAdapter = {
+			api: inner.api,
+			streamChat(request, signal) {
+				requests.push(request);
+				return inner.streamChat(request, signal);
+			},
+		};
+		const output = new CollectedOutput();
+
+		await runChat({
+			cwd: project,
+			home,
+			settings: {
+				...SETTINGS,
+				features: { vector: true },
+				vector: embeddingConfig,
+			},
+			llm: { adapter: recording, model: TEST_MODEL },
+			embeddingFetch: fakeEmbeddingFetch(embeddingCalls),
+			input: new ScriptedInput(["查找认证代码", "/exit"]),
+			output,
+		});
+
+		expect(requests[0]?.tools.map((tool) => tool.name)).toContain(
+			"code_search",
+		);
+		expect(output.text).toContain("auth.ts");
+		expect(output.text).toContain("alphaAuth");
+		expect(embeddingCalls).toHaveLength(2);
+		const sessions = await listSessions(home);
+		const { events } = await loadSession(sessions[0]?.filePath ?? "");
+		const audit = events.find((event) => event.type === "vector/indexed");
+		expect(audit).toMatchObject({ files: 1, chunks: 1 });
+		expect(JSON.stringify(audit)).not.toContain("auth.ts");
+		expect(JSON.stringify(audit)).not.toContain("alphaAuth");
+	});
+
+	it("项目启动不扫描或请求 embedding：未调用工具时无网络与向量文件", async () => {
+		const embeddingCalls: string[][] = [];
+		await runChat({
+			cwd: home,
+			home,
+			settings: {
+				...SETTINGS,
+				features: { vector: true },
+				vector: embeddingConfig,
+			},
+			llm: {
+				adapter: scriptedAdapter([textRound("直接回答")]),
+				model: TEST_MODEL,
+			},
+			embeddingFetch: fakeEmbeddingFetch(embeddingCalls),
+			input: new ScriptedInput(["你好", "/exit"]),
+			output: new CollectedOutput(),
+		});
+
+		expect(embeddingCalls).toEqual([]);
+		await expect(access(join(home, "memory", "vectors"))).rejects.toThrow();
+	});
+
+	it("开关关闭或 embedding 缺失时 main 声明里没有 code_search", async () => {
+		const variants: Settings[] = [
+			{
+				...SETTINGS,
+				features: { vector: false },
+				vector: embeddingConfig,
+			},
+			{ ...SETTINGS, features: { vector: true } },
+		];
+		for (const settings of variants) {
+			const requests: ChatRequest[] = [];
+			const inner = scriptedAdapter([textRound("ok")]);
+			const recording: LlmAdapter = {
+				api: inner.api,
+				streamChat(request, signal) {
+					requests.push(request);
+					return inner.streamChat(request, signal);
+				},
+			};
+			await runChat({
+				cwd: home,
+				home,
+				settings,
+				llm: { adapter: recording, model: TEST_MODEL },
+				input: new ScriptedInput(["你好", "/exit"]),
+				output: new CollectedOutput(),
+			});
+			expect(requests[0]?.tools.map((tool) => tool.name)).not.toContain(
+				"code_search",
+			);
+		}
+	});
+});
+
 describe("parseChatArgs", () => {
 	it("解析 chat 子命令与 --session/--tier", () => {
 		expect(parseChatArgs(["chat"])).toEqual({});

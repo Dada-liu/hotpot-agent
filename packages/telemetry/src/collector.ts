@@ -68,6 +68,7 @@ const FEATURE_KEYS: FeatureKey[] = [
 	"webSearch",
 	"webFetch",
 	"mcp",
+	"vector",
 ];
 
 type FeatureKey = keyof NonNullable<Settings["features"]>;
@@ -536,6 +537,8 @@ function featureForSessionEvent(event: SessionEvent): FeatureKey | undefined {
 			return "promptTemplates";
 		case "mcp/attached":
 			return "mcp";
+		case "vector/indexed":
+			return "vector";
 		default:
 			return undefined;
 	}
@@ -549,6 +552,8 @@ function featureForToolName(name: string): FeatureKey | undefined {
 			return "webSearch";
 		case "web_fetch":
 			return "webFetch";
+		case "code_search":
+			return "vector";
 		default:
 			return name.startsWith("mcp__") ? "mcp" : undefined;
 	}

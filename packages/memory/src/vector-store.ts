@@ -230,6 +230,17 @@ export class VectorStore {
 		]);
 	}
 
+	async list(namespace: string): Promise<VectorRecord[]> {
+		return [...this.records.values()]
+			.filter((record) => record.namespace === namespace)
+			.map((record) => ({
+				...record,
+				vector: [...record.vector],
+				metadata: { ...record.metadata },
+			}))
+			.sort((left, right) => left.id.localeCompare(right.id));
+	}
+
 	async search(
 		vector: number[],
 		options: VectorSearchOptions,

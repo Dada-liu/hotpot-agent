@@ -5,15 +5,22 @@
 
 interface HotpotFileHandle {
 	write(data: string): Promise<unknown>;
+	write(data: Uint8Array): Promise<{ bytesWritten: number }>;
 	sync(): Promise<void>;
 	close(): Promise<void>;
 }
 
-// readdir withFileTypes 形态的目录项：core skills.ts 递归扫描用它区分文件/目录
+// readdir withFileTypes 形态的目录项：core skills.ts 与 memory 代码索引用它区分文件/目录
 interface HotpotDirent {
 	name: string;
 	isDirectory(): boolean;
 	isFile(): boolean;
+	isSymbolicLink(): boolean;
+}
+
+interface HotpotHash {
+	update(data: string | Uint8Array): HotpotHash;
+	digest(encoding: "hex"): string;
 }
 
 // 子进程 stdout/stderr 的可读流（只用到 data 事件；chunk 运行时是 Buffer，结构上有 toString）
@@ -36,6 +43,7 @@ declare module "node:fs/promises" {
 		options?: { recursive?: boolean },
 	): Promise<string | undefined>;
 	export function readFile(path: string, encoding: "utf8"): Promise<string>;
+	export function readFile(path: string): Promise<Uint8Array>;
 	export function writeFile(path: string, data: string): Promise<void>;
 	export function writeFile(
 		path: string,
@@ -141,6 +149,7 @@ declare module "node:path" {
 
 declare module "node:crypto" {
 	export function randomUUID(): string;
+	export function createHash(algorithm: "sha256"): HotpotHash;
 }
 
 declare module "node:url" {

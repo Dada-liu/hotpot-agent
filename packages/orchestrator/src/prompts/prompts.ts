@@ -165,6 +165,12 @@ function todosSection(todos: TodoItem[]): PromptSection {
 	};
 }
 
+const CODE_SEARCH_SECTION: PromptSection = {
+	name: "code-search",
+	order: SECTION_ORDER.RULES - 400,
+	text: "Use code_search for semantic code discovery when the relevant location is unclear. Each call refreshes the current workspace incrementally; no index is built at startup. Use the returned relative paths and line ranges to guide subsequent read calls.",
+};
+
 // 基础四段 + 角色指令段，全部本地组装，不走全局注册表；
 // opts.skills/opts.todos 为可选动态段数据源（默认/空数组不出段，默认行为与 M2 一致）；
 // opts.instructions 覆盖角色指令段（main 的 plan / 执行阶段使用）
@@ -183,6 +189,9 @@ export function buildRoleSystemPrompt(
 	}
 	if (opts?.todos !== undefined && opts.todos.length > 0) {
 		sections.push(todosSection(opts.todos));
+	}
+	if (ctx.tools.some((tool) => tool.name === "code_search")) {
+		sections.push(CODE_SEARCH_SECTION);
 	}
 	sections.push(
 		roleInstructionSection(role, opts?.instructions ?? ROLE_INSTRUCTIONS[role]),

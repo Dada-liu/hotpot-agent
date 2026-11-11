@@ -187,6 +187,14 @@ export type SessionEvent =
 			tools: string[];
 	  }
 	| {
+			type: "vector/indexed";
+			id: string;
+			ts: string;
+			files: number;
+			chunks: number;
+			durationMs: number;
+	  }
+	| {
 			type: "error";
 			id: string;
 			ts: string;

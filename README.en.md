@@ -134,6 +134,25 @@ How to run:
 3. Sessions are persisted as JSONL under `~/.hotpot/sessions/`; `hotpot chat --session <session file path>` resumes history and continues the conversation (source-repo dev equivalent: `pnpm dev cli chat --session <session file path>`).
 4. Web: after installation run `hotpot web` (listens on http://127.0.0.1:4573 by default, generates an API token at startup, and opens a `?token=` URL once ready; same settings, sessions shared with CLI); in the source repo use `pnpm dev web`. The browser moves the token into session storage and removes it from the address bar, so REST/SSE remain authenticated after refreshes. For manual access, use the full URL printed in the terminal. When developing the frontend, run `pnpm --filter @hotpot/web dev` in another terminal and Vite proxies `/api` to 4573.
 
+## Optional: Semantic Code Search
+
+Code vector retrieval is disabled by default. To enable `code_search` for main/worker/task, add both settings to the user-level `~/.hotpot/settings.json`:
+
+```json
+{
+  "features": { "vector": true },
+  "vector": {
+    "embedding": {
+      "model": "text-embedding-3-small",
+      "baseUrl": "https://api.openai.com/v1",
+      "apiKey": "$OPENAI_API_KEY"
+    }
+  }
+}
+```
+
+Project assembly and startup do not scan files or use the network. Only an actual `code_search` call incrementally scans the current workspace and POSTs source chunks awaiting indexing plus the query text to the configured OpenAI-compatible embedding endpoint; unchanged files do not trigger indexing embedding requests again. By default, `.git`, `node_modules`, `dist`, `build`, `.hotpot`, symlinks, binary files, and files over 512KB are ignored. The local index lives at `~/.hotpot/memory/vectors/<sha256(cwd)>.jsonl`; audits and telemetry contain counts only, never paths or source. This feature never reads or writes `MEMORY.md` and is not user memory. See [packages/memory/README.md](packages/memory/README.md).
+
 ## Publishing the npm Package
 
 The distribution package lives in `packages/hotpot-agent` and contains only `dist/` (single-file CLI + web assets). Release steps:

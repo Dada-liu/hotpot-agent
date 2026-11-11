@@ -12,6 +12,7 @@
 	"dependencies": {
 		"@hotpot/ai": "workspace:*",
 		"@hotpot/core": "workspace:*",
+		"@hotpot/memory": "workspace:*",
 		"@hotpot/orchestrator": "workspace:*",
 		"@hotpot/telemetry": "workspace:*"
 	}

@@ -596,6 +596,7 @@ function reduceLog(state: ChatState, event: SessionEvent): ChatState {
 		case "prompt/invoked":
 		case "mcp/attached":
 		case "permission/changed":
+		case "vector/indexed":
 			return state;
 		case "error": {
 			const entry: TranscriptEntry = {

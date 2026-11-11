@@ -134,6 +134,25 @@ M6 已完成：Web 端交互完善——运行中发送默认进入 next-turn �
 3. 会话以 JSONL 落盘在 `~/.hotpot/sessions/`；`hotpot chat --session <会话文件路径>` 恢复历史继续对话（源码仓库开发态：`pnpm dev cli chat --session <会话文件路径>`）。
 4. Web 端：安装后运行 `hotpot web` 一键启动（默认监听 http://127.0.0.1:4573，启动时生成 API token，就绪后自动打开带 `?token=` 的地址；同一 settings 配置，会话与 CLI 互通）；源码仓库开发态运行 `pnpm dev web`。浏览器会将 token 存入会话存储并清理地址栏，刷新后 REST/SSE 仍携带认证。手动访问时使用终端打印的完整地址；开发态改前端时另开 `pnpm --filter @hotpot/web dev`，Vite 将 `/api` 代理到 4573。
 
+## 可选：代码语义检索
+
+代码向量检索默认关闭。要启用 main/worker/task 的 `code_search`，在用户级 `~/.hotpot/settings.json` 中同时配置：
+
+```json
+{
+  "features": { "vector": true },
+  "vector": {
+    "embedding": {
+      "model": "text-embedding-3-small",
+      "baseUrl": "https://api.openai.com/v1",
+      "apiKey": "$OPENAI_API_KEY"
+    }
+  }
+}
+```
+
+项目装配与启动不会扫描或联网。只有实际调用 `code_search` 时才增量扫描当前工作区，并把待索引源码 chunk 与查询文本 POST 到所配 OpenAI 兼容 embedding endpoint；未修改文件不会重复请求索引 embedding。默认忽略 `.git`、`node_modules`、`dist`、`build`、`.hotpot`、符号链接、二进制与超过 512KB 的文件。本地索引存于 `~/.hotpot/memory/vectors/<sha256(cwd)>.jsonl`；审计与遥测只含计数，不含路径或源码。该能力不读取/写入 `MEMORY.md`，也不是用户记忆。详见 [packages/memory/README.md](packages/memory/README.md)。
+
 ## 发布 npm 包
 
 发布包位于 `packages/hotpot-agent`，构建后只包含 `dist/`（单文件 CLI + Web 产物）。发版步骤：

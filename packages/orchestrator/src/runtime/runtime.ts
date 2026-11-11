@@ -23,6 +23,7 @@ import {
 	loadSession,
 	type WebSearchBackend,
 } from "@hotpot/core";
+import type { CodeIndexService } from "@hotpot/memory";
 import { type ModelResolution, resolveModel } from "../models/models.ts";
 import type { AgentRole } from "../types/types.ts";
 
@@ -117,6 +118,8 @@ export interface OrchestrationRuntime {
 	// hooks：生命周期钩子链（M4 Feature③）；装配层按 features.hooks 门控注入，
 	// 回合包装层经 runtime.hooks 触发 session_start/turn_end，runTurn 触发 pre/post tool
 	readonly hooks?: HookChain;
+	// codeSearch：仅上层在 features.vector=true 且 embedding 配置完整时注入
+	readonly codeSearch?: CodeIndexService;
 	resolveModel(tier: ModelTier): ModelResolution;
 	spawn(opts: {
 		role: AgentRole;
@@ -143,6 +146,7 @@ export function createRuntime(opts: {
 	webSearch?: Settings["webSearch"];
 	webSearchBackend?: WebSearchBackend;
 	hooks?: HookChain;
+	codeSearch?: CodeIndexService;
 }): OrchestrationRuntime {
 	// 每个 role 一条计数链：同一 runtime 内单调递增，编号不复用
 	const counters = new Map<AgentRole, number>();
@@ -199,6 +203,7 @@ export function createRuntime(opts: {
 		webSearchBackend:
 			opts.webSearchBackend ?? createWebSearchBackendFromConfig(opts.webSearch),
 		hooks: opts.hooks,
+		codeSearch: opts.codeSearch,
 
 		resolveModel(tier: ModelTier): ModelResolution {
 			return resolveModel(opts.models[tier]);

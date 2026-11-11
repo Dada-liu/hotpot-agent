@@ -70,6 +70,19 @@ describe("VectorStore", () => {
 		expect(results.map((result) => result.id)).toEqual(["source"]);
 	});
 
+	it("list 只列出指定 namespace 的最新记录，供索引重启后重建清单", async () => {
+		const store = await openStore();
+		await store.upsert([
+			record("first", "code", [1, 0], "first text"),
+			record("other", "test", [0, 1], "other text"),
+		]);
+		await store.upsert([record("first", "code", [0, 1], "latest text")]);
+
+		expect(await store.list("code")).toMatchObject([
+			{ id: "first", text: "latest text" },
+		]);
+	});
+
 	it("同 id upsert 替换旧记录，remove 追加 tombstone 后不再返回", async () => {
 		const store = await openStore();
 		await store.upsert([record("chunk", "src", [1, 0], "old text")]);

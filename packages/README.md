@@ -10,6 +10,6 @@ pnpm monorepo 的包目录。当前九个包：
 - `cli/`（`@hotpot/cli`）：行式交互入口 `hotpot chat`。
 - `hotpot-agent/`（`hotpot-agent`）：npm 发布包。tsup 把 cli/server 与 workspace 源码打成单文件 `dist/bin.js`，并附带 Web 产物 `dist/web`；安装后的命令是 `hotpot`（`hotpot` 进终端、`hotpot web` 起本地 Web）。
 - `telemetry/`（`@hotpot/telemetry`）：M5.1 匿名遥测客户端。事件 schema、错误脱敏、安装 ID、批量重试与 turn 采集；由 cli/server 装配，benchmark runner 复用。
-- `memory/`（`@hotpot/memory`）：代码检索基础设施。OpenAI 兼容 embedding 客户端与本地 JSONL 精确向量库；不读取或写入 `MEMORY.md`，不提供用户语义记忆。
+- `memory/`（`@hotpot/memory`）：代码检索基础设施。OpenAI 兼容 embedding 客户端、本地 JSONL 精确向量库、增量代码索引与 `code_search` 工具；仅检索时扫描并外发待索引 chunk 与查询，不读取或写入 `MEMORY.md`，不提供用户语义记忆。
 
-依赖方向：`server → orchestrator → core → ai`；`cli` 与 `server` 同为 orchestrator 之上的入口（`cli → orchestrator`），二者另依赖旁路包 `telemetry → core`；`web` 不引 workspace 包（运行时经 server 托管）；根级目录 `benchmarks/` 依赖 ai/core/orchestrator/telemetry，是评测工具而非运行时入口；`hotpot-agent` 是发布组合包，构建期依赖 cli/server 并把它们打进产物。均用 `workspace:*` 声明。`telemetry` 不依赖 orchestrator/cli/server，`core`/`orchestrator`/`ai` 也不反向依赖它。`memory` 当前无 workspace 依赖，后续只能由上层代码检索装配使用，不得接入用户记忆链路。
+依赖方向：`server → orchestrator → core → ai`；`cli` 与 `server` 同为 orchestrator 之上的入口（`cli → orchestrator`），二者另依赖旁路包 `telemetry → core`；代码检索使用 `cli/server → orchestrator → memory`，且 `memory` 无 workspace 依赖；`web` 不引 workspace 包（运行时经 server 托管）；根级目录 `benchmarks/` 依赖 ai/core/orchestrator/telemetry，是评测工具而非运行时入口；`hotpot-agent` 是发布组合包，构建期依赖 cli/server 并把它们打进产物。均用 `workspace:*` 声明。`telemetry` 不依赖 orchestrator/cli/server，`core`/`orchestrator`/`ai` 也不反向依赖它。代码检索不得接入用户记忆链路。
