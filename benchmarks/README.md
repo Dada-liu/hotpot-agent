@@ -22,7 +22,8 @@ M5 benchmark runner：在真实仓库上跑无交互 agent 生成 patch，调用
 | `src/custom/tasks/*.json`          | 三类种子任务（金融 / 软件开发 / 自媒体），一题一文件                                                        |
 | `src/custom/runner.ts`             | 自建题执行：临时 workspace + 校验命令                                                                       |
 | `src/report.ts`                    | `report.json` / `report.md`：通过率、均值/中位数/p90、分档位 token、失败列表，内嵌运行清单             |
-| `src/telemetry.ts`                 | `benchmark_run` 事件（`kind=benchmark`，独立安装 ID）                                                   |
+| `src/telemetry.ts`                 | 一轮跑批的 `benchmark_run` 批量上报（`kind=benchmark`，独立安装 ID，按 200 条一批）                 |
+| `src/failure.ts`                   | 失败分类：把自由文本归成 `empty_patch` / `agent_aborted` / `max_tokens` 等枚举                    |
 | `src/process.ts`                   | 子进程执行辅助（超时、输出捕获、流式日志回调）                                                              |
 | `scripts/export_instances.py`      | 用 `datasets` 从 HuggingFace 导出实例 JSONL                                                               |
 
@@ -152,7 +153,21 @@ pnpm bench custom --domain finance
 
 ## 遥测
 
-每题结束后向遥测后台发一条 `benchmark_run`（`kind=benchmark`，独立安装 ID），报告跑 benchmark 的结果，字段仅：benchmark、dataset、split、instanceId、passed、durationMs、inputTokens、outputTokens。遥测关闭、endpoint 为空或网络失败都不影响跑批与报告。
+跑批结束后按 **每批 200 条** 上报 `benchmark_run`（`kind=benchmark`，独立安装 ID）。不是每题一次请求：服务端 `/ingest` 是 60 req/min 的滑动窗口限流，300 题逐条连发实测会丢掉约 10%，且客户端静默。
+
+每条事件除结果（`passed`、`durationMs`、`inputTokens`、`outputTokens`）外，还带本轮的可比较条件：
+
+| 字段 | 含义 |
+|---|---|
+| `runId` | 聚合键；服务端据此把 N 条事件合成「一轮」 |
+| `commit` / `commitDirty` | 对应 `manifest.agent.git`；脏工作区的结论不对应任何提交 |
+| `model` / `tier` | `provider/model` 与主 agent 档位 |
+| `patchOnly` | 是否 patch-only 基线 |
+| `tasksetHash` | 题目集内容哈希（自建题） |
+| `errorClass` | 失败分类枚举；通过题不传 |
+| `byTier` | 按档位的 token（只发非零档位） |
+
+投递结果写回 `report.json` 的 `telemetry` 字段（`enabled`/`events`/`sent`/`failed`/`batches`/`dropped`），`report.md` 的 Run 段会显示 `7/300 events delivered` 这类行——**丢了多少条必须可查**。遥测关闭、endpoint 为空或网络失败都不影响跑批与报告，也不会抛错。
 
 ## 测试
 

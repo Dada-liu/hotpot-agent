@@ -3,6 +3,7 @@ export * from "./agent-runner.ts";
 export * from "./cli-args.ts";
 export * from "./custom/runner.ts";
 export * from "./custom/task.ts";
+export * from "./failure.ts";
 export * from "./manifest.ts";
 export * from "./process.ts";
 export * from "./report.ts";

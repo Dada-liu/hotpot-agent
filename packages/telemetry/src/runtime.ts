@@ -24,6 +24,9 @@ export interface CreateTelemetryRuntimeOptions {
 	appVersion: string;
 	fetchImpl?: typeof fetch;
 	now?: () => number;
+	// 批量上限由调用方决定：benchmark 一轮要一次发上百条，CLI 单轮只有几条
+	maxBatch?: number;
+	maxQueue?: number;
 }
 
 export interface CreateTelemetryCollectorOptions {
@@ -62,6 +65,8 @@ export function createTelemetryRuntime(
 			settings.telemetry?.flushIntervalMs ?? DEFAULT_FLUSH_INTERVAL_MS,
 		fetchImpl: opts.fetchImpl,
 		now: opts.now,
+		...(opts.maxBatch === undefined ? {} : { maxBatch: opts.maxBatch }),
+		...(opts.maxQueue === undefined ? {} : { maxQueue: opts.maxQueue }),
 	});
 
 	return {

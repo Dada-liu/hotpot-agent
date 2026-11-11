@@ -35,6 +35,7 @@ import {
 	buildReport,
 	type InstanceResult,
 	type ReportPaths,
+	type TelemetryDelivery,
 	writeReport,
 } from "./report.ts";
 import { BENCHMARK_RUNTIME } from "./runtime-profile.ts";
@@ -146,6 +147,7 @@ async function runSwebenchSuite(command: SwebenchCommand): Promise<number> {
 		let inputTokens = 0;
 		let outputTokens = 0;
 		let tokensByTier: InstanceResult["tokensByTier"];
+		let agentOutcome: InstanceResult["agentOutcome"];
 		let patch = "";
 		let error: string | undefined;
 		let workspace: Awaited<ReturnType<typeof provider.prepare>> | undefined;
@@ -161,6 +163,7 @@ async function runSwebenchSuite(command: SwebenchCommand): Promise<number> {
 			inputTokens = turn.inputTokens;
 			outputTokens = turn.outputTokens;
 			tokensByTier = turn.tokensByTier;
+			agentOutcome = turn.outcome;
 			if (turn.outcome !== "success") {
 				error = `agent ${turn.outcome}: ${turn.error ?? "unknown"}`;
 			}
@@ -185,6 +188,7 @@ async function runSwebenchSuite(command: SwebenchCommand): Promise<number> {
 			inputTokens,
 			outputTokens,
 			...(tokensByTier === undefined ? {} : { tokensByTier }),
+			...(agentOutcome === undefined ? {} : { agentOutcome }),
 			...(error === undefined ? {} : { error }),
 		});
 		console.log(
@@ -224,11 +228,18 @@ async function runSwebenchSuite(command: SwebenchCommand): Promise<number> {
 	});
 	await writeRunManifest(completed, outputDir);
 	const paths = await writeReport(report, outputDir);
-	await reportTelemetry(settings, report, {
+	const delivery = await reportTelemetry(settings, report, completed, {
 		benchmark: "swebench",
 		dataset: command.dataset,
 		split: command.split,
 	});
+	if (delivery !== undefined) {
+		report.telemetry = delivery;
+		// 先落一次报告再上报：即使进程在收尾阶段被杀，报告也已经在盘上；
+		// 上报结果补写回去，是为了让「丢了多少条」在产物里可查。
+		await writeReport(report, outputDir);
+		logTelemetry(delivery);
+	}
 	printSummary(report, paths);
 	return 0;
 }
@@ -251,8 +262,9 @@ async function runCustomSuite(command: CustomCommand): Promise<number> {
 	}
 
 	const startedMs = Date.now();
+	const runId = `bench-${timestamp()}-${randomUUID().slice(0, 8)}`;
 	const manifest = await createManifest({
-		runId: `bench-${timestamp()}-${randomUUID().slice(0, 8)}`,
+		runId,
 		suite: "custom",
 		startedMs,
 		settings,
@@ -287,6 +299,7 @@ async function runCustomSuite(command: CustomCommand): Promise<number> {
 					inputTokens: turn.inputTokens,
 					outputTokens: turn.outputTokens,
 					tokensByTier: turn.tokensByTier,
+					agentOutcome: turn.outcome,
 				};
 			},
 		});
@@ -299,6 +312,9 @@ async function runCustomSuite(command: CustomCommand): Promise<number> {
 			...(result.tokensByTier === undefined
 				? {}
 				: { tokensByTier: result.tokensByTier }),
+			...(result.agentOutcome === undefined
+				? {}
+				: { agentOutcome: result.agentOutcome }),
 			...(result.error === undefined ? {} : { error: result.error }),
 		});
 		console.log(
@@ -317,32 +333,69 @@ async function runCustomSuite(command: CustomCommand): Promise<number> {
 	});
 	await writeRunManifest(completed, outputDir);
 	const paths = await writeReport(report, outputDir);
-	await reportTelemetry(settings, report, {
+	const delivery = await reportTelemetry(settings, report, completed, {
 		benchmark: "custom",
 		dataset: "custom",
 		split: "offline",
 	});
+	if (delivery !== undefined) {
+		report.telemetry = delivery;
+		await writeReport(report, outputDir);
+		logTelemetry(delivery);
+	}
 	printSummary(report, paths);
 	return 0;
 }
 
+// 一轮一条 batch，把 manifest 里的可比条件随结果一起送到远端：
+// 远端按 runId 把 N 条 benchmark_run 合成「一轮」，才谈得上与别的轮次比较。
+// 发送失败不改变退出码，但必须把投递结果带给调用方——静默丢数是上一版最大的问题。
 async function reportTelemetry(
 	settings: ReturnType<typeof loadSettings>,
 	report: ReturnType<typeof buildReport>,
+	manifest: RunManifest,
 	meta: { benchmark: string; dataset: string; split: string },
-): Promise<void> {
-	for (const instance of report.instances) {
-		try {
-			await reportBenchmarkRun(settings, {
-				...instance,
+): Promise<TelemetryDelivery | undefined> {
+	const model = manifest.models[manifest.mainAgentTier];
+	try {
+		return await reportBenchmarkRun(
+			settings,
+			{
+				runId: manifest.runId,
 				benchmark: meta.benchmark,
 				dataset: meta.dataset,
 				split: meta.split,
-			});
-		} catch {
-			// 遥测是旁路：单条失败不影响报告与退出码
-		}
+				...(manifest.agent.git.commit === null
+					? {}
+					: { commit: manifest.agent.git.commit }),
+				...(manifest.agent.git.dirty === null
+					? {}
+					: { commitDirty: manifest.agent.git.dirty }),
+				model: `${model.provider}/${model.model}`,
+				tier: manifest.mainAgentTier,
+				patchOnly: manifest.runtime.patchOnly,
+				...(manifest.selection.tasksetHash === undefined
+					? {}
+					: { tasksetHash: manifest.selection.tasksetHash }),
+			},
+			report.instances,
+		);
+	} catch {
+		// 遥测是旁路：任何异常都不影响报告与退出码
+		return undefined;
 	}
+}
+
+function logTelemetry(delivery: TelemetryDelivery): void {
+	if (!delivery.enabled) {
+		return;
+	}
+	const line = `telemetry: ${delivery.sent}/${delivery.events} events delivered in ${delivery.batches} batch(es)`;
+	if (delivery.failed > 0) {
+		console.error(`${line}, ${delivery.failed} failed`);
+		return;
+	}
+	console.log(line);
 }
 
 function printSummary(

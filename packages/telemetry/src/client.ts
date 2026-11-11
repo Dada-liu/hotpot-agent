@@ -92,14 +92,16 @@ export function createTelemetryClient(
 	let dropped = 0;
 	let lastFlushAt: number | null = null;
 
-	// 把一批事件编码后 POST 出去；网络错误和超时都只返回 false，交给重试循环。
+	// 把一批事件编码后 POST 出去；网络错误和超时都只返回失败，交给重试循环。
+	// retryable 区分「值得重试」与「重试也没用」：4xx（除 429）说明批次本身非法或
+	// 凭证不对，再等 1/2/4 秒只是白拖——400 的严格校验与 401 的错 token 都属于这类。
 	// holdProcess 为 true（close 的收尾请求）时改用 ref 的定时器代替 AbortSignal.timeout：
 	// 此时若事件循环里只剩 unref 句柄，进程会在请求结算前退出（Node 以 code 13 结束），
 	// 最后一批数据随之丢失。定时器在请求结算后立即清除，不会额外拖延退出。
 	async function postBatch(
 		body: string,
 		holdProcess: boolean,
-	): Promise<boolean> {
+	): Promise<{ ok: boolean; retryable: boolean }> {
 		try {
 			if (!holdProcess) {
 				const response = await fetchImpl(url, {
@@ -110,7 +112,7 @@ export function createTelemetryClient(
 				});
 				// 显式释放响应体，避免长连接因未消费而滞留
 				await response.body?.cancel().catch(() => {});
-				return response.ok;
+				return { ok: response.ok, retryable: isRetryable(response.status) };
 			}
 			const controller = new AbortController();
 			const timer = setTimeout(() => {
@@ -124,12 +126,13 @@ export function createTelemetryClient(
 					signal: controller.signal,
 				});
 				await response.body?.cancel().catch(() => {});
-				return response.ok;
+				return { ok: response.ok, retryable: isRetryable(response.status) };
 			} finally {
 				clearTimeout(timer);
 			}
 		} catch {
-			return false;
+			// 网络错误/超时：值得重试
+			return { ok: false, retryable: true };
 		}
 	}
 
@@ -154,10 +157,15 @@ export function createTelemetryClient(
 				if (attempt > 0 && closing) {
 					break;
 				}
-				if (await postBatch(body, final)) {
+				const result = await postBatch(body, final);
+				if (result.ok) {
 					sent += batch.length;
 					lastFlushAt = now();
 					return;
+				}
+				// 4xx（429 除外）：批次非法或凭证错误，重试也不会变好
+				if (!result.retryable) {
+					break;
 				}
 				const delay = RETRY_DELAYS_MS[attempt];
 				if (final || delay === undefined) {
@@ -254,6 +262,12 @@ export const defaultSchedule: TelemetrySchedule = {
 		});
 	},
 };
+
+// 429 是「现在别来，等会儿再来」，500+ 是对端临时故障，两者都值得退避重试；
+// 其余 4xx 说明请求本身有问题（400 校验失败、401 token 错），重试只会拖长收尾。
+function isRetryable(status: number): boolean {
+	return status === 429 || status >= 500;
+}
 
 function positiveInt(value: number | undefined, fallback: number): number {
 	if (value === undefined || !Number.isFinite(value) || value < 1) {

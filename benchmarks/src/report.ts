@@ -12,6 +12,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { sanitizeErrorMessage } from "@hotpot/telemetry";
+import { type BenchmarkFailureClass, classifyFailure } from "./failure.ts";
 import type { BenchmarkSuite, RunManifest } from "./manifest.ts";
 import type { OfficialReport } from "./swebench/evaluate.ts";
 import {
@@ -30,7 +31,22 @@ export interface InstanceResult {
 	outputTokens: number;
 	// 缺省表示该题没有分档位数据（旧结果/自定义 runner），聚合时按 missing 计
 	tokensByTier?: TierTokens;
+	// agent 轮的结局；自建题 runner 不产出，缺省时由失败文本推断
+	agentOutcome?: "success" | "error" | "aborted";
+	// 由 classifyFailure 统一判定，报告与遥测共用
+	failureClass?: BenchmarkFailureClass;
 	error?: string;
+}
+
+// 一轮跑批的远端投递结果：写进 report.json，跑批"上报了多少条"必须可查，
+// 否则限流/断网导致的丢数会完全静默。
+export interface TelemetryDelivery {
+	enabled: boolean;
+	events: number;
+	sent: number;
+	failed: number;
+	batches: number;
+	dropped: number;
 }
 
 export interface ReportFailure {
@@ -71,6 +87,8 @@ export interface BenchmarkReport {
 	durationMs: NumericStat;
 	// 每个「通过题」平均消耗的 token（input + output）；无通过题时为 null，不伪装成 0
 	tokensPerResolved: number | null;
+	// 本轮上报到远端的结果；遥测关闭时整个字段缺省
+	telemetry?: TelemetryDelivery;
 	instances: InstanceResult[];
 	failures: ReportFailure[];
 }
@@ -107,10 +125,19 @@ export function buildReport(
 								? "empty patch"
 								: "unresolved by official harness"),
 				);
+		// 分类只依赖「官方结论 / agent 结局 / 失败文本」，与 reason 用同一份输入，
+		// 保证 report.json 里的 failureClass 和上报到服务端的完全一致
+		const failureClass = classifyFailure({
+			passed,
+			agentOutcome: result.agentOutcome,
+			reason,
+			emptyPatch: emptyPatches.has(result.instanceId),
+		});
 		return {
 			...result,
 			passed,
 			...(reason === undefined ? {} : { error: reason }),
+			...(failureClass === undefined ? {} : { failureClass }),
 		};
 	});
 
@@ -201,6 +228,11 @@ export function renderReportMarkdown(report: BenchmarkReport): string {
 					`- evaluation: ${manifest.eval.mode}, max workers ${manifest.eval.maxWorkers}`,
 				]),
 		`- patch-only baseline: ${report.patchOnly ? "yes (the agent only edits files; it does not install dependencies or run repository tests)" : "no"}`,
+		...(report.telemetry === undefined
+			? []
+			: [
+					`- telemetry: ${report.telemetry.enabled ? `${report.telemetry.sent}/${report.telemetry.events} events delivered in ${report.telemetry.batches} batch(es)${report.telemetry.failed > 0 ? `, ${report.telemetry.failed} failed` : ""}` : "disabled"}`,
+				]),
 		"",
 		"## Results",
 		"",
@@ -229,6 +261,7 @@ export function renderReportMarkdown(report: BenchmarkReport): string {
 	if (report.failures.length === 0) {
 		lines.push("None.");
 	} else {
+		lines.push(`By class: ${formatFailureClassCounts(report.instances)}`, "");
 		for (const failure of report.failures) {
 			lines.push(
 				`- \`${failure.instanceId}\`: ${escapeTableCell(failure.reason)}`,
@@ -237,12 +270,12 @@ export function renderReportMarkdown(report: BenchmarkReport): string {
 	}
 	lines.push("", "## Instances", "");
 	lines.push(
-		"| instance | result | input tokens | output tokens | duration (ms) | failure |",
-		"|---|---|---|---|---|---|",
+		"| instance | result | class | input tokens | output tokens | duration (ms) | failure |",
+		"|---|---|---|---|---|---|---|",
 	);
 	for (const instance of report.instances) {
 		lines.push(
-			`| \`${instance.instanceId}\` | ${instance.passed ? "pass" : "fail"} | ${instance.inputTokens} | ${instance.outputTokens} | ${instance.durationMs} | ${escapeTableCell(instance.error ?? "")} |`,
+			`| \`${instance.instanceId}\` | ${instance.passed ? "pass" : "fail"} | ${instance.failureClass ?? ""} | ${instance.inputTokens} | ${instance.outputTokens} | ${instance.durationMs} | ${escapeTableCell(instance.error ?? "")} |`,
 		);
 	}
 	lines.push("");
@@ -282,6 +315,28 @@ function formatRuntime(manifest: RunManifest): string {
 
 function shortHash(hash: string): string {
 	return hash.slice(0, 12);
+}
+
+// 失败分类计数是排期的直接输入：132 题失败里 aborted 43 / max_tokens 26
+// 指向循环控制，unresolved 指向能力——这张计数表一眼能看出来
+function formatFailureClassCounts(instances: InstanceResult[]): string {
+	const counts = new Map<string, number>();
+	for (const instance of instances) {
+		if (instance.failureClass === undefined) {
+			continue;
+		}
+		counts.set(
+			instance.failureClass,
+			(counts.get(instance.failureClass) ?? 0) + 1,
+		);
+	}
+	if (counts.size === 0) {
+		return "none";
+	}
+	return [...counts.entries()]
+		.sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+		.map(([name, count]) => `${name} ${count}`)
+		.join(" / ");
 }
 
 function numericStat(values: number[]): NumericStat {

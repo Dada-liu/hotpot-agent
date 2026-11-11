@@ -128,6 +128,32 @@ export interface FeatureUsageEvent extends EventBase {
 	toolCalls: number;
 }
 
+// 失败分类与 benchmarks/src/failure.ts 的枚举一一对应：
+// 服务端按它做跨跑批的失败分布，而不是靠人从 report.json 里数。
+export type BenchmarkFailureClass =
+	| "empty_patch"
+	| "unresolved"
+	| "agent_aborted"
+	| "agent_error"
+	| "max_tokens"
+	| "timeout"
+	| "validation_failed"
+	| "unknown";
+
+export const BENCHMARK_FAILURE_CLASSES: readonly BenchmarkFailureClass[] = [
+	"empty_patch",
+	"unresolved",
+	"agent_aborted",
+	"agent_error",
+	"max_tokens",
+	"timeout",
+	"validation_failed",
+	"unknown",
+];
+
+// benchmark_run 同时承担「结果」与「实验条件」：
+// runId 把一轮跑批的 N 条事件绑在一起；commit/model/tier/patchOnly/tasksetHash
+// 是本地 manifest 里那套可比性条件的远端副本，缺了它们服务端只能算混合通过率。
 export interface BenchmarkRunEvent extends EventBase {
 	type: "benchmark_run";
 	benchmark: string;
@@ -138,6 +164,15 @@ export interface BenchmarkRunEvent extends EventBase {
 	durationMs: number;
 	inputTokens: number;
 	outputTokens: number;
+	runId?: string;
+	commit?: string;
+	commitDirty?: boolean;
+	model?: string;
+	tier?: ModelTier;
+	patchOnly?: boolean;
+	tasksetHash?: string;
+	errorClass?: BenchmarkFailureClass;
+	byTier?: Record<string, TokenTotals>;
 }
 
 export type TelemetryEvent =
@@ -309,6 +344,33 @@ const benchmarkRunSchema = z
 		durationMs: durationSchema,
 		inputTokens: countSchema,
 		outputTokens: countSchema,
+		// 可比较上下文：全部可选，老客户端不传也仍然合法
+		runId: z.string().optional(),
+		commit: z
+			.string()
+			.regex(/^[0-9a-f]{7,40}$/)
+			.optional(),
+		commitDirty: z.boolean().optional(),
+		model: z.string().optional(),
+		tier: z.enum(["high", "medium", "low"]).optional(),
+		patchOnly: z.boolean().optional(),
+		tasksetHash: z
+			.string()
+			.regex(/^[0-9a-f]{64}$/)
+			.optional(),
+		errorClass: z
+			.enum([
+				"empty_patch",
+				"unresolved",
+				"agent_aborted",
+				"agent_error",
+				"max_tokens",
+				"timeout",
+				"validation_failed",
+				"unknown",
+			])
+			.optional(),
+		byTier: z.record(z.string(), tokenTotalsSchema).optional(),
 	})
 	.strict();
 

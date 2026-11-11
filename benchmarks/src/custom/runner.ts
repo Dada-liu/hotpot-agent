@@ -19,6 +19,8 @@ export type AgentRunner = (opts: {
 	inputTokens: number;
 	outputTokens: number;
 	tokensByTier?: TierTokens;
+	// agent 轮的结局；缺省时失败分类退回校验命令的结论
+	agentOutcome?: "success" | "error" | "aborted";
 }>;
 
 export interface CustomTaskDeps {
@@ -35,6 +37,7 @@ export interface CustomTaskResult {
 	inputTokens: number;
 	outputTokens: number;
 	tokensByTier?: TierTokens;
+	agentOutcome?: "success" | "error" | "aborted";
 	error?: string;
 }
 
@@ -51,6 +54,7 @@ export async function runCustomTask(
 	let inputTokens = 0;
 	let outputTokens = 0;
 	let tokensByTier: TierTokens | undefined;
+	let agentOutcome: CustomTaskResult["agentOutcome"];
 	let error: string | undefined;
 
 	try {
@@ -69,6 +73,7 @@ export async function runCustomTask(
 		inputTokens = usage.inputTokens;
 		outputTokens = usage.outputTokens;
 		tokensByTier = usage.tokensByTier;
+		agentOutcome = usage.agentOutcome;
 
 		const validation = await runCommand(
 			"bash",
@@ -116,6 +121,7 @@ export async function runCustomTask(
 		inputTokens,
 		outputTokens,
 		...(tokensByTier === undefined ? {} : { tokensByTier }),
+		...(agentOutcome === undefined ? {} : { agentOutcome }),
 		...(error === undefined ? {} : { error }),
 	};
 }
