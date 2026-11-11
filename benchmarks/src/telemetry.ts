@@ -26,17 +26,20 @@ const BATCH_SIZE = 200;
 // 排空队列的最大轮数；配合「无进展即停」，避免持续失败时卡住跑批收尾
 const MAX_FLUSH_ROUNDS = 64;
 
-// 一轮跑批的实验条件；字段名与服务端 benchmark_run 白名单一一对应
+// 一轮跑批的实验条件；字段名与服务端 benchmark_run 白名单一一对应。
+// runId/model/tier/patchOnly 必填（schemaVersion 2）：缺了它们远端无法按轮聚合，
+// 也无法判断两轮能否对比——那正是这次改造要解决的问题。
 export interface BenchmarkRunMeta {
 	runId: string;
 	benchmark: string;
 	dataset: string;
 	split: string;
+	model: string;
+	tier: ModelTier;
+	patchOnly: boolean;
+	// commit 允许缺失：跑批目录可能不在 git 仓库里
 	commit?: string;
 	commitDirty?: boolean;
-	model?: string;
-	tier?: ModelTier;
-	patchOnly?: boolean;
 	tasksetHash?: string;
 }
 
@@ -120,13 +123,13 @@ function buildEvent(
 		inputTokens: instance.inputTokens,
 		outputTokens: instance.outputTokens,
 		runId: meta.runId,
+		model: meta.model,
+		tier: meta.tier,
+		patchOnly: meta.patchOnly,
 		...(meta.commit === undefined ? {} : { commit: meta.commit }),
 		...(meta.commitDirty === undefined
 			? {}
 			: { commitDirty: meta.commitDirty }),
-		...(meta.model === undefined ? {} : { model: meta.model }),
-		...(meta.tier === undefined ? {} : { tier: meta.tier }),
-		...(meta.patchOnly === undefined ? {} : { patchOnly: meta.patchOnly }),
 		...(meta.tasksetHash === undefined
 			? {}
 			: { tasksetHash: meta.tasksetHash }),

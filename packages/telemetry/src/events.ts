@@ -1,10 +1,13 @@
-// 遥测事件契约（schemaVersion = 1）：字段是严格白名单，只允许数量、耗时、模型名等匿名指标。
+// 遥测事件契约（schemaVersion = 2）：字段是严格白名单，只允许数量、耗时、模型名等匿名指标。
 // 明确禁止 prompt/回复文本、工具入参/输出、文件内容、文件路径、命令、URL、用户名、仓库名。
 // 每个对象都用 .strict()，未知字段直接判为非法，避免上报端悄悄夹带新内容。
+//
+// v2 相对 v1 的唯一变化：benchmark_run 的可比条件（runId/model/tier/patchOnly）改为必填。
+// 不接受 v1 客户端上报——半套条件的跑批在服务端只能算混合通过率，宁可拒收也不要脏数据。
 
 import { z } from "zod";
 
-export const SCHEMA_VERSION = 1;
+export const SCHEMA_VERSION = 2;
 
 export type TelemetryKind = "user" | "benchmark";
 export type TurnOutcome = "success" | "error" | "aborted";
@@ -164,12 +167,13 @@ export interface BenchmarkRunEvent extends EventBase {
 	durationMs: number;
 	inputTokens: number;
 	outputTokens: number;
-	runId?: string;
+	runId: string;
+	// commit 可能为空（跑批目录不是 git 仓库），因此这一对保持可选
 	commit?: string;
 	commitDirty?: boolean;
-	model?: string;
-	tier?: ModelTier;
-	patchOnly?: boolean;
+	model: string;
+	tier: ModelTier;
+	patchOnly: boolean;
 	tasksetHash?: string;
 	errorClass?: BenchmarkFailureClass;
 	byTier?: Record<string, TokenTotals>;
@@ -344,16 +348,17 @@ const benchmarkRunSchema = z
 		durationMs: durationSchema,
 		inputTokens: countSchema,
 		outputTokens: countSchema,
-		// 可比较上下文：全部可选，老客户端不传也仍然合法
-		runId: z.string().optional(),
+		// 可比较上下文：runId 把一轮跑批绑在一起，model/tier/patchOnly 决定这轮结论
+		// 对应哪个实验条件。v2 起必填——缺了它们远端无从判断两轮能否对比。
+		runId: z.string(),
 		commit: z
 			.string()
 			.regex(/^[0-9a-f]{7,40}$/)
 			.optional(),
 		commitDirty: z.boolean().optional(),
-		model: z.string().optional(),
-		tier: z.enum(["high", "medium", "low"]).optional(),
-		patchOnly: z.boolean().optional(),
+		model: z.string(),
+		tier: z.enum(["high", "medium", "low"]),
+		patchOnly: z.boolean(),
 		tasksetHash: z
 			.string()
 			.regex(/^[0-9a-f]{64}$/)

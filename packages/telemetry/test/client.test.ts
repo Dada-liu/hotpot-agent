@@ -97,7 +97,7 @@ describe("createTelemetryClient", () => {
 			"Bearer secret-token",
 		);
 		expect(requests[0].body).toEqual({
-			schemaVersion: 1,
+			schemaVersion: 2,
 			kind: "user",
 			appVersion: "9.9.9",
 			installId: "00000000-0000-4000-8000-000000000000",

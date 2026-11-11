@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { telemetryBatchSchema } from "../src/events.ts";
 
 const base = {
-	schemaVersion: 1 as const,
+	schemaVersion: 2 as const,
 	kind: "user" as const,
 	appVersion: "0.0.0",
 	installId: "00000000-0000-4000-8000-000000000000",

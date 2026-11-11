@@ -8,7 +8,7 @@ M5.1 匿名遥测客户端。`@hotpot/cli` 与 `@hotpot/server` 在启动时装�
 
 | 文件 | 职责 |
 |------|------|
-| `src/events.ts` | 事件契约与 zod schema（`SCHEMA_VERSION = 1`）：九类事件 + 批量信封 |
+| `src/events.ts` | 事件契约与 zod schema（`SCHEMA_VERSION = 2`）：九类事件 + 批量信封 |
 | `src/sanitize.ts` | 错误消息脱敏（代码块、URL、邮箱、路径），默认截断到 500 字符 |
 | `src/install-id.ts` | 匿名安装 ID 的读取与生成 |
 | `src/client.ts` | 内存队列、阈值/定时 flush、批量 POST、指数退避重试 |
@@ -54,7 +54,7 @@ schema v1 只允许以下字段（每个事件另有 `eventId`、`ts`）。所�
 - `features` 只含布尔开关：todo/hooks/skills/promptTemplates/webSearch/webFetch/mcp。
 - `turn_end` 的 token 汇总覆盖该用户 turn 的整棵 agent 树（main + worker + task），`byTier`/`byModel` 提供拆分。
 - `outcome` 为 `success` / `error` / `aborted`；`success` 必须显式观察到 `done(stop)`。
-- 批量信封：`{ schemaVersion: 1, kind, appVersion, installId, events }`，单批最多 500 条；`kind` 为 `user` 或 `benchmark`。
+- 批量信封：`{ schemaVersion: 2, kind, appVersion, installId, events }`，单批最多 500 条；`kind` 为 `user` 或 `benchmark`。服务端不接收 v1 批次。
 
 ### 不采集用户内容
 
