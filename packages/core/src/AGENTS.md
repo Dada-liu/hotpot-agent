@@ -6,6 +6,7 @@
 - Import across features by concrete file path (e.g. `../session/store.ts`), not through another feature's `index.ts`, to avoid barrel cycles.
 - `config/config.ts` (`loadSettings`) resolves home via `resolveHome` from `session/store.ts` (param > `HOTPOT_HOME` env > `~/.hotpot`) — reuse it, never duplicate the rule. Settings are two-layer: user-level `<home>/settings.json` (required, models + credentials) merged with an optional project-level `.hotpot/settings.json` found by walking up from `cwd` (whitelist fields only; credentials never come from project). `apiKey` supports whole-string `$ENV` references (user-level only).
 - `node-builtins.d.ts` holds minimal ambient declarations for `node:*` modules because the dependency whitelist forbids `@types/node`; extend it when a new API is used, declaring only what is actually consumed.
+- `features.vector` and `settings.vector.embedding` are user-level only. Unlike older feature switches, `vector` defaults to false in `featureEnabled` so code is never scanned or sent to an embedding provider implicitly.
 - Dependency direction is fixed (`cli → orchestrator → core → ai`): may import `@hotpot/ai` and whitelisted runtime deps (`zod`); never import `@hotpot/cli` or `@hotpot/orchestrator`.
 - LLM-facing prompt text and tool descriptions are English; code comments in Simplified Chinese.
 - Erasable TypeScript only, `.ts` extension on relative imports, no `any`, no inline imports.

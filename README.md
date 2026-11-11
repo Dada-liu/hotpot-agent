@@ -53,7 +53,7 @@ hotpot web
 └───────────────────────────────────────────────────────────────────────────┘
 ```
 
-依赖方向严格自上而下（`server → orchestrator → core → ai`；`cli` 与 `server` 同为 orchestrator 之上的入口，`web` 不引 workspace 包、构建产物由 server 托管），禁止反向依赖。另有旁路包 `packages/telemetry`（`cli`/`server` → `telemetry` → `core`），只做匿名指标上报，不进入 agent 主链路；开发工具 `benchmarks/`（根级目录，与 `packages/` 并列）复用 core/orchestrator/telemetry 跑批，但不被 `cli`/`server` 引用，也不进入工具产物。
+依赖方向严格自上而下（`server → orchestrator → core → ai`；`cli` 与 `server` 同为 orchestrator 之上的入口，`web` 不引 workspace 包、构建产物由 server 托管），禁止反向依赖。另有旁路包 `packages/telemetry`（`cli`/`server` → `telemetry` → `core`），只做匿名指标上报，不进入 agent 主链路；`packages/memory` 是独立的代码检索基础设施（embedding 客户端 + 本地 JSONL 向量库），不读取或写入 `MEMORY.md`；开发工具 `benchmarks/`（根级目录，与 `packages/` 并列）复用 core/orchestrator/telemetry 跑批，但不被 `cli`/`server` 引用，也不进入工具产物。
 
 一次用户消息的数据流：cli → `runMainTurn`（首轮提示词难度路由）→ worker / task 内联跑 core `runTurn` → 每个 step 由 `deriveMessages` 从会话日志转换历史 → `ai.streamChat` → 工具批次经审批 waterfall 执行 → 全部事件 append 进 JSONL 并流回 cli 渲染。
 
@@ -74,7 +74,8 @@ hotpot web
 │   ├── web/           # @hotpot/web：React SPA（三栏界面、agent 状态面板）
 │   ├── cli/           # @hotpot/cli：行式交互入口
 │   ├── hotpot-agent/  # hotpot-agent：npm 发布包（hotpot 命令 + Web 产物）
-│   └── telemetry/     # @hotpot/telemetry：M5 匿名遥测客户端（事件 schema、脱敏、批量上报）
+│   ├── telemetry/     # @hotpot/telemetry：M5 匿名遥测客户端（事件 schema、脱敏、批量上报）
+│   └── memory/        # @hotpot/memory：代码检索 embedding 客户端与本地精确向量库
 ├── benchmarks/        # @hotpot/benchmarks：M5 benchmark runner（SWE-bench 官方评测 + 自建题三类）
 └── scripts/           # 开发辅助脚本（pnpm dev 等）
 ```

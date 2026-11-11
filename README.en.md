@@ -53,7 +53,7 @@ hotpot web
 └────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-Dependencies flow strictly top-down (`server → orchestrator → core → ai`; `cli` and `server` are both entry points above orchestrator, and `web` imports no workspace packages — its build output is served by server). Reverse dependencies are forbidden. There is also a side package `packages/telemetry` (`cli`/`server` → `telemetry` → `core`) that only reports anonymous metrics and stays off the agent main path; the dev tool `benchmarks/` (root-level, sibling of `packages/`) reuses core/orchestrator/telemetry for batch runs, but is not referenced by `cli`/`server` and is not shipped in the tool artifact.
+Dependencies flow strictly top-down (`server → orchestrator → core → ai`; `cli` and `server` are both entry points above orchestrator, and `web` imports no workspace packages — its build output is served by server). Reverse dependencies are forbidden. There is also a side package `packages/telemetry` (`cli`/`server` → `telemetry` → `core`) that only reports anonymous metrics and stays off the agent main path; `packages/memory` is standalone code-retrieval infrastructure (embedding client + local JSONL vector store) and never reads or writes `MEMORY.md`; the dev tool `benchmarks/` (root-level, sibling of `packages/`) reuses core/orchestrator/telemetry for batch runs, but is not referenced by `cli`/`server` and is not shipped in the tool artifact.
 
 Data flow of one user message: cli → `runMainTurn` (first-turn prompt difficulty routing) → worker / task inline-runs core `runTurn` → each step's history is derived by `deriveMessages` from the session log → `ai.streamChat` → tool batches execute through the approval waterfall → all events are appended to JSONL and streamed back to the cli renderer.
 
@@ -74,7 +74,8 @@ Data flow of one user message: cli → `runMainTurn` (first-turn prompt difficul
 │   ├── web/           # @hotpot/web: React SPA (three-column UI, agent status panel)
 │   ├── cli/           # @hotpot/cli: line-based interactive entry
 │   ├── hotpot-agent/  # hotpot-agent: npm distribution package (hotpot command + web assets)
-│   └── telemetry/     # @hotpot/telemetry: M5 anonymous telemetry client (event schema, redaction, batching)
+│   ├── telemetry/     # @hotpot/telemetry: M5 anonymous telemetry client (event schema, redaction, batching)
+│   └── memory/        # @hotpot/memory: code-retrieval embedding client and local exact vector store
 ├── benchmarks/        # @hotpot/benchmarks: M5 benchmark runner (official SWE-bench evaluation + three categories of custom tasks)
 └── scripts/           # development helper scripts (pnpm dev, etc.)
 ```

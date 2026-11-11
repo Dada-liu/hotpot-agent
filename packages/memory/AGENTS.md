@@ -1,0 +1,10 @@
+# Working in packages/memory/
+
+- `@hotpot/memory` is code-retrieval infrastructure only: an OpenAI-compatible embedding client and a local exact vector store. Never read or write `MEMORY.md`, add semantic user memory, or automatically extract facts.
+- Keep the package dependency-free at runtime. Network I/O uses injectable native `fetch`; persistence uses Node file APIs. Do not add SQLite native extensions, LanceDB, another native database, or a database service.
+- `EmbeddingClient.embed(texts, signal)` sends one batch POST to `<baseUrl>/embeddings` with `{ model, input: texts }` and Bearer authorization. Restore vectors by response `index`; validate count, indices, vectors and consistent dimensions. Pass through abort signals. Errors must never include input text or upstream response bodies.
+- `VectorStore` persists at `<home>/memory/vectors/<project-key>.jsonl`. Each line is an upsert or tombstone carrying its model. Every write batch uses open/write/fsync/close and updates memory only after fsync. Keep writes serialized, validate the whole batch before appending, fold logs in order on open, skip malformed lines, and fail clearly on model or dimension conflicts.
+- Record IDs are unique within a project store. Later upserts replace earlier records; tombstones remove them. Search is namespace-scoped exact cosine similarity in descending score order. Do not replace it with approximate search.
+- `features.vector` defaults to false. `settings.vector.embedding` and its credentials are user-level only; never add them to the project settings allowlist or enable network/scanning implicitly.
+- Erasable TypeScript only, `.ts` extensions on relative imports, no `any`, no inline imports. Comments and README in Simplified Chinese; AGENTS in English with `AGENTS_zh-CN.md` kept in sync.
+- Verify with `pnpm exec vitest run packages/memory/test packages/core/test/config.test.ts`, `pnpm typecheck`, `pnpm test`, and `pnpm exec biome check` from the repository root before committing.

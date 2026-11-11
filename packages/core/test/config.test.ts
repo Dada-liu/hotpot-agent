@@ -484,18 +484,92 @@ describe("loadSettings telemetry 字段", () => {
 	});
 });
 
+describe("loadSettings vector 字段", () => {
+	it("vector 配置仅存在于用户级，apiKey 支持整串 $ENV 插值", async () => {
+		const data = validSettings() as Record<string, unknown>;
+		data.features = { vector: true };
+		data.vector = {
+			embedding: {
+				model: "embed-v1",
+				baseUrl: "https://embed.example.test/v1",
+				apiKey: "$HOTPOT_TEST_EMBEDDING_KEY",
+			},
+		};
+		await writeSettings(data);
+		process.env.HOTPOT_TEST_EMBEDDING_KEY = "embedding-secret";
+		try {
+			const settings = loadSettings({ home, cwd: home });
+			expect(settings.features?.vector).toBe(true);
+			expect(settings.vector?.embedding).toEqual({
+				model: "embed-v1",
+				baseUrl: "https://embed.example.test/v1",
+				apiKey: "embedding-secret",
+			});
+		} finally {
+			delete process.env.HOTPOT_TEST_EMBEDDING_KEY;
+		}
+	});
+
+	it("embedding 缺少必填字段或字段为空时配置校验报错", async () => {
+		const data = validSettings() as Record<string, unknown>;
+		data.vector = {
+			embedding: { model: "", baseUrl: "https://embed.example.test/v1" },
+		};
+		await writeSettings(data);
+		expect(() => loadSettings({ home, cwd: home })).toThrow(
+			/vector.*embedding/,
+		);
+	});
+
+	it("项目级 features.vector、vector 与 embedding 均被剥离", async () => {
+		const data = validSettings() as Record<string, unknown>;
+		data.features = { vector: false };
+		data.vector = {
+			embedding: {
+				model: "user-model",
+				baseUrl: "https://user.example.test/v1",
+				apiKey: "user-key",
+			},
+		};
+		await writeSettings(data);
+		await writeProjectSettings(home, {
+			features: { vector: true },
+			vector: {
+				embedding: {
+					model: "evil-model",
+					baseUrl: "https://evil.example.test/v1",
+					apiKey: "evil-key",
+				},
+			},
+			embedding: { baseUrl: "https://evil.example.test/v1" },
+		});
+
+		const settings = loadSettings({ home, cwd: home });
+		expect(settings.features?.vector).toBe(false);
+		expect(settings.vector?.embedding).toEqual({
+			model: "user-model",
+			baseUrl: "https://user.example.test/v1",
+			apiKey: "user-key",
+		});
+	});
+});
+
 describe("featureEnabled", () => {
-	it("features 为 undefined 时一律 true（默认全开）", () => {
+	it("features 为 undefined 时旧开关默认 true，vector 默认 false", () => {
 		expect(featureEnabled(undefined, "todo")).toBe(true);
 		expect(featureEnabled(undefined, "mcp")).toBe(true);
+		expect(featureEnabled(undefined, "vector")).toBe(false);
 	});
 
 	it("显式 true/false 原样返回", () => {
 		expect(featureEnabled({ todo: true }, "todo")).toBe(true);
 		expect(featureEnabled({ todo: false }, "todo")).toBe(false);
+		expect(featureEnabled({ vector: true }, "vector")).toBe(true);
+		expect(featureEnabled({ vector: false }, "vector")).toBe(false);
 	});
 
-	it("未提及的键默认 true", () => {
+	it("未提及的旧键默认 true，未提及的 vector 默认 false", () => {
 		expect(featureEnabled({ todo: false }, "hooks")).toBe(true);
+		expect(featureEnabled({}, "vector")).toBe(false);
 	});
 });
