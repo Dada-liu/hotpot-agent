@@ -59,6 +59,46 @@ describe("parseBenchArgs", () => {
 		});
 	});
 
+	it("swebench 支持 --shard 与 --resume", () => {
+		expect(
+			parseBenchArgs(["swebench", "--shard", "2/3", "--resume"]),
+		).toMatchObject({
+			suite: "swebench",
+			shard: { index: 1, count: 3 },
+			resume: true,
+		});
+		// 默认不续跑：--resume 必须是显式选择
+		expect(parseBenchArgs(["swebench"])).toMatchObject({ resume: false });
+	});
+
+	it("merge 收集位置参数并要求 --output", () => {
+		expect(
+			parseBenchArgs(["merge", "runs/a", "runs/b", "--output", "runs/all"]),
+		).toEqual({
+			suite: "merge",
+			dirs: ["runs/a", "runs/b"],
+			output: "runs/all",
+		});
+		expect(() => parseBenchArgs(["merge", "runs/a"])).toThrow(
+			/merge requires --output/,
+		);
+		expect(() => parseBenchArgs(["merge", "--output", "x"])).toThrow(
+			/at least one run directory/,
+		);
+	});
+
+	it("doctor 默认只查本地条件，--offline 关掉网络探测", () => {
+		expect(parseBenchArgs(["doctor"])).toMatchObject({
+			suite: "doctor",
+			evalMode: "local",
+			offline: false,
+			instancesFile: "instances.jsonl",
+		});
+		expect(parseBenchArgs(["doctor", "--offline"])).toMatchObject({
+			offline: true,
+		});
+	});
+
 	it("未知参数与非法枚举退出非零（抛 UsageError）", () => {
 		expect(() => parseBenchArgs(["swebench", "--nope"])).toThrow(
 			/unknown option: --nope/,
@@ -73,5 +113,14 @@ describe("parseBenchArgs", () => {
 			/--limit requires a value/,
 		);
 		expect(() => parseBenchArgs(["unknown"])).toThrow(/unknown suite/);
+		expect(() => parseBenchArgs(["swebench", "--shard", "0/3"])).toThrow(
+			/shard index/,
+		);
+		expect(() => parseBenchArgs(["swebench", "--shard", "1"])).toThrow(
+			/shard must look like/,
+		);
+		expect(() => parseBenchArgs(["swebench", "--resume=yes"])).toThrow(
+			/--resume does not take a value/,
+		);
 	});
 });

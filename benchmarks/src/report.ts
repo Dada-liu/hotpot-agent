@@ -23,6 +23,11 @@ import {
 
 const FAILURE_REASON_MAX_CHARS = 300;
 
+// 产物文件名做成常量：resume 与 merge 都要按名字回读，
+// 三处各写一遍字面量迟早会分叉。
+export const REPORT_FILE = "report.json";
+export const REPORT_MARKDOWN_FILE = "report.md";
+
 export interface InstanceResult {
 	instanceId: string;
 	passed: boolean;
@@ -192,8 +197,8 @@ export async function writeReport(
 	outputDir: string,
 ): Promise<ReportPaths> {
 	await mkdir(outputDir, { recursive: true });
-	const jsonPath = join(outputDir, "report.json");
-	const markdownPath = join(outputDir, "report.md");
+	const jsonPath = join(outputDir, REPORT_FILE);
+	const markdownPath = join(outputDir, REPORT_MARKDOWN_FILE);
 	await writeFile(jsonPath, `${JSON.stringify(report, null, 2)}\n`);
 	await writeFile(markdownPath, renderReportMarkdown(report));
 	return { jsonPath, markdownPath };

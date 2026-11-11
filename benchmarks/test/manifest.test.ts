@@ -15,6 +15,7 @@ import {
 	finalizeRunManifest,
 	hashTaskSet,
 	isComparable,
+	manifestForComparison,
 	readRunManifest,
 	writeRunManifest,
 } from "../src/index.ts";
@@ -243,5 +244,45 @@ describe("report 内嵌的 manifest", () => {
 		expect(text).toContain("api.example.com");
 		expect(text).not.toContain("sk-secret");
 		expect(text).not.toContain("secret-query");
+	});
+});
+
+describe("manifestForComparison", () => {
+	// 分片各自只跑了一部分题，idsHash 必然不同；
+	// 能不能合并只看 parentIdsHash —— 这是 merge 的唯一判据。
+	const shard = (index: number, idsHash: string, parentIdsHash: string) =>
+		makeManifest({
+			suite: "swebench",
+			selection: {
+				dataset: "SWE-bench/SWE-bench_Lite",
+				split: "test",
+				count: 2,
+				idsHash,
+				shard: { index, count: 2 },
+				parentIdsHash,
+				parentCount: 4,
+			},
+		});
+
+	it("共享父集合的分片被判定为可比", () => {
+		const a = shard(0, "hash-a", "parent-1");
+		const b = shard(1, "hash-b", "parent-1");
+		expect(describeManifestDiff(a, b)).not.toHaveLength(0);
+		expect(
+			describeManifestDiff(manifestForComparison(a), manifestForComparison(b)),
+		).toHaveLength(0);
+	});
+
+	it("父集合不同的分片不可比", () => {
+		const a = shard(0, "hash-a", "parent-1");
+		const b = shard(1, "hash-b", "parent-2");
+		expect(
+			describeManifestDiff(manifestForComparison(a), manifestForComparison(b)),
+		).toHaveLength(1);
+	});
+
+	it("非分片运行的清单原样返回", () => {
+		const plain = makeManifest({ selection: { count: 1, idsHash: "h" } });
+		expect(manifestForComparison(plain)).toBe(plain);
 	});
 });

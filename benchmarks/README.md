@@ -12,6 +12,9 @@ M5 benchmark runner：在真实仓库上跑无交互 agent 生成 patch，调用
 | `src/agent-runner.ts`              | 无交互跑一个 task turn：临时 HOME、allow-all 审批（落盘审计）、plan 自动批准、超时 abort、整棵树 token 按档位汇总 |
 | `src/runtime-profile.ts`           | 运行档：特性开关、并行数、审批、超时、patch-only 的唯一来源；`BENCHMARK_RUNTIME` 是当前基线 |
 | `src/manifest.ts`                  | 运行清单 `manifest.json`：代码版本、模型指纹、运行档、题目集哈希，以及可比较性判定 |
+| `src/shard.ts`                     | `--shard i/n`：确定性交错分片（同一 selection 永远切出同一子集，所有分片恰好覆盖全集） |
+| `src/merge.ts`                     | `bench merge`：校验可比性后把分片合成一轮；条件不同或题重叠一律拒绝 |
+| `src/doctor.ts`                    | `bench doctor`：跑批前预检（模型配置、题目集、磁盘、docker、swebench、HF 镜像、遥测） |
 | `src/tokens.ts`                    | 按模型档位累加 usage（成本归因的纯函数） |
 | `src/workspace.ts`                 | `WorkspaceProvider` / `Workspace` 接口（未来容器 runner 的缝）                                          |
 | `src/swebench/workspace.ts`        | `CheckoutWorkspaceProvider`：仓库缓存 + 每题独立 git worktree；`capturePatch` 生成 diff                 |
@@ -66,7 +69,7 @@ pnpm bench swebench --instances-file instances.jsonl --eval-mode remote --eval-h
 <output>/
 ├── manifest.json          # 运行清单：本次跑批的实验条件（开跑即写，结束时更新为 completed）
 ├── predictions.jsonl      # 官方预测格式（空 patch 也保留一行）
-├── official/              # harness 日志、exit-code、官方 report
+├── official/              # harness 日志、exit-code、官方 report；续跑时另有 pending-predictions.jsonl
 ├── report.json            # 聚合报告（内嵌 manifest）
 ├── report.md              # 人读报告
 ├── cache/                 # 仓库缓存（跨题复用）
@@ -114,6 +117,36 @@ M5 的 agent 只改工作树：不安装 repo 依赖、不执行 repo 测试、�
 - 仓库缓存：先用 `git clone --filter=blob:none --no-checkout` 预建持久缓存，每波把 `<output>/cache` 软链过去；直接跑会反复全量克隆，大仓库容易 EOF。
 - Python 隔离：只把 venv 的 `python3` 包一层放进 PATH 给 harness 用，避免 agent 在 venv 里执行 `pip install` 污染评测环境。
 - 镜像清理：单题镜像约 4GB，每波预拉后 `docker rmi` + `docker system prune -f`；磁盘低于 20G 必须先清理。
+
+### 分片、续跑与合并
+
+以前这三件事靠跑批机器上的 `run-lite300.sh` / `merge-partial.py`，脚本不在仓库里，结果无法复现。现在都在仓库内：
+
+```bash
+# 先预检：缺 docker / swebench / 题目文件时立刻失败，而不是跑完 300 题才报错
+pnpm bench doctor --instances-file instances.jsonl --eval-mode local
+
+# 拆成 3 片并行跑（每片自己的 --output）
+pnpm bench swebench --instances-file instances.jsonl --shard 1/3 --output runs/s1 &
+pnpm bench swebench --instances-file instances.jsonl --shard 2/3 --output runs/s2 &
+pnpm bench swebench --instances-file instances.jsonl --shard 3/3 --output runs/s3 &
+wait
+
+# 中断后接着跑：跳过已完成的题，且只评测本次新跑的部分
+pnpm bench swebench --instances-file instances.jsonl --shard 2/3 --output runs/s2 --resume
+
+# 合成一轮（校验可比性 → 合并 → 重算指标）
+pnpm bench merge runs/s1 runs/s2 runs/s3 --output runs/merged
+```
+
+三条约束写在代码里，不是约定：
+
+- **分片确定性**：`--shard i/n` 按 `idx % n === i` 交错取片，同一份 selection 与同一组参数永远得到同一子集；所有分片拼起来恰好覆盖全集（`test/shard.test.ts` 钉住）。
+- **合并只认同一个父集合**：每片 manifest 记 `parentIdsHash`/`parentCount`，条件不同（模型、commit、题目集）或同一题出现在两片里，merge 直接拒绝并打印 diff——重叠题会让 passRate 被重复计数。
+- **续跑不重评测**：复用的题带着上次的官方 verdict 一起进报告；只把新跑的题送 harness（`official/pending-predictions.jsonl`）。`--resume` 的清单条件与上次不一致时也直接拒绝。
+
+`bench doctor` 检查项：模型三档配置（含 `$ENV` 引用是否已设置）、git commit/dirty、题目文件与重复 id、输出目录可写、磁盘余量、`python3 -m swebench`、docker daemon、HF 镜像可达、远端模式的 ssh/tmux、遥测 endpoint。任何 fail 都会给出可执行的修复命令，并让进程以非 0 退出；`--offline` 跳过全部网络探测。
+
 - 配额中断：命中 `exceeded_current_quota_error` 立即停在该波、不推进进度；用单独目录重跑未完成题，再把 `passed` / token / predictions 并回主波目录。
 - 汇总：只聚合逐波 `report.json`，并校验 300 行、instance 集合与 `predictions.jsonl` 一致。
 

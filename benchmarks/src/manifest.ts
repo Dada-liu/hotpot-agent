@@ -55,6 +55,11 @@ export interface ManifestSelection {
 	idsHash: string;
 	// 自建题的题目内容哈希（题面/校验脚本改动会让旧基线失效）
 	tasksetHash?: string;
+	// 分片信息：只有共享同一 parentIdsHash 的分片才允许 merge
+	shard?: { index: number; count: number };
+	// 分片前的完整选择集合；非分片运行缺省
+	parentIdsHash?: string;
+	parentCount?: number;
 }
 
 export interface ManifestEvaluation {
@@ -282,6 +287,30 @@ export function describeManifestDiff(a: RunManifest, b: RunManifest): string[] {
 
 export function isComparable(a: RunManifest, b: RunManifest): boolean {
 	return describeManifestDiff(a, b).length === 0;
+}
+
+// 比较前先把「分片视角」归一到「父集合视角」：
+// 三个分片各自只跑了一部分题，按各自 idsHash 比永远不可比，
+// 但它们共享 parentIdsHash——那才是「这些结果能否拼成一轮」的判据。
+export function manifestForComparison(manifest: RunManifest): RunManifest {
+	if (
+		manifest.selection.shard === undefined &&
+		manifest.selection.parentIdsHash === undefined
+	) {
+		return manifest;
+	}
+	return {
+		...manifest,
+		selection: {
+			dataset: manifest.selection.dataset,
+			split: manifest.selection.split,
+			seed: manifest.selection.seed,
+			limit: manifest.selection.limit,
+			tasksetHash: manifest.selection.tasksetHash,
+			idsHash: manifest.selection.parentIdsHash ?? manifest.selection.idsHash,
+			count: manifest.selection.parentCount ?? manifest.selection.count,
+		},
+	};
 }
 
 function format(value: unknown): string {

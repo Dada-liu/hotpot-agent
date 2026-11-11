@@ -4,6 +4,7 @@
 
 import type { ModelTier } from "@hotpot/core";
 import { CUSTOM_TASK_DOMAINS, type CustomTaskDomain } from "./custom/task.ts";
+import { parseShard, type ShardSpec } from "./shard.ts";
 
 export const DEFAULT_DATASET = "SWE-bench/SWE-bench_Lite";
 export const DEFAULT_SPLIT = "test";
@@ -11,11 +12,13 @@ export const DEFAULT_EVAL_HOST = "macmini";
 export const DEFAULT_MAX_WORKERS = 1;
 export const DEFAULT_INSTANCES_FILE = "instances.jsonl";
 
-export const BENCH_USAGE = `Usage: pnpm bench <swebench|custom> [options]
+export const BENCH_USAGE = `Usage: pnpm bench <swebench|custom|merge|doctor> [options]
 
 Suites:
   swebench   Generate patches for SWE-bench instances, then run the official harness.
   custom     Run the offline seeded domain tasks (finance, software, self-media).
+  merge      Merge sharded runs into one comparable report.
+  doctor     Preflight the machine before a long run (no model calls, no tokens).
 
 Common options:
   --output <dir>            Output directory (default: ./benchmark-runs/<timestamp>)
@@ -30,6 +33,8 @@ swebench options:
   --limit <n>               Keep at most n instances after selection
   --instance-ids <ids>      Comma-separated instance ids (keeps the given order)
   --seed <n>                Selection seed (default: 0)
+  --shard <i/n>             Run only shard i of n (interleaved; 1-based)
+  --resume                  Continue a previous run in --output, skip finished instances
   --eval-mode <mode>        local | remote (default: local)
   --eval-host <host>        SSH host for remote evaluation (default: ${DEFAULT_EVAL_HOST})
   --max-workers <n>         Official harness workers (default: ${DEFAULT_MAX_WORKERS})
@@ -37,6 +42,16 @@ swebench options:
 
 custom options:
   --domain <domain>         finance | software | self-media (default: all tasks)
+
+merge options:
+  <dir> [<dir> ...]         Shard output directories (all must be comparable)
+  --output <dir>            Where to write the merged report (required)
+
+doctor options:
+  --instances-file <file>   Check the instance file that the run will use
+  --eval-mode <mode>        Check local (python/docker) or remote (ssh/tmux) prerequisites
+  --eval-host <host>        SSH host to probe in remote mode
+  --offline                 Skip every network probe
 `;
 
 export class UsageError extends Error {
@@ -56,6 +71,10 @@ export interface SwebenchCommand {
 	limit?: number;
 	instanceIds?: string[];
 	seed: number;
+	// 分片：只跑 n 份里的第 i 份；manifest 会记下父集合哈希，供 merge 判定
+	shard?: ShardSpec;
+	// 续跑：复用 --output 里已完成的题，不重跑也不重评测
+	resume: boolean;
 	evalMode: "local" | "remote";
 	evalHost: string;
 	maxWorkers: number;
@@ -69,7 +88,28 @@ export interface CustomCommand {
 	domain?: CustomTaskDomain;
 }
 
-export type BenchCommand = { suite: "help" } | SwebenchCommand | CustomCommand;
+export interface MergeCommand {
+	suite: "merge";
+	dirs: string[];
+	output: string;
+}
+
+export interface DoctorCommand {
+	suite: "doctor";
+	instancesFile: string;
+	evalMode: "local" | "remote";
+	evalHost: string;
+	modelTier?: ModelTier;
+	output?: string;
+	offline: boolean;
+}
+
+export type BenchCommand =
+	| { suite: "help" }
+	| SwebenchCommand
+	| CustomCommand
+	| MergeCommand
+	| DoctorCommand;
 
 export function parseBenchArgs(argv: string[]): BenchCommand {
 	if (argv.length === 0 || argv.includes("--help") || argv.includes("-h")) {
@@ -77,14 +117,18 @@ export function parseBenchArgs(argv: string[]): BenchCommand {
 	}
 
 	const suite = argv[0];
-	if (suite !== "swebench" && suite !== "custom") {
-		throw new UsageError(`unknown suite: ${suite ?? ""}`);
+	switch (suite) {
+		case "swebench":
+			return parseSwebench(argv.slice(1));
+		case "custom":
+			return parseCustom(argv.slice(1));
+		case "merge":
+			return parseMerge(argv.slice(1));
+		case "doctor":
+			return parseDoctor(argv.slice(1));
+		default:
+			throw new UsageError(`unknown suite: ${suite ?? ""}`);
 	}
-
-	if (suite === "custom") {
-		return parseCustom(argv.slice(1));
-	}
-	return parseSwebench(argv.slice(1));
 }
 
 function parseSwebench(args: string[]): SwebenchCommand {
@@ -94,6 +138,7 @@ function parseSwebench(args: string[]): SwebenchCommand {
 		dataset: DEFAULT_DATASET,
 		split: DEFAULT_SPLIT,
 		seed: 0,
+		resume: false,
 		evalMode: "local",
 		evalHost: DEFAULT_EVAL_HOST,
 		maxWorkers: DEFAULT_MAX_WORKERS,
@@ -126,6 +171,16 @@ function parseSwebench(args: string[]): SwebenchCommand {
 				break;
 			case "--seed":
 				command.seed = parseInteger(flag, iter.value(flag, inlineValue));
+				break;
+			case "--shard":
+				command.shard = parseShardArg(iter.value(flag, inlineValue));
+				break;
+			case "--resume":
+				// 布尔开关：显式拒绝 "--resume=true" 这种写法，避免静默忽略
+				if (inlineValue !== undefined) {
+					throw new UsageError("--resume does not take a value");
+				}
+				command.resume = true;
 				break;
 			case "--eval-mode": {
 				const value = iter.value(flag, inlineValue);
@@ -186,6 +241,96 @@ function parseCustom(args: string[]): CustomCommand {
 	return command;
 }
 
+// merge 的参数形状与跑批不同：位置参数是「要合并的目录」，不是 suite 名。
+// 所以单独解析，不套 OptionIterator（它把所有非 --flag 都当错误）。
+function parseMerge(args: string[]): MergeCommand {
+	const dirs: string[] = [];
+	let output: string | undefined;
+	let index = 0;
+	while (index < args.length) {
+		const raw = args[index];
+		if (raw === undefined) {
+			break;
+		}
+		if (raw === "--output") {
+			const value = args[index + 1];
+			if (value === undefined || value.startsWith("--")) {
+				throw new UsageError("--output requires a value");
+			}
+			output = value;
+			index += 2;
+			continue;
+		}
+		if (raw.startsWith("--output=")) {
+			const value = raw.slice("--output=".length);
+			if (value === "") {
+				throw new UsageError("--output requires a value");
+			}
+			output = value;
+			index += 1;
+			continue;
+		}
+		if (raw.startsWith("--")) {
+			throw new UsageError(`unknown option: ${raw}`);
+		}
+		dirs.push(raw);
+		index += 1;
+	}
+	if (dirs.length === 0) {
+		throw new UsageError("merge requires at least one run directory");
+	}
+	if (output === undefined) {
+		throw new UsageError("merge requires --output <dir>");
+	}
+	return { suite: "merge", dirs, output };
+}
+
+function parseDoctor(args: string[]): DoctorCommand {
+	const command: DoctorCommand = {
+		suite: "doctor",
+		instancesFile: DEFAULT_INSTANCES_FILE,
+		evalMode: "local",
+		evalHost: DEFAULT_EVAL_HOST,
+		offline: false,
+	};
+
+	const iter = new OptionIterator(args);
+	while (iter.hasNext()) {
+		const { flag, inlineValue } = iter.next();
+		switch (flag) {
+			case "--instances-file":
+				command.instancesFile = iter.value(flag, inlineValue);
+				break;
+			case "--eval-mode": {
+				const value = iter.value(flag, inlineValue);
+				if (value !== "local" && value !== "remote") {
+					throw new UsageError("--eval-mode must be local or remote");
+				}
+				command.evalMode = value;
+				break;
+			}
+			case "--eval-host":
+				command.evalHost = iter.value(flag, inlineValue);
+				break;
+			case "--model-tier":
+				command.modelTier = parseModelTier(iter.value(flag, inlineValue));
+				break;
+			case "--output":
+				command.output = iter.value(flag, inlineValue);
+				break;
+			case "--offline":
+				if (inlineValue !== undefined) {
+					throw new UsageError("--offline does not take a value");
+				}
+				command.offline = true;
+				break;
+			default:
+				throw new UsageError(`unknown option: ${flag}`);
+		}
+	}
+	return command;
+}
+
 class OptionIterator {
 	private readonly args: string[];
 	private index = 0;
@@ -238,6 +383,15 @@ function parseModelTier(value: string): ModelTier {
 		return value;
 	}
 	throw new UsageError("--model-tier must be high, medium or low");
+}
+
+// shard.ts 抛普通 Error（它不依赖 CLI 层），这里统一翻译成 UsageError
+function parseShardArg(value: string): ShardSpec {
+	try {
+		return parseShard(value);
+	} catch (err) {
+		throw new UsageError(err instanceof Error ? err.message : String(err));
+	}
 }
 
 function parseIds(value: string): string[] {

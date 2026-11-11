@@ -16,7 +16,8 @@ import {
 import { basename, isAbsolute, join } from "node:path";
 import { runCommand } from "../process.ts";
 
-const DEFAULT_HF_ENDPOINT = "https://hf-mirror.com";
+// doctor 复用同一个 endpoint：预检连不上的地址，正式评测时同样连不上
+export const DEFAULT_HF_ENDPOINT = "https://hf-mirror.com";
 const REMOTE_ROOT = "hotpot-bench";
 const REMOTE_POLL_INTERVAL_MS = 5000;
 const DEFAULT_REMOTE_TIMEOUT_MS = 21600000;
