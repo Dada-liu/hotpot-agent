@@ -109,6 +109,37 @@ describe("summarizeUsage", () => {
 		expect(features.mcp).toEqual({ enabled: true, events: 1, toolCalls: 1 });
 	});
 
+	it("assistant+compaction 聚合摘要 token 与功能计数，但不增加 assistant 条数", () => {
+		const summary = summarizeUsage(
+			[
+				assistant("a-compaction", [], { input: 10, output: 5 }),
+				{
+					type: "compaction",
+					id: "cp-usage",
+					ts,
+					agentId: "main",
+					throughEventId: "old",
+					summary: "private summary",
+					usage: { input: 20, output: 8, cacheRead: 3, cacheWrite: 2 },
+					model: "m",
+					tier: "high",
+				},
+			],
+			{ compaction: false },
+		);
+
+		expect(summary.total).toEqual({ input: 30, output: 13 });
+		expect(summary.byTier.low).toEqual({ input: 10, output: 5, count: 1 });
+		expect(summary.byTier.high).toEqual({ input: 20, output: 8, count: 0 });
+		expect(summary.byAgent["worker-1"]).toEqual({ input: 10, output: 5 });
+		expect(summary.byAgent.main).toEqual({ input: 20, output: 8 });
+		expect(summary.features.compaction).toEqual({
+			enabled: false,
+			events: 1,
+			toolCalls: 0,
+		});
+	});
+
 	it("settings.features 关闭时 enabled=false（用量照常统计）", () => {
 		const { features } = summarizeUsage(events, {
 			todo: false,

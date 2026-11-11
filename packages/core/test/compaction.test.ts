@@ -38,4 +38,24 @@ describe("estimateTokens", () => {
 		expect(withSystem).toBeGreaterThan(bodyOnly);
 		expect(withTools).toBeGreaterThan(bodyOnly);
 	});
+
+	it("中文内容不会按三字符一个 token 被低估", () => {
+		const messages: Message[] = [
+			{
+				role: "user",
+				content: [{ type: "text", text: "上下文".repeat(100) }],
+			},
+		];
+		expect(estimateTokens(messages, "", [])).toBeGreaterThanOrEqual(300);
+	});
+
+	it("emoji 短 token 内容使用保守的本地估算上界", () => {
+		const messages: Message[] = [
+			{
+				role: "user",
+				content: [{ type: "text", text: "😀".repeat(100) }],
+			},
+		];
+		expect(estimateTokens(messages, "", [])).toBeGreaterThanOrEqual(300);
+	});
 });

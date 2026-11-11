@@ -733,7 +733,7 @@ describe("runTurn", () => {
 
 describe("runTurn compaction", () => {
 	function prepareOversized(cfg: LoopConfig): void {
-		cfg.model = { ...MODEL, contextWindow: 300, maxTokens: 20 };
+		cfg.model = { ...MODEL, contextWindow: 1000, maxTokens: 20 };
 		cfg.compaction = { triggerRatio: 0.5, keepRecentTokens: 20 };
 		cfg.registry.register({
 			name: "dummy",
@@ -836,7 +836,7 @@ describe("runTurn compaction", () => {
 	it("保留最近完整历史，保留边界不拆 assistant tool_call 与 tool_result 组", async () => {
 		const cfg = await makeConfig([SUMMARY_ROUND, STOP_ROUND]);
 		prepareOversized(cfg);
-		cfg.model = { ...cfg.model, contextWindow: 400 };
+		cfg.model = { ...cfg.model, contextWindow: 1600 };
 		cfg.compaction = { triggerRatio: 0.5, keepRecentTokens: 1 };
 		await appendUser(cfg, "old", "旧历史".repeat(200));
 		await appendUser(cfg, "recent", "最新消息");
@@ -886,6 +886,99 @@ describe("runTurn compaction", () => {
 				],
 			},
 		]);
+	});
+
+	it("多 agent 交错时保留边界仍不拆 main 的 assistant/tool_result，也不混入 worker", async () => {
+		const cfg = await makeConfig([SUMMARY_ROUND, STOP_ROUND]);
+		prepareOversized(cfg);
+		cfg.model = { ...cfg.model, contextWindow: 1600 };
+		cfg.compaction = { triggerRatio: 0.5, keepRecentTokens: 1 };
+		await appendUser(cfg, "old-interleaved", "旧历史".repeat(200));
+		await cfg.session.append({
+			type: "assistant_msg",
+			id: "worker-assistant",
+			ts: TS,
+			agentId: "worker-1",
+			content: [
+				{ type: "tool_call", id: "worker-call", name: "dummy", input: {} },
+			],
+			usage: { input: 1, output: 1 },
+			model: "test-model",
+			tier: "low",
+		});
+		await cfg.session.append({
+			type: "tool_result",
+			id: "worker-result",
+			ts: TS,
+			agentId: "worker-1",
+			toolCallId: "worker-call",
+			content: "worker 私有结果",
+			isError: false,
+		});
+		await cfg.session.append({
+			type: "assistant_msg",
+			id: "main-boundary-assistant",
+			ts: TS,
+			agentId: "main",
+			content: [
+				{
+					type: "tool_call",
+					id: "main-boundary-call",
+					name: "dummy",
+					input: {},
+				},
+			],
+			usage: { input: 1, output: 1 },
+			model: "test-model",
+			tier: "high",
+		});
+		await cfg.session.append({
+			type: "user_msg",
+			id: "worker-message",
+			ts: TS,
+			agentId: "worker-1",
+			content: "worker 消息",
+		});
+		await cfg.session.append({
+			type: "tool_result",
+			id: "main-boundary-result",
+			ts: TS,
+			agentId: "main",
+			toolCallId: "main-boundary-call",
+			content: "main 完整工具结果",
+			isError: false,
+		});
+		const requests = recordRequests(cfg);
+
+		await collectTurn(cfg, new AbortController().signal);
+
+		expect(requests).toHaveLength(2);
+		expect(requests[1]?.messages).toEqual([
+			{ role: "user", content: [{ type: "text", text: "历史摘要" }] },
+			{
+				role: "assistant",
+				content: [
+					{
+						type: "tool_call",
+						id: "main-boundary-call",
+						name: "dummy",
+						input: {},
+					},
+				],
+			},
+			{
+				role: "user",
+				content: [
+					{
+						type: "tool_result",
+						toolCallId: "main-boundary-call",
+						content: "main 完整工具结果",
+						isError: false,
+					},
+				],
+			},
+		]);
+		expect(JSON.stringify(requests[1]?.messages)).not.toContain("worker");
 	});
 
 	it("摘要失败不落 compaction，也不继续发送已知超限的正式请求", async () => {

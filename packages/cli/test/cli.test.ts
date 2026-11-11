@@ -584,7 +584,7 @@ describe("runChat", () => {
 			},
 			llm: {
 				adapter: recording,
-				model: { ...TEST_MODEL, contextWindow: 20000, maxTokens: 1000 },
+				model: { ...TEST_MODEL, contextWindow: 40000, maxTokens: 1000 },
 			},
 			input: new ScriptedInput(["继续", "/exit"]),
 			output,

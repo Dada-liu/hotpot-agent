@@ -882,6 +882,42 @@ describe("reduce：usage 按 tier 累计", () => {
 			count: 1,
 		});
 	});
+
+	it("assistant+compaction 累计摘要 token，cache 字段可透传且 count 不增加", () => {
+		let state = createInitialState();
+		state = reduce(
+			state,
+			log(
+				1,
+				assistantUsageMsg(
+					"a-usage",
+					"main",
+					{ input: 100, output: 50 },
+					"high",
+				),
+			),
+		);
+		const compaction: SessionEvent = {
+			type: "compaction",
+			id: "cp-usage",
+			ts,
+			agentId: "main",
+			throughEventId: "a-usage",
+			summary: "摘要不进对话",
+			usage: { input: 20, output: 8, cacheRead: 3, cacheWrite: 2 },
+			model: "m",
+			tier: "high",
+		};
+		state = reduce(state, log(2, compaction));
+		state = reduce(state, log(3, compaction));
+
+		expect(state.usage.total).toEqual({ input: 120, output: 58 });
+		expect(state.usage.byTier.high).toEqual({
+			input: 120,
+			output: 58,
+			count: 1,
+		});
+	});
 });
 
 describe("reduce：plan 卡片与正文去重", () => {
