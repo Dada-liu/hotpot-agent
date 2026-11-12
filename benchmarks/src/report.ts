@@ -30,6 +30,8 @@ export const REPORT_MARKDOWN_FILE = "report.md";
 
 export interface InstanceResult {
 	instanceId: string;
+	// 1-based 尝试序号。缺省按 1 处理：旧报告、custom 套件与单次跑批都没有这个字段
+	attempt?: number;
 	passed: boolean;
 	durationMs: number;
 	inputTokens: number;
@@ -41,6 +43,36 @@ export interface InstanceResult {
 	// 由 classifyFailure 统一判定，报告与遥测共用
 	failureClass?: BenchmarkFailureClass;
 	error?: string;
+}
+
+// 同一道题在 k 次尝试上的汇总。passRate 落在 (0, 1) 之间就是 flaky：
+// 它说明「这题到底行不行」本身不稳定，任何基于单次结果的比较都不可信。
+export interface InstanceSummary {
+	instanceId: string;
+	attempts: number;
+	// 通过的尝试次数
+	passed: number;
+	passRate: number;
+	flaky: boolean;
+	inputTokens: number;
+	outputTokens: number;
+	durationMs: number;
+	// 最后一次尝试的失败原因；至少通过一次时缺省
+	lastError?: string;
+}
+
+// 重复跑批的波动口径：passRateByAttempt 是「每一轮各自的通过率」，
+// 它的极差就是「同一份代码自己跑 k 次能得到多大差异」的实证标尺。
+// 判定改动是否有效时，差异必须超过这个极差，否则只能给 inconclusive。
+export interface RepeatSummary {
+	attempts: number;
+	passRateByAttempt: number[];
+	passRateMean: number;
+	// 样本标准差（n-1）；只有一次尝试时为 0，且不构成误差棒
+	passRateStdDev: number;
+	passRateMin: number;
+	passRateMax: number;
+	flakyInstances: number;
 }
 
 // 一轮跑批的远端投递结果：写进 report.json，跑批"上报了多少条"必须可查，
@@ -85,16 +117,27 @@ export interface BenchmarkReport {
 	manifest: RunManifest;
 	// 由 manifest.runtime 推导，不单独赋值
 	patchOnly: boolean;
+	// 题目数（去重后），不是尝试数
 	total: number;
+	// 通过的尝试次数：k 次尝试里通过了几次
 	passed: number;
+	// 尝试级通过率 = passed / 尝试总数，等价于「每轮通过率」的均值
 	passRate: number;
+	// 至少通过一次的题目数：与 passRate 分开，避免用「至少一次」掩盖稳定性下降
+	resolvedInstances: number;
 	tokens: TokenAggregate;
 	durationMs: NumericStat;
-	// 每个「通过题」平均消耗的 token（input + output）；无通过题时为 null，不伪装成 0
+	// 每次「通过」平均消耗的 token（input + output）；无通过时为 null，不伪装成 0
 	tokensPerResolved: number | null;
+	// 同一 runId 下的重复尝试与波动；attempts=1 表示没有误差棒
+	repeat: RepeatSummary;
 	// 本轮上报到远端的结果；遥测关闭时整个字段缺省
 	telemetry?: TelemetryDelivery;
+	// 每条对应一次尝试（instance × attempt）
 	instances: InstanceResult[];
+	// 每道题的跨尝试汇总
+	perInstance: InstanceSummary[];
+	// 只列「一次都没通过」的题；失败原因取最后一次尝试
 	failures: ReportFailure[];
 }
 
@@ -112,21 +155,38 @@ export interface ReportPaths {
 
 export function buildReport(
 	results: InstanceResult[],
-	official: OfficialReport | undefined,
+	official:
+		| OfficialReport
+		| readonly (OfficialReport | undefined)[]
+		| undefined,
 	opts: BuildReportOptions,
 ): BenchmarkReport {
-	const resolved = new Set(official?.resolved ?? []);
-	const emptyPatches = new Set(official?.emptyPatch ?? []);
+	// 单份 official 等价于「只有第 1 次尝试」；数组用于 repeat>1 时按 attempt 对齐
+	const officials = normalizeOfficials(official);
+	const resolvedByAttempt = officials.map(
+		(report) => new Set(report?.resolved ?? []),
+	);
+	const emptyPatchByAttempt = officials.map(
+		(report) => new Set(report?.emptyPatch ?? []),
+	);
+
 	const instances = results.map((result) => {
+		const attempt = result.attempt ?? 1;
+		const attemptIndex = attempt - 1;
+		const officialForAttempt = officials[attemptIndex];
 		const passed =
-			official === undefined ? result.passed : resolved.has(result.instanceId);
+			officialForAttempt === undefined
+				? result.passed
+				: (resolvedByAttempt[attemptIndex]?.has(result.instanceId) ?? false);
+		const officialEmptyPatch =
+			emptyPatchByAttempt[attemptIndex]?.has(result.instanceId) ?? false;
 		const reason = passed
 			? undefined
 			: sanitizeReason(
 					result.error ??
-						(official === undefined
+						(officialForAttempt === undefined
 							? "failed"
-							: emptyPatches.has(result.instanceId)
+							: officialEmptyPatch
 								? "empty patch"
 								: "unresolved by official harness"),
 				);
@@ -136,29 +196,38 @@ export function buildReport(
 			passed,
 			agentOutcome: result.agentOutcome,
 			reason,
-			emptyPatch: emptyPatches.has(result.instanceId),
+			emptyPatch: officialEmptyPatch,
 		});
 		return {
 			...result,
+			attempt,
 			passed,
 			...(reason === undefined ? {} : { error: reason }),
 			...(failureClass === undefined ? {} : { failureClass }),
 		};
 	});
 
-	const total = instances.length;
+	const perInstance = summarizePerInstance(instances);
+	// total 是题目数：重复尝试不改变「考了几道题」，只改变「每题考了几次」
+	const total = perInstance.length;
+	// passed 是「通过的尝试次数」：passRate 因此是尝试级平均，而不是至少通过一次的比例
 	const passed = instances.filter((instance) => instance.passed).length;
-	const failures = instances
-		.filter((instance) => !instance.passed)
+	const resolvedInstances = perInstance.filter(
+		(instance) => instance.passed > 0,
+	).length;
+	const failures = perInstance
+		.filter((instance) => instance.passed === 0)
 		.map((instance) => ({
 			instanceId: instance.instanceId,
-			reason: instance.error ?? "failed",
+			reason: instance.lastError ?? "failed",
 		}));
 
 	const input = numericStat(instances.map((instance) => instance.inputTokens));
 	const output = numericStat(
 		instances.map((instance) => instance.outputTokens),
 	);
+	// 重复尝试时官方会给出多份 report，取第一份非空的 runId 作为代表
+	const runId = officials.find((report) => report !== undefined)?.runId;
 	const withTier = instances.filter(
 		(instance) => instance.tokensByTier !== undefined,
 	);
@@ -171,25 +240,136 @@ export function buildReport(
 		suite: opts.suite,
 		...(opts.dataset === undefined ? {} : { dataset: opts.dataset }),
 		...(opts.split === undefined ? {} : { split: opts.split }),
-		...(official === undefined ? {} : { runId: official.runId }),
+		...(runId === undefined ? {} : { runId }),
 		generatedAt: new Date().toISOString(),
 		manifest: opts.manifest,
 		patchOnly: opts.manifest.runtime.patchOnly,
 		total,
 		passed,
-		passRate: total === 0 ? 0 : passed / total,
+		passRate: instances.length === 0 ? 0 : passed / instances.length,
+		resolvedInstances,
 		tokens: {
 			input,
 			output,
 			byTier,
-			tierCoverage: total === 0 ? 0 : withTier.length / total,
+			tierCoverage:
+				instances.length === 0 ? 0 : withTier.length / instances.length,
 		},
 		durationMs: numericStat(instances.map((instance) => instance.durationMs)),
 		tokensPerResolved:
 			passed === 0 ? null : (input.total + output.total) / passed,
+		repeat: summarizeRepeat(instances, perInstance),
 		instances,
+		perInstance,
 		failures,
 	};
+}
+
+function normalizeOfficials(
+	official:
+		| OfficialReport
+		| readonly (OfficialReport | undefined)[]
+		| undefined,
+): (OfficialReport | undefined)[] {
+	if (official === undefined) {
+		return [];
+	}
+	if (Array.isArray(official)) {
+		return [...official];
+	}
+	return [official as OfficialReport];
+}
+
+// 按题聚合。输入顺序不保证，先按 attempt 排序，保证 lastError 取的是最后一次尝试。
+function summarizePerInstance(
+	instances: readonly InstanceResult[],
+): InstanceSummary[] {
+	const ordered = [...instances].sort(
+		(a, b) => (a.attempt ?? 1) - (b.attempt ?? 1),
+	);
+	const byId = new Map<string, InstanceSummary>();
+	for (const instance of ordered) {
+		const existing = byId.get(instance.instanceId);
+		if (existing === undefined) {
+			byId.set(instance.instanceId, {
+				instanceId: instance.instanceId,
+				attempts: 1,
+				passed: instance.passed ? 1 : 0,
+				passRate: instance.passed ? 1 : 0,
+				flaky: false,
+				inputTokens: instance.inputTokens,
+				outputTokens: instance.outputTokens,
+				durationMs: instance.durationMs,
+				...(instance.passed || instance.error === undefined
+					? {}
+					: { lastError: instance.error }),
+			});
+			continue;
+		}
+		existing.attempts += 1;
+		existing.passed += instance.passed ? 1 : 0;
+		existing.inputTokens += instance.inputTokens;
+		existing.outputTokens += instance.outputTokens;
+		existing.durationMs += instance.durationMs;
+		if (instance.passed) {
+			delete existing.lastError;
+		} else if (instance.error !== undefined) {
+			existing.lastError = instance.error;
+		}
+	}
+	return [...byId.values()].map((summary) => ({
+		...summary,
+		passRate: summary.attempts === 0 ? 0 : summary.passed / summary.attempts,
+		flaky: summary.passed > 0 && summary.passed < summary.attempts,
+	}));
+}
+
+function summarizeRepeat(
+	instances: readonly InstanceResult[],
+	perInstance: readonly InstanceSummary[],
+): RepeatSummary {
+	const byAttempt = new Map<number, { passed: number; total: number }>();
+	for (const instance of instances) {
+		const attempt = instance.attempt ?? 1;
+		const bucket = byAttempt.get(attempt) ?? { passed: 0, total: 0 };
+		bucket.total += 1;
+		bucket.passed += instance.passed ? 1 : 0;
+		byAttempt.set(attempt, bucket);
+	}
+	const attempts = [...byAttempt.keys()].sort((a, b) => a - b);
+	const passRateByAttempt = attempts.map((attempt) => {
+		const bucket = byAttempt.get(attempt);
+		if (bucket === undefined || bucket.total === 0) {
+			return 0;
+		}
+		return bucket.passed / bucket.total;
+	});
+	const mean = average(passRateByAttempt);
+	// 样本标准差：k 次尝试是从「同一版本的运行分布」里抽的样本，
+	// 用 n-1 才不会在 k=3 这种小样本上低估波动
+	const variance =
+		passRateByAttempt.length > 1
+			? passRateByAttempt.reduce((sum, value) => sum + (value - mean) ** 2, 0) /
+				(passRateByAttempt.length - 1)
+			: 0;
+	return {
+		attempts: passRateByAttempt.length,
+		passRateByAttempt,
+		passRateMean: mean,
+		passRateStdDev: Math.sqrt(variance),
+		passRateMin:
+			passRateByAttempt.length === 0 ? 0 : Math.min(...passRateByAttempt),
+		passRateMax:
+			passRateByAttempt.length === 0 ? 0 : Math.max(...passRateByAttempt),
+		flakyInstances: perInstance.filter((summary) => summary.flaky).length,
+	};
+}
+
+function average(values: readonly number[]): number {
+	if (values.length === 0) {
+		return 0;
+	}
+	return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
 export async function writeReport(
@@ -224,6 +404,7 @@ export function renderReportMarkdown(report: BenchmarkReport): string {
 		`- models: ${formatModels(manifest)}`,
 		`- runtime profile: ${manifest.runtime.label} (${formatRuntime(manifest)})`,
 		`- selected instances: ${manifest.selection.count} (ids sha256 ${shortHash(manifest.selection.idsHash)})`,
+		`- attempts per instance: ${report.repeat.attempts}${report.repeat.attempts > 1 ? "" : " (single attempt: no variance estimate)"}`,
 		...(manifest.selection.tasksetHash === undefined
 			? []
 			: [`- task set sha256: ${shortHash(manifest.selection.tasksetHash)}`]),
@@ -241,10 +422,12 @@ export function renderReportMarkdown(report: BenchmarkReport): string {
 		"",
 		"## Results",
 		"",
-		`- total: ${report.total}`,
-		`- passed: ${report.passed}`,
-		`- pass rate: ${(report.passRate * 100).toFixed(1)}%`,
-		`- tokens per resolved instance: ${report.tokensPerResolved === null ? "n/a (no resolved instance)" : report.tokensPerResolved.toFixed(1)}`,
+		`- instances: ${report.total}`,
+		`- attempts: ${report.instances.length}`,
+		`- passed attempts: ${report.passed}`,
+		`- pass rate (per attempt): ${(report.passRate * 100).toFixed(1)}%`,
+		`- instances resolved at least once: ${report.resolvedInstances}/${report.total}`,
+		`- tokens per resolved attempt: ${report.tokensPerResolved === null ? "n/a (no resolved attempt)" : report.tokensPerResolved.toFixed(1)}`,
 		"",
 		"| metric | mean | median | p90 | total |",
 		"|---|---|---|---|---|",
@@ -252,7 +435,7 @@ export function renderReportMarkdown(report: BenchmarkReport): string {
 		`| output tokens | ${report.tokens.output.mean.toFixed(1)} | ${report.tokens.output.median.toFixed(1)} | ${report.tokens.output.p90.toFixed(1)} | ${report.tokens.output.total} |`,
 		`| duration (ms) | ${report.durationMs.mean.toFixed(1)} | ${report.durationMs.median.toFixed(1)} | ${report.durationMs.p90.toFixed(1)} | ${report.durationMs.total} |`,
 		"",
-		`Tokens by tier (coverage ${(report.tokens.tierCoverage * 100).toFixed(0)}% of instances):`,
+		`Tokens by tier (coverage ${(report.tokens.tierCoverage * 100).toFixed(0)}% of attempts):`,
 		"",
 		"| tier | input tokens | output tokens |",
 		"|---|---|---|",
@@ -262,25 +445,66 @@ export function renderReportMarkdown(report: BenchmarkReport): string {
 			`| ${tier} | ${report.tokens.byTier[tier].input} | ${report.tokens.byTier[tier].output} |`,
 		);
 	}
+	lines.push("", "## Spread across attempts", "");
+	if (report.repeat.attempts <= 1) {
+		lines.push(
+			"Single attempt: no variance estimate. Re-run with `--repeat 3` before drawing a conclusion from a small diff.",
+		);
+	} else {
+		const spread = report.repeat.passRateMax - report.repeat.passRateMin;
+		lines.push(
+			`- pass rate per attempt: ${report.repeat.passRateByAttempt.map((rate) => `${(rate * 100).toFixed(1)}%`).join(" / ")}`,
+			`- pass rate mean ± sd: ${(report.repeat.passRateMean * 100).toFixed(1)}% ± ${(report.repeat.passRateStdDev * 100).toFixed(1)}pp`,
+			`- pass rate range: ${(report.repeat.passRateMin * 100).toFixed(1)}% ~ ${(report.repeat.passRateMax * 100).toFixed(1)}% (${(spread * report.total).toFixed(1)} of ${report.total} instances)`,
+			`- flaky instances: ${report.repeat.flakyInstances} (pass rate strictly between 0 and 1)`,
+			"",
+			"A candidate version must move the pass rate beyond this range before the difference counts as real.",
+		);
+	}
 	lines.push("", "## Failures", "");
 	if (report.failures.length === 0) {
 		lines.push("None.");
 	} else {
-		lines.push(`By class: ${formatFailureClassCounts(report.instances)}`, "");
+		// 分类只统计「一次都没通过」的题：通过过一次但翻转过 2 次的题在 flaky 里体现，
+		// 混进失败分类会把排期引向错误的方向。
+		const neverPassed = new Set(
+			report.failures.map((failure) => failure.instanceId),
+		);
+		lines.push(
+			`By class: ${formatFailureClassCounts(report.instances, neverPassed)}`,
+			"",
+		);
 		for (const failure of report.failures) {
 			lines.push(
 				`- \`${failure.instanceId}\`: ${escapeTableCell(failure.reason)}`,
 			);
 		}
 	}
-	lines.push("", "## Instances", "");
+	lines.push("", "## Per instance", "");
 	lines.push(
-		"| instance | result | class | input tokens | output tokens | duration (ms) | failure |",
-		"|---|---|---|---|---|---|---|",
+		"| instance | passed / attempts | pass rate | flaky | input tokens | output tokens |",
+		"|---|---|---|---|---|---|",
 	);
-	for (const instance of report.instances) {
+	for (const summary of report.perInstance) {
 		lines.push(
-			`| \`${instance.instanceId}\` | ${instance.passed ? "pass" : "fail"} | ${instance.failureClass ?? ""} | ${instance.inputTokens} | ${instance.outputTokens} | ${instance.durationMs} | ${escapeTableCell(instance.error ?? "")} |`,
+			`| \`${summary.instanceId}\` | ${summary.passed}/${summary.attempts} | ${(summary.passRate * 100).toFixed(0)}% | ${summary.flaky ? "yes" : "no"} | ${summary.inputTokens} | ${summary.outputTokens} |`,
+		);
+	}
+	lines.push("", "## Attempts", "");
+	lines.push(
+		"| instance | attempt | result | class | input tokens | output tokens | duration (ms) | failure |",
+		"|---|---|---|---|---|---|---|---|",
+	);
+	// 按题再按尝试排序：同一题的 k 次结果连在一起，才看得出它在哪一次翻转
+	const attemptRows = [...report.instances].sort((a, b) => {
+		if (a.instanceId !== b.instanceId) {
+			return a.instanceId < b.instanceId ? -1 : 1;
+		}
+		return (a.attempt ?? 1) - (b.attempt ?? 1);
+	});
+	for (const instance of attemptRows) {
+		lines.push(
+			`| \`${instance.instanceId}\` | ${instance.attempt ?? 1} | ${instance.passed ? "pass" : "fail"} | ${instance.failureClass ?? ""} | ${instance.inputTokens} | ${instance.outputTokens} | ${instance.durationMs} | ${escapeTableCell(instance.error ?? "")} |`,
 		);
 	}
 	lines.push("");
@@ -323,10 +547,28 @@ function shortHash(hash: string): string {
 }
 
 // 失败分类计数是排期的直接输入：132 题失败里 aborted 43 / max_tokens 26
-// 指向循环控制，unresolved 指向能力——这张计数表一眼能看出来
-function formatFailureClassCounts(instances: InstanceResult[]): string {
-	const counts = new Map<string, number>();
+// 指向循环控制，unresolved 指向能力——这张计数表一眼能看出来。
+// 重复尝试时每题只算一次（取最后一次的分类），且只统计一次都没通过的题，
+// 否则 k 次失败会被算成 k 道题，翻转过的题也会被误列进排期。
+function formatFailureClassCounts(
+	instances: InstanceResult[],
+	neverPassed: ReadonlySet<string>,
+): string {
+	const latest = new Map<string, InstanceResult>();
 	for (const instance of instances) {
+		if (!neverPassed.has(instance.instanceId)) {
+			continue;
+		}
+		const previous = latest.get(instance.instanceId);
+		if (
+			previous === undefined ||
+			(instance.attempt ?? 1) >= (previous.attempt ?? 1)
+		) {
+			latest.set(instance.instanceId, instance);
+		}
+	}
+	const counts = new Map<string, number>();
+	for (const instance of latest.values()) {
 		if (instance.failureClass === undefined) {
 			continue;
 		}

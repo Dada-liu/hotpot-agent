@@ -50,14 +50,20 @@ import {
 } from "./report.ts";
 import { BENCHMARK_RUNTIME } from "./runtime-profile.ts";
 import { applyShard, formatShard } from "./shard.ts";
+import { type BenchSuite, loadBenchSuite } from "./suites.ts";
 import {
 	type OfficialReport,
 	runOfficialEvaluation,
 } from "./swebench/evaluate.ts";
-import { loadInstances, selectInstances } from "./swebench/instances.ts";
+import {
+	loadInstances,
+	type SwebenchInstance,
+	selectInstances,
+} from "./swebench/instances.ts";
 import {
 	PREDICTIONS_FILE,
 	type PredictionEntry,
+	predictionsFileName,
 	readPredictions,
 	writePredictions,
 } from "./swebench/predictions.ts";
@@ -155,11 +161,13 @@ async function runSwebenchSuite(command: SwebenchCommand): Promise<number> {
 	await mkdir(outputDir, { recursive: true });
 
 	const allInstances = await loadInstances(command.instancesFile);
-	const selected = selectInstances(allInstances, {
-		limit: command.limit,
-		instanceIds: command.instanceIds,
-		seed: command.seed,
-	});
+	// 默认套件只决定「跑哪些题」：没给 --limit 也没给 --instance-ids 时用固定 10 题。
+	// 用 id 清单而不是 --limit 10，才能保证换一份实例文件后仍然是同一批题，前后可配对。
+	const suite =
+		command.instanceIds === undefined && command.limit === undefined
+			? await loadBenchSuite()
+			: undefined;
+	const selected = selectSelection(allInstances, command, suite);
 	// 分片在「父集合」之上切：idsHash 记的是全量选择，parentIdsHash 让 merge 能认亲
 	const instances = applyShard(selected, command.shard);
 	if (instances.length === 0) {
@@ -171,7 +179,11 @@ async function runSwebenchSuite(command: SwebenchCommand): Promise<number> {
 		return 1;
 	}
 
-	const resumed = await loadResumeState(outputDir, command.resume);
+	const resumed = await loadResumeState(
+		outputDir,
+		command.resume,
+		command.repeat,
+	);
 	const runId = resumed?.manifest.runId ?? newRunId();
 	const workspaceRoot = command.workspaceRoot ?? join(outputDir, "workspaces");
 	const provider = new CheckoutWorkspaceProvider({
@@ -188,6 +200,7 @@ async function runSwebenchSuite(command: SwebenchCommand): Promise<number> {
 		startedMs,
 		settings,
 		modelTier,
+		repeat: command.repeat,
 		selection: {
 			dataset: command.dataset,
 			split: command.split,
@@ -227,152 +240,162 @@ async function runSwebenchSuite(command: SwebenchCommand): Promise<number> {
 	await writeRunManifest(manifest, outputDir);
 
 	const promptSuffix = BENCHMARK_RUNTIME.patchOnly ? BENCH_PROMPT_SUFFIX : "";
-	// resume：已完成的题（含官方 verdict）直接从上次报告里搬过来，不重跑、不重评测。
-	// 只搬 report 里的 verdict 是不够的——patch 也要一并复用，否则合并后的
-	// predictions.jsonl 会缺题，官方 harness 会把它们当没跑过。
+	// resume 的键是 (instance, attempt)：重复跑批里「a 题的第 2 次」和「b 题的第 1 次」
+	// 是两条独立结果，只按 instanceId 去重会把它们混成一条。
+	// 官方 verdict 从 report 搬过来，patch 从 predictions 搬过来（否则合并后的预测会缺题）。
 	const doneResults = new Map<string, InstanceResult>(
 		(resumed?.report?.instances ?? []).map((result) => [
-			result.instanceId,
+			progressKey(result.instanceId, result.attempt ?? 1),
 			result,
 		]),
 	);
-	const donePatches = new Map<string, string>(
-		(resumed?.predictions ?? []).map((entry) => [
-			entry.instanceId,
-			entry.patch,
-		]),
-	);
-	const results: InstanceResult[] = [];
-	const freshPredictions: PredictionEntry[] = [];
-	const freshPatches = new Map<string, string>();
-	for (let index = 0; index < instances.length; index += 1) {
-		const instance = instances[index];
-		if (instance === undefined) {
-			continue;
+	const donePatches = new Map<string, string>();
+	for (const [attempt, entries] of resumed?.predictions ?? []) {
+		for (const entry of entries) {
+			donePatches.set(progressKey(entry.instanceId, attempt), entry.patch);
 		}
-		const done = doneResults.get(instance.instance_id);
-		if (done !== undefined) {
-			results.push(done);
-			continue;
-		}
-		const started = Date.now();
-		let inputTokens = 0;
-		let outputTokens = 0;
-		let tokensByTier: InstanceResult["tokensByTier"];
-		let agentOutcome: InstanceResult["agentOutcome"];
-		let patch = "";
-		let error: string | undefined;
-		let workspace: Awaited<ReturnType<typeof provider.prepare>> | undefined;
+	}
 
-		try {
-			workspace = await provider.prepare(instance);
-			const turn = await runAgentTurn({
-				cwd: workspace.cwd,
-				prompt: `${instance.problem_statement}${promptSuffix}`,
-				settings,
-				modelTier,
-			});
-			inputTokens = turn.inputTokens;
-			outputTokens = turn.outputTokens;
-			tokensByTier = turn.tokensByTier;
-			agentOutcome = turn.outcome;
-			if (turn.outcome !== "success") {
-				error = `agent ${turn.outcome}: ${turn.error ?? "unknown"}`;
+	const results: InstanceResult[] = [];
+	const officials: (OfficialReport | undefined)[] = [];
+	let reusedCount = 0;
+
+	for (let attempt = 1; attempt <= command.repeat; attempt += 1) {
+		const fresh: PredictionEntry[] = [];
+		const freshPatches = new Map<string, string>();
+		const reused: InstanceResult[] = [];
+		for (let index = 0; index < instances.length; index += 1) {
+			const instance = instances[index];
+			if (instance === undefined) {
+				continue;
 			}
-			patch = await capturePatch(workspace.cwd);
-		} catch (err) {
-			error = err instanceof Error ? err.message : String(err);
-		} finally {
-			if (workspace !== undefined) {
-				try {
-					await workspace.cleanup();
-				} catch {
-					// 清理失败不覆盖该题结果
+			const key = progressKey(instance.instance_id, attempt);
+			const done = doneResults.get(key);
+			if (done !== undefined) {
+				results.push(done);
+				reused.push(done);
+				reusedCount += 1;
+				continue;
+			}
+			const started = Date.now();
+			let inputTokens = 0;
+			let outputTokens = 0;
+			let tokensByTier: InstanceResult["tokensByTier"];
+			let agentOutcome: InstanceResult["agentOutcome"];
+			let patch = "";
+			let error: string | undefined;
+			let workspace: Awaited<ReturnType<typeof provider.prepare>> | undefined;
+
+			try {
+				workspace = await provider.prepare(instance);
+				const turn = await runAgentTurn({
+					cwd: workspace.cwd,
+					prompt: `${instance.problem_statement}${promptSuffix}`,
+					settings,
+					modelTier,
+				});
+				inputTokens = turn.inputTokens;
+				outputTokens = turn.outputTokens;
+				tokensByTier = turn.tokensByTier;
+				agentOutcome = turn.outcome;
+				if (turn.outcome !== "success") {
+					error = `agent ${turn.outcome}: ${turn.error ?? "unknown"}`;
+				}
+				patch = await capturePatch(workspace.cwd);
+			} catch (err) {
+				error = err instanceof Error ? err.message : String(err);
+			} finally {
+				if (workspace !== undefined) {
+					try {
+						await workspace.cleanup();
+					} catch {
+						// 清理失败不覆盖该题结果
+					}
 				}
 			}
+
+			fresh.push({ instanceId: instance.instance_id, attempt, patch });
+			freshPatches.set(instance.instance_id, patch);
+			const result: InstanceResult = {
+				instanceId: instance.instance_id,
+				attempt,
+				passed: false,
+				durationMs: Date.now() - started,
+				inputTokens,
+				outputTokens,
+				...(tokensByTier === undefined ? {} : { tokensByTier }),
+				...(agentOutcome === undefined ? {} : { agentOutcome }),
+				...(error === undefined ? {} : { error }),
+			};
+			results.push(result);
+			console.log(
+				`[a${attempt} ${index + 1}/${instances.length}] ${instance.instance_id} ${
+					patch === "" ? "empty-patch" : "patch"
+				} tokens=${inputTokens}/${outputTokens} ${result.durationMs / 1000}s${
+					error === undefined ? "" : ` error=${error}`
+				}`,
+			);
 		}
 
-		freshPredictions.push({ instanceId: instance.instance_id, patch });
-		freshPatches.set(instance.instance_id, patch);
-		results.push({
-			instanceId: instance.instance_id,
-			passed: false,
-			durationMs: Date.now() - started,
-			inputTokens,
-			outputTokens,
-			...(tokensByTier === undefined ? {} : { tokensByTier }),
-			...(agentOutcome === undefined ? {} : { agentOutcome }),
-			...(error === undefined ? {} : { error }),
-		});
+		// 每轮一个 predictions 文件：官方 harness 按 instance_id 建索引，
+		// 同一题在一个文件里出现两次会互相覆盖，k 次尝试必须分开评测。
+		const attemptDir = join(outputDir, "official", `attempt-${attempt}`);
+		const predictionsPath = join(outputDir, predictionsFileName(attempt));
+		await writePredictions(
+			predictionsPath,
+			patchEntries(instances, attempt, freshPatches, donePatches),
+		);
+
+		// 评测只跑本轮新跑的题：resume 的价值是「不重跑已完成的」，
+		// 全量重评测会把省下的 agent 时间全部还回去。
+		const evalPredictionsPath =
+			reused.length === 0
+				? predictionsPath
+				: join(attemptDir, "pending-predictions.jsonl");
+		if (reused.length > 0 && fresh.length > 0) {
+			await writePredictions(evalPredictionsPath, fresh);
+		}
+		const official =
+			fresh.length === 0
+				? undefined
+				: await runOfficialEvaluation({
+						mode: command.evalMode,
+						host: command.evalHost,
+						dataset: command.dataset,
+						split: command.split,
+						predictionsPath: evalPredictionsPath,
+						maxWorkers: command.maxWorkers,
+						// 每次尝试是官方 harness 的一次独立 run，run id 必须唯一
+						runId: `${runId}-a${attempt}`,
+						reportDir: attemptDir,
+						cwd: process.cwd(),
+					});
+		officials.push(combineOfficial(runId, reused, official));
+	}
+
+	if (reusedCount > 0) {
 		console.log(
-			`[${index + 1}/${instances.length}] ${instance.instance_id} ${
-				patch === "" ? "empty-patch" : "patch"
-			} tokens=${inputTokens}/${outputTokens} ${(results[results.length - 1]?.durationMs ?? 0) / 1000}s${
-				error === undefined ? "" : ` error=${error}`
-			}`,
+			`resume: 复用 ${reusedCount} 条已完成尝试，本次新跑 ${results.length - reusedCount} 条`,
 		);
 	}
-
-	const resumedCount = instances.length - freshPredictions.length;
-	if (resumedCount > 0) {
-		console.log(
-			`resume: 复用 ${resumedCount} 题已完成的结果，本次新跑 ${freshPredictions.length} 题`,
-		);
-	}
-
-	const predictionsPath = join(outputDir, PREDICTIONS_FILE);
-	await writePredictions(
-		predictionsPath,
-		instances.map((instance) => ({
-			instanceId: instance.instance_id,
-			patch:
-				freshPatches.get(instance.instance_id) ??
-				donePatches.get(instance.instance_id) ??
-				"",
-		})),
-	);
-
-	// 评测只跑本轮新跑的题：resume 的价值就是「不重跑已完成的」，
-	// 若把 300 题全量重评测，省下的 agent 时间会全部还回去。
-	// 复用来的 verdict 在下面与本次评测结果合并。
-	const evalPredictionsPath =
-		resumedCount === 0
-			? predictionsPath
-			: join(outputDir, "official", "pending-predictions.jsonl");
-	if (resumedCount > 0 && freshPredictions.length > 0) {
-		await writePredictions(evalPredictionsPath, freshPredictions);
-	}
-	const official =
-		freshPredictions.length === 0
-			? undefined
-			: await runOfficialEvaluation({
-					mode: command.evalMode,
-					host: command.evalHost,
-					dataset: command.dataset,
-					split: command.split,
-					predictionsPath: evalPredictionsPath,
-					maxWorkers: command.maxWorkers,
-					runId,
-					reportDir: join(outputDir, "official"),
-					cwd: process.cwd(),
-				});
-	const officialForReport = combineOfficial(
-		runId,
-		resumed?.report?.instances ?? [],
-		official,
-	);
 
 	const completed = finalizeRunManifest(manifest, {
 		status: "completed",
 		finishedAt: new Date().toISOString(),
 		durationMs: Date.now() - startedMs,
 	});
-	const report = buildReport(results, officialForReport, {
-		suite: "swebench",
-		dataset: command.dataset,
-		split: command.split,
-		manifest: completed,
-	});
+	const report = buildReport(
+		results,
+		officials.every((official) => official === undefined)
+			? undefined
+			: officials,
+		{
+			suite: "swebench",
+			dataset: command.dataset,
+			split: command.split,
+			manifest: completed,
+		},
+	);
 	await writeRunManifest(completed, outputDir);
 	const paths = await writeReport(report, outputDir);
 	const delivery = await reportTelemetry(settings, report, completed, {
@@ -389,6 +412,30 @@ async function runSwebenchSuite(command: SwebenchCommand): Promise<number> {
 	}
 	printSummary(report, paths);
 	return 0;
+}
+
+// 默认套件要求实例文件里包含这 10 题：缺题时给一条能照做的提示，
+// 而不是只抛 "unknown instance id(s)" 让人猜这 10 个 id 从哪来。
+function selectSelection(
+	allInstances: SwebenchInstance[],
+	command: SwebenchCommand,
+	suite: BenchSuite | undefined,
+): SwebenchInstance[] {
+	try {
+		return selectInstances(allInstances, {
+			limit: command.limit,
+			instanceIds: command.instanceIds ?? suite?.instanceIds,
+			seed: command.seed,
+		});
+	} catch (err) {
+		if (suite === undefined) {
+			throw err;
+		}
+		const message = err instanceof Error ? err.message : String(err);
+		throw new Error(
+			`${message}\n默认套件 ${suite.name} 需要这 ${suite.instanceIds.length} 道题：先用 scripts/export_instances.py 导出 ${suite.dataset}/${suite.split}，或显式传 --limit / --instance-ids。`,
+		);
+	}
 }
 
 async function runCustomSuite(command: CustomCommand): Promise<number> {
@@ -540,16 +587,18 @@ function newRunId(): string {
 interface ResumeState {
 	manifest: RunManifest;
 	report?: BenchmarkReport;
-	predictions: PredictionEntry[];
+	// 按尝试序号分组的预测：重复跑批里每次尝试各有一个文件
+	predictions: Map<number, PredictionEntry[]>;
 	startedMs: number;
 }
 
-// resume 的语义：接着上次的 runId 往下跑，只补没跑完的题。
+// resume 的语义：接着上次的 runId 往下跑，只补没跑完的 (instance, attempt)。
 // 上次没走完收尾（没有 report）时仍复用 runId —— 否则「同一批题」会变成两轮互不相干的结果，
 // 远端也无法把它们看成一件事。
 async function loadResumeState(
 	outputDir: string,
 	enabled: boolean,
+	repeat: number,
 ): Promise<ResumeState | undefined> {
 	if (!enabled) {
 		return undefined;
@@ -571,7 +620,23 @@ async function loadResumeState(
 			"resume: manifest 在但 report 缺失（上次没走完收尾），所有题都会重跑",
 		);
 	}
-	const predictions = await readPredictions(join(outputDir, PREDICTIONS_FILE));
+	const predictions = new Map<number, PredictionEntry[]>();
+	for (let attempt = 1; attempt <= repeat; attempt += 1) {
+		const entries = await readPredictions(
+			join(outputDir, predictionsFileName(attempt)),
+		);
+		if (entries.length > 0) {
+			predictions.set(attempt, entries);
+			continue;
+		}
+		if (attempt === 1) {
+			// 旧目录只有 predictions.jsonl：只当作第 1 次尝试，其余尝试重跑
+			const legacy = await readPredictions(join(outputDir, PREDICTIONS_FILE));
+			if (legacy.length > 0) {
+				predictions.set(1, legacy);
+			}
+		}
+	}
 	return {
 		manifest,
 		...(report === undefined ? {} : { report }),
@@ -580,8 +645,8 @@ async function loadResumeState(
 	};
 }
 
-// buildReport 只认一份 official：续跑时若不把复用来的 verdict 并进去，
-// 那些题会被一律判成 fail（它们的 patch 这一轮根本没重跑）。
+// 一次尝试的 official 由两部分组成：复用来的 verdict + 本次新评测的 verdict。
+// 只传本次评测会让复用的题一律判 fail（它们的 patch 这一轮根本没重跑）。
 function combineOfficial(
 	runId: string,
 	previous: readonly InstanceResult[],
@@ -621,8 +686,14 @@ function printSummary(
 	paths: ReportPaths,
 ): void {
 	const input = report.tokens.input;
+	const repeat = report.repeat;
+	// repeat>1 时把「每轮通过率」直接打出来：单看均值会把波动藏起来
+	const spread =
+		repeat.attempts > 1
+			? `, attempts ${repeat.passRateByAttempt.map((rate) => `${(rate * 100).toFixed(1)}%`).join("/")} (range ${(repeat.passRateMin * 100).toFixed(1)}%~${(repeat.passRateMax * 100).toFixed(1)}%, flaky ${repeat.flakyInstances})`
+			: ", single attempt (no variance estimate)";
 	console.log(
-		`${report.passed}/${report.total} passed (${(report.passRate * 100).toFixed(1)}%), input tokens mean ${input.mean.toFixed(1)} median ${input.median.toFixed(1)} p90 ${input.p90.toFixed(1)}, duration median ${(report.durationMs.median / 1000).toFixed(1)}s`,
+		`${report.resolvedInstances}/${report.total} instances resolved, pass rate ${(report.passRate * 100).toFixed(1)}%${spread}, input tokens mean ${input.mean.toFixed(1)} median ${input.median.toFixed(1)} p90 ${input.p90.toFixed(1)}, duration median ${(report.durationMs.median / 1000).toFixed(1)}s`,
 	);
 	console.log(`report: ${paths.jsonPath}`);
 	console.log(`markdown: ${paths.markdownPath}`);
@@ -634,6 +705,7 @@ interface CreateManifestInput {
 	startedMs: number;
 	settings: ReturnType<typeof loadSettings>;
 	modelTier: ModelTier;
+	repeat?: number;
 	selection: ManifestSelection;
 	eval?: ManifestEvaluation;
 }
@@ -650,8 +722,38 @@ async function createManifest(
 		mainAgentTier: input.modelTier,
 		runtime: BENCHMARK_RUNTIME,
 		selection: input.selection,
+		...(input.repeat === undefined ? {} : { repeat: input.repeat }),
 		...(input.eval === undefined ? {} : { eval: input.eval }),
 	});
+}
+
+// resume 的去重键：同一题的不同尝试是独立结果，不能只按 instanceId 合并
+function progressKey(instanceId: string, attempt: number): string {
+	return `${instanceId}#${attempt}`;
+}
+
+// 该 attempt 的完整预测：新跑优先，其次复用；两者都没有的题不写入。
+// 「跑过但 patch 为空」必须写空串——官方 harness 会把它记为 empty patch，
+// 直接跳过则会被当成「没跑过」，题数对不上。
+// 导出是为了单测：这个函数决定「哪些题会被送进官方 harness」，
+// 空 patch 丢失或跨尝试串用都会让通过率失真，但不值得为它跑一次真实评测。
+export function patchEntries(
+	instances: readonly SwebenchInstance[],
+	attempt: number,
+	freshPatches: ReadonlyMap<string, string>,
+	donePatches: ReadonlyMap<string, string>,
+): PredictionEntry[] {
+	const entries: PredictionEntry[] = [];
+	for (const instance of instances) {
+		const patch =
+			freshPatches.get(instance.instance_id) ??
+			donePatches.get(progressKey(instance.instance_id, attempt));
+		if (patch === undefined) {
+			continue;
+		}
+		entries.push({ instanceId: instance.instance_id, attempt, patch });
+	}
+	return entries;
 }
 
 function resolveModelTier(

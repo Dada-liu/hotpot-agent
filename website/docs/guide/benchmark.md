@@ -21,19 +21,21 @@ hotpot-agent 内置 benchmark runner：在真实仓库上跑无交互 agent 生�
 ## SWE-bench
 
 ```bash
-# 1. 激活 venv 并导出实例
+# 1. 激活 venv 并导出实例（一次即可，不需要 --limit：默认套件自己钉住题目清单）
 source ~/swebench-venv/bin/activate
 python benchmarks/scripts/export_instances.py \
-  --dataset SWE-bench/SWE-bench_Lite --split test --limit 10 \
+  --dataset SWE-bench/SWE-bench_Lite --split test \
   --output instances.jsonl
 
-# 2. 生成 patch 并调用官方评测（默认 max_workers=1）
-pnpm bench swebench \
-  --instances-file instances.jsonl \
-  --limit 10 \
-  --eval-mode local \
-  --max-workers 1
+# 2. 跑默认套件：lite10 的 10 题，每题重复 3 次
+pnpm bench swebench --instances-file instances.jsonl
+
+# 只要一次结果，或换成自己的题集
+pnpm bench swebench --instances-file instances.jsonl --repeat 1
+pnpm bench swebench --instances-file instances.jsonl --instance-ids a__a-1,b__b-2 --repeat 3
 ```
+
+不给 `--limit` / `--instance-ids` 时跑 `suites/lite10.json` 里固定的 10 题，而不是随机抽 10 题：`--limit` 依赖实例文件的行序与 seed，换一份导出文件就会换题，两次跑批无法按题配对。
 
 默认数据集 `SWE-bench/SWE-bench_Lite`、split `test`、seed 0；`--instance-ids a,b` 可指定题目。也可 `--eval-mode remote --eval-host <主机>` 把 Docker 评测调度到远程机器。
 
@@ -41,13 +43,19 @@ pnpm bench swebench \
 
 ```text
 <output>/
-├── predictions.jsonl      # 官方预测格式（空 patch 也保留一行）
-├── official/              # harness 日志与官方 report
-├── report.json            # 聚合报告
+├── predictions-a1.jsonl   # 第 n 次尝试的官方预测（空 patch 也保留一行）
+├── official/attempt-1/    # 每次尝试独立评测：harness 日志与官方 report
+├── report.json            # 聚合报告（含逐尝试明细）
 ├── report.md              # 人读报告
 ├── cache/                 # 仓库缓存
 └── workspaces/            # 每题 worktree，跑完即清理
 ```
+
+### 为什么要重复跑
+
+同一份代码、同一个模型，单次通过率的波动很大：Lite 300 的 25 个波次里，单波通过数从 1/12 到 10/12。只跑一次，`+2pp` 和噪声无法区分。
+
+`--repeat 3` 让报告给出每轮各自的通过率、极差与 flaky 题数。判定标准是「差异是否超过同一版本自己的极差」，而不是看两个点估计谁高。10 题 ×3 约 20 元，代价可控；代价是只能分辨 10pp 量级的变化，更小的效应需要更大的题集与更多次数。
 
 ### Apple Silicon 注意
 

@@ -11,16 +11,27 @@
 | `agent-runner` | 无交互跑一个 task turn：临时 HOME、allow-all 审批（落盘审计）、plan 自动批准、超时 abort、整棵树 token 汇总 |
 | `swebench/workspace` | 仓库缓存 + 每题独立 git worktree；`capturePatch` 生成 diff（含 untracked，排除 node_modules / .hotpot） |
 | `swebench/instances` | 实例 JSONL 解析与确定性选择（limit / instance ids / seed 固定可复现） |
+| `suites` | 默认套件 `lite10.json`：固定的 10 个 instance id，不依赖 `--limit` 的洗牌结果 |
 | `swebench/evaluate` | 官方 harness 编排：local 直接执行，remote 经 rsync + tmux（无 tmux 回退 nohup） |
 | `custom/runner` | 自建题：临时 workspace + `check.mjs` 校验命令（退出码 + `expectedStdout`） |
-| `report` | `report.json` / `report.md`：通过率、平均 token、平均时长、脱敏失败列表 |
+| `report` | `report.json` / `report.md`：通过率、逐尝试波动、每题汇总、均值/中位数/p90、脱敏失败列表 |
 
 用法（前置条件与命令细节见[跑 Benchmark](/guide/benchmark)）：
 
 ```bash
-pnpm bench swebench --instances-file instances.jsonl --limit 10 --eval-mode local
+pnpm bench swebench --instances-file instances.jsonl            # lite10 × 3 次
+pnpm bench swebench --instances-file instances.jsonl --repeat 1 # 单次
 pnpm bench custom
 ```
+
+## 默认套件与重复尝试
+
+不给 `--limit` / `--instance-ids` 时跑 `suites/lite10.json` 的 10 题，每题默认重复 3 次。两件事都是为了「可比较」：
+
+- 套件用 id 清单而不是 `--limit 10`。`limit` 在实例文件的行序上洗牌再截取，换一份导出文件就会换题，前后两次无法按题配对。
+- 重复次数写进 `manifest.repeat`，与模型、commit 一起构成可比性条件。报告给出每轮通过率（`repeat.passRateByAttempt`）、极差、样本标准差与 flaky 题数；`passRate` 是尝试级平均，`resolvedInstances` 是「至少通过一次」的题数，两者分开，避免用后者掩盖稳定性下降。
+
+判定一个改动是否有效：差异要超过同一版本自己跑 k 次的极差，否则只能记 `inconclusive`。
 
 ## patch-only 基线
 
@@ -86,4 +97,4 @@ M5 的 agent 只改工作树：不安装 repo 依赖、不执行 repo 测试、�
 
 ## 遥测
 
-每题结束向遥测后台发一条 `benchmark_run`（`kind=benchmark`，独立安装 ID），字段仅 benchmark、dataset、split、instanceId、passed、durationMs 与 token 数。遥测关闭或网络失败不影响跑批与报告。
+跑批结束后按 200 条一批上报 `benchmark_run`（`kind=benchmark`，独立安装 ID），每条带 `runId`、`commit`、`model`、`tier`、`patchOnly` 等可比较条件，服务端据此把 N 条事件折成「一轮」。`--repeat k` 时事件数是题数 × k，聚合后得到的是尝试级通过率。遥测关闭或网络失败不影响跑批与报告，投递结果写回 `report.json` 的 `telemetry` 字段。

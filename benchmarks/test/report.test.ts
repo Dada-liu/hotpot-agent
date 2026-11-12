@@ -168,6 +168,85 @@ describe("buildReport", () => {
 		expect(report.tokensPerResolved).toBeNull();
 	});
 
+	it("多次尝试：每题保留每次结果，并给出每轮通过率与波动", () => {
+		// a 在 3 次里通过 2 次，b 全通过 → 每轮 100% / 100% / 50%
+		const results: InstanceResult[] = [
+			result({ instanceId: "a", attempt: 1, passed: true }),
+			result({ instanceId: "b", attempt: 1, passed: true }),
+			result({ instanceId: "a", attempt: 2, passed: true }),
+			result({ instanceId: "b", attempt: 2, passed: true }),
+			result({
+				instanceId: "a",
+				attempt: 3,
+				passed: false,
+				error: "unresolved",
+			}),
+			result({ instanceId: "b", attempt: 3, passed: true }),
+		];
+		const report = buildReport(results, undefined, {
+			suite: "swebench",
+			manifest: makeManifest({ suite: "swebench" }),
+		});
+
+		// total 是题目数，passed 是通过的尝试次数
+		expect(report.total).toBe(2);
+		expect(report.instances).toHaveLength(6);
+		expect(report.passed).toBe(5);
+		expect(report.passRate).toBeCloseTo(5 / 6);
+		// 「至少通过一次」单独给出，避免把 5/6 读成「每题都通过」
+		expect(report.resolvedInstances).toBe(2);
+
+		expect(report.repeat.attempts).toBe(3);
+		expect(report.repeat.passRateByAttempt).toEqual([1, 1, 0.5]);
+		expect(report.repeat.passRateMin).toBe(0.5);
+		expect(report.repeat.passRateMax).toBe(1);
+		expect(report.repeat.passRateMean).toBeCloseTo(5 / 6);
+		// 样本标准差（n-1）：sqrt(((1/6)^2 × 2 + (1/3)^2) / 2)
+		expect(report.repeat.passRateStdDev).toBeCloseTo(Math.sqrt(1 / 12));
+
+		const summaryA = report.perInstance.find((item) => item.instanceId === "a");
+		expect(summaryA).toMatchObject({
+			attempts: 3,
+			passed: 2,
+			flaky: true,
+		});
+		expect(summaryA?.passRate).toBeCloseTo(2 / 3);
+		// b 三次全过：不是 flaky
+		expect(
+			report.perInstance.find((item) => item.instanceId === "b"),
+		).toMatchObject({
+			flaky: false,
+		});
+		expect(report.repeat.flakyInstances).toBe(1);
+		// 只列「一次都没通过」的题：a 通过过两次，不进失败列表
+		expect(report.failures).toEqual([]);
+	});
+
+	it("多次尝试：官方 verdict 按 attempt 对齐", () => {
+		const results = [
+			result({ instanceId: "a", attempt: 1, passed: true }),
+			result({ instanceId: "a", attempt: 2, passed: true }),
+		];
+		// 第 1 次官方判定通过，第 2 次判定不通过：以官方为准，而不是 runner 的 passed
+		const report = buildReport(
+			results,
+			[
+				{ runId: "run-a1", resolved: ["a"], unresolved: [], emptyPatch: [] },
+				{ runId: "run-a2", resolved: [], unresolved: ["a"], emptyPatch: [] },
+			],
+			{ suite: "swebench", manifest: makeManifest({ suite: "swebench" }) },
+		);
+		expect(report.passed).toBe(1);
+		expect(report.perInstance[0]).toMatchObject({
+			instanceId: "a",
+			attempts: 2,
+			passed: 1,
+			flaky: true,
+		});
+		expect(report.failures).toEqual([]);
+		// 失败列表只装「一次都没通过」的题；a 的失败体现在 perInstance.flaky 与逐尝试明细里
+	});
+
 	it("失败原因中的绝对路径被脱敏", () => {
 		const report = buildReport(
 			[

@@ -80,6 +80,8 @@ export interface RunManifest {
 	models: Record<ModelTier, ModelFingerprint>;
 	mainAgentTier: ModelTier;
 	runtime: BenchmarkRuntime;
+	// 每个实例的尝试次数；缺省按 1 处理（旧清单没有这个字段）
+	repeat?: number;
 	selection: ManifestSelection;
 	eval?: ManifestEvaluation;
 }
@@ -92,6 +94,7 @@ export interface CreateRunManifestOptions {
 	models: Record<ModelTier, ModelFingerprint>;
 	mainAgentTier: ModelTier;
 	runtime: BenchmarkRuntime;
+	repeat?: number;
 	selection: ManifestSelection;
 	eval?: ManifestEvaluation;
 }
@@ -107,6 +110,7 @@ export function createRunManifest(opts: CreateRunManifestOptions): RunManifest {
 		models: opts.models,
 		mainAgentTier: opts.mainAgentTier,
 		runtime: opts.runtime,
+		...(opts.repeat === undefined ? {} : { repeat: opts.repeat }),
 		selection: opts.selection,
 		...(opts.eval === undefined ? {} : { eval: opts.eval }),
 	};
@@ -271,6 +275,8 @@ export function describeManifestDiff(a: RunManifest, b: RunManifest): string[] {
 		diffs.push(`suite: ${a.suite} -> ${b.suite}`);
 	}
 	push("runtime profile", a.runtime, b.runtime);
+	// 尝试次数不同就是不同的实验条件：k=1 与 k=3 的通过率口径不一样
+	push("repeat", a.repeat ?? 1, b.repeat ?? 1);
 	for (const tier of ["high", "medium", "low"] as const) {
 		push(`model tier ${tier}`, a.models[tier], b.models[tier]);
 	}

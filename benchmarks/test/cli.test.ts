@@ -2,7 +2,21 @@
 // 断言默认值、显式值、--help 以及未知参数/非法枚举的报错。
 
 import { describe, expect, it } from "vitest";
+import { patchEntries } from "../src/cli.ts";
 import { BENCH_USAGE, parseBenchArgs } from "../src/cli-args.ts";
+import type { SwebenchInstance } from "../src/swebench/instances.ts";
+
+function instance(instanceId: string): SwebenchInstance {
+	return {
+		instance_id: instanceId,
+		repo: "test/repo",
+		base_commit: "abc",
+		problem_statement: "x",
+		FAIL_TO_PASS: [],
+		PASS_TO_PASS: [],
+		version: "1",
+	};
+}
 
 describe("parseBenchArgs", () => {
 	it("--help 返回 help，用法包含两个 suite", () => {
@@ -71,6 +85,20 @@ describe("parseBenchArgs", () => {
 		expect(parseBenchArgs(["swebench"])).toMatchObject({ resume: false });
 	});
 
+	it("swebench 默认每个实例跑 3 次，--repeat 可覆盖", () => {
+		// 默认 3 次：10 题上的单次通过率方差是 ±1~2 题，不重复就分不清信号与噪声
+		expect(parseBenchArgs(["swebench"])).toMatchObject({ repeat: 3 });
+		expect(parseBenchArgs(["swebench", "--repeat", "5"])).toMatchObject({
+			repeat: 5,
+		});
+		expect(() => parseBenchArgs(["swebench", "--repeat", "0"])).toThrow(
+			/--repeat must be a positive integer/,
+		);
+		expect(() => parseBenchArgs(["swebench", "--repeat"])).toThrow(
+			/--repeat requires a value/,
+		);
+	});
+
 	it("merge 收集位置参数并要求 --output", () => {
 		expect(
 			parseBenchArgs(["merge", "runs/a", "runs/b", "--output", "runs/all"]),
@@ -122,5 +150,31 @@ describe("parseBenchArgs", () => {
 		expect(() => parseBenchArgs(["swebench", "--resume=yes"])).toThrow(
 			/--resume does not take a value/,
 		);
+	});
+});
+
+describe("patchEntries", () => {
+	it("保留空 patch：跑过但没产出 diff 的题不能被当成没跑过", () => {
+		const entries = patchEntries(
+			[instance("a"), instance("b")],
+			2,
+			new Map([["a", ""]]),
+			new Map([["b#2", "diff-b"]]),
+		);
+		expect(entries).toEqual([
+			{ instanceId: "a", attempt: 2, patch: "" },
+			{ instanceId: "b", attempt: 2, patch: "diff-b" },
+		]);
+	});
+
+	it("复用的 patch 只认同一尝试序号", () => {
+		const entries = patchEntries(
+			[instance("a")],
+			2,
+			new Map(),
+			new Map([["a#1", "diff-a1"]]),
+		);
+		// 第 1 次的 patch 不能顶替第 2 次：否则 resume 会把旧结果当成新尝试
+		expect(entries).toEqual([]);
 	});
 });

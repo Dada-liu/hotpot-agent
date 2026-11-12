@@ -1,0 +1,19 @@
+{
+	"name": "lite10",
+	"title": "SWE-bench Lite 10 题默认套件",
+	"note": "2026-10-19 首次验收与 2026-11-08 Lite300 跑批重叠的同一批 10 题。固定 id 而不是 --limit 10：limit 依赖实例文件的行序与 seed，换一份导出文件就会抽到不同的题，前后两次无法配对。",
+	"dataset": "SWE-bench/SWE-bench_Lite",
+	"split": "test",
+	"instanceIds": [
+		"django__django-13710",
+		"django__django-14238",
+		"django__django-15695",
+		"django__django-16595",
+		"pylint-dev__pylint-7228",
+		"sphinx-doc__sphinx-7686",
+		"sympy__sympy-13647",
+		"sympy__sympy-17139",
+		"sympy__sympy-17655",
+		"sympy__sympy-18532"
+	]
+}

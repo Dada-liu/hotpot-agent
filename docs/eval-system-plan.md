@@ -123,6 +123,12 @@ failureClass 枚举（互斥、可聚合）：`infra_error`、`agent_timeout`、
 
 不做的事：不把固定阈值写成常数分布在各处，阈值只放 baseline 文件；不用单次均值做门禁。
 
+**状态（2026-11-12）：P3-1 已落地，P3-2/P3-3/P3-4 未做。** 落地形态与本文不同，两处偏差值得记下：
+
+- 参数是 `--repeat k`（默认 3），与默认套件 `suites/lite10.json` 一起启用：不给 `--limit` / `--instance-ids` 就跑固定 10 题 × 3 次，约 20 元/轮。默认套件用 id 清单而不是 `--limit 10`，因为 limit 依赖实例文件行序与 seed，换一份导出文件就换题。
+- **不输出 `pass@k`**。`pass@k` 是「k 次里至少一次通过」，会把稳定性下降完全掩盖（3 次里 1 次 20 题、2 次 12 题 优于 稳定 15 题）。报告给的是尝试级平均通过率、每轮各自通过率、极差、样本标准差与 flaky 题数；`resolvedInstances`（至少通过一次）单独给，只用于说明，不作比较口径。
+- 尝试维度贯穿 `predictions-a<k>.jsonl` / `manifest.repeat` / `--resume` / `merge` / `report.perInstance`：官方 harness 按 instance_id 建索引，k 次尝试必须分成 k 个预测文件、k 次独立评测，不能塞进同一个文件。
+
 ### P4 覆盖 agent 自身特性（L3，关键缺口）
 
 这一阶段直接对应"评估要能作为优化功能的基础设施"。

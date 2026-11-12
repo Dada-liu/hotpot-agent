@@ -8,10 +8,20 @@ import { dirname } from "node:path";
 
 const MODEL_NAME = "hotpot-agent";
 
+// 单次跑批的旧文件名。重复尝试后每次尝试各写一个文件（见 predictionsFileName），
+// 这个常量只用于读取旧目录，新代码不再写入它。
 export const PREDICTIONS_FILE = "predictions.jsonl";
+
+// 官方 harness 按 instance_id 建索引，同一个 predictions 文件里同一题只能出现一次。
+// 所以 k 次尝试必须分成 k 个文件、分别评测，不能把它们写进同一个文件。
+export function predictionsFileName(attempt: number): string {
+	return `predictions-a${attempt}.jsonl`;
+}
 
 export interface PredictionEntry {
 	instanceId: string;
+	// 1-based 尝试序号；缺省按 1 处理
+	attempt?: number;
 	patch: string;
 }
 

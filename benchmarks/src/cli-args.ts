@@ -5,12 +5,16 @@
 import type { ModelTier } from "@hotpot/core";
 import { CUSTOM_TASK_DOMAINS, type CustomTaskDomain } from "./custom/task.ts";
 import { parseShard, type ShardSpec } from "./shard.ts";
+import { DEFAULT_SUITE_NAME } from "./suites.ts";
 
 export const DEFAULT_DATASET = "SWE-bench/SWE-bench_Lite";
 export const DEFAULT_SPLIT = "test";
 export const DEFAULT_EVAL_HOST = "macmini";
 export const DEFAULT_MAX_WORKERS = 1;
 export const DEFAULT_INSTANCES_FILE = "instances.jsonl";
+// 默认跑 3 次：单次通过率在 10 题上的方差是 ±1~2 题（10~20pp），
+// 不重复就分不清「功能有效」和「这次运气好」。
+export const DEFAULT_REPEAT = 3;
 
 export const BENCH_USAGE = `Usage: pnpm bench <swebench|custom|merge|doctor> [options]
 
@@ -30,15 +34,20 @@ swebench options:
                             (default: instances.jsonl)
   --dataset <name>          Dataset name (default: ${DEFAULT_DATASET})
   --split <name>            Dataset split (default: ${DEFAULT_SPLIT})
+  --repeat <k>              Attempts per instance, k >= 1 (default: ${DEFAULT_REPEAT})
+                            Runs report the per-attempt pass rate plus its spread.
   --limit <n>               Keep at most n instances after selection
   --instance-ids <ids>      Comma-separated instance ids (keeps the given order)
   --seed <n>                Selection seed (default: 0)
   --shard <i/n>             Run only shard i of n (interleaved; 1-based)
-  --resume                  Continue a previous run in --output, skip finished instances
+  --resume                  Continue a previous run in --output, skip finished attempts
   --eval-mode <mode>        local | remote (default: local)
   --eval-host <host>        SSH host for remote evaluation (default: ${DEFAULT_EVAL_HOST})
   --max-workers <n>         Official harness workers (default: ${DEFAULT_MAX_WORKERS})
   --workspace-root <dir>    Worktree root (default: <output>/workspaces)
+
+  Without --limit or --instance-ids, the ${DEFAULT_SUITE_NAME} suite is used (10 fixed instances).
+  Keep its instance file exported once; the suite only pins which ids to run.
 
 custom options:
   --domain <domain>         finance | software | self-media (default: all tasks)
@@ -71,6 +80,8 @@ export interface SwebenchCommand {
 	limit?: number;
 	instanceIds?: string[];
 	seed: number;
+	// 每个实例重复跑几次：同一 runId 下保留每次尝试，用来估计波动
+	repeat: number;
 	// 分片：只跑 n 份里的第 i 份；manifest 会记下父集合哈希，供 merge 判定
 	shard?: ShardSpec;
 	// 续跑：复用 --output 里已完成的题，不重跑也不重评测
@@ -138,6 +149,7 @@ function parseSwebench(args: string[]): SwebenchCommand {
 		dataset: DEFAULT_DATASET,
 		split: DEFAULT_SPLIT,
 		seed: 0,
+		repeat: DEFAULT_REPEAT,
 		resume: false,
 		evalMode: "local",
 		evalHost: DEFAULT_EVAL_HOST,
@@ -165,6 +177,9 @@ function parseSwebench(args: string[]): SwebenchCommand {
 				break;
 			case "--limit":
 				command.limit = parsePositiveInt(flag, iter.value(flag, inlineValue));
+				break;
+			case "--repeat":
+				command.repeat = parsePositiveInt(flag, iter.value(flag, inlineValue));
 				break;
 			case "--instance-ids":
 				command.instanceIds = parseIds(iter.value(flag, inlineValue));

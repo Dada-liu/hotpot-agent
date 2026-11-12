@@ -25,9 +25,11 @@ import {
 	REPORT_FILE,
 	writeReport,
 } from "./report.ts";
+import type { OfficialReport } from "./swebench/evaluate.ts";
 import {
 	PREDICTIONS_FILE,
 	type PredictionEntry,
+	predictionsFileName,
 	readPredictions,
 	writePredictions,
 } from "./swebench/predictions.ts";
@@ -75,8 +77,38 @@ export async function readRunArtifacts(
 			`${dir}: ${REPORT_FILE} 与 ${MANIFEST_FILE} 不一致（runId 对不上或字段缺失）`,
 		);
 	}
-	const predictions = await readPredictions(join(dir, PREDICTIONS_FILE));
+	const predictions = await readAttemptPredictions(
+		dir,
+		parsedManifest.repeat ?? 1,
+	);
 	return { dir, manifest: parsedManifest, report, predictions };
+}
+
+// 每次尝试一个 predictions 文件；旧目录只有 predictions.jsonl，按第 1 次尝试读。
+// 同一个键（instance + attempt）只允许出现一次，否则合并会把同一题计两次。
+async function readAttemptPredictions(
+	dir: string,
+	repeat: number,
+): Promise<PredictionEntry[]> {
+	const entries: PredictionEntry[] = [];
+	for (let attempt = 1; attempt <= repeat; attempt += 1) {
+		const current = await readPredictions(
+			join(dir, predictionsFileName(attempt)),
+		);
+		if (current.length > 0) {
+			entries.push(...current.map((entry) => ({ ...entry, attempt })));
+			continue;
+		}
+		if (attempt === 1) {
+			const legacy = await readPredictions(join(dir, PREDICTIONS_FILE));
+			entries.push(...legacy.map((entry) => ({ ...entry, attempt: 1 })));
+		}
+	}
+	return entries;
+}
+
+function progressKey(instanceId: string, attempt: number): string {
+	return `${instanceId}#${attempt}`;
 }
 
 async function readManifestIfPresent(
@@ -156,38 +188,45 @@ export function mergeArtifacts(
 		}
 	}
 
-	const byId = new Map<
+	const byKey = new Map<
 		string,
 		{ result: BenchmarkReport["instances"][number]; patch: string; dir: string }
 	>();
 	for (const input of inputs) {
 		const patches = new Map(
-			input.predictions.map((entry) => [entry.instanceId, entry.patch]),
+			input.predictions.map((entry) => [
+				progressKey(entry.instanceId, entry.attempt ?? 1),
+				entry.patch,
+			]),
 		);
 		for (const result of input.report.instances) {
-			const existing = byId.get(result.instanceId);
+			const attempt = result.attempt ?? 1;
+			const key = progressKey(result.instanceId, attempt);
+			const existing = byKey.get(key);
 			if (existing !== undefined) {
-				// 同一题被两个分片都跑了：合并会把这一题计两次，passRate 直接失真
+				// 同一题的同一轮被两个分片都跑了：合并会把这次尝试计两次，passRate 直接失真
 				throw new Error(
-					`instance ${result.instanceId} 同时出现在 ${existing.dir} 与 ${input.dir}：分片重叠，拒绝合并`,
+					`instance ${result.instanceId} attempt ${attempt} 同时出现在 ${existing.dir} 与 ${input.dir}：分片重叠，拒绝合并`,
 				);
 			}
-			byId.set(result.instanceId, {
+			byKey.set(key, {
 				result,
-				patch: patches.get(result.instanceId) ?? "",
+				patch: patches.get(key) ?? "",
 				dir: input.dir,
 			});
 		}
 	}
 
-	const ids = [...byId.keys()].sort();
-	const results = ids.map((id) => {
-		const entry = byId.get(id);
-		if (entry === undefined) {
-			throw new Error(`missing instance ${id}`);
+	// 先按题目、再按尝试序号排序：同一题的 k 次尝试要连在一起，才看得出它在两次之间翻转
+	const ordered = [...byKey.values()].sort((a, b) => {
+		if (a.result.instanceId !== b.result.instanceId) {
+			return a.result.instanceId < b.result.instanceId ? -1 : 1;
 		}
-		return entry.result;
+		return (a.result.attempt ?? 1) - (b.result.attempt ?? 1);
 	});
+	const results = ordered.map((entry) => entry.result);
+	// idsHash 只覆盖题目集合：尝试次数由 manifest.repeat 记录，不参与题集哈希
+	const ids = [...new Set(results.map((result) => result.instanceId))].sort();
 
 	const startedAtMs = Math.min(
 		...inputs.map((input) => Date.parse(input.manifest.startedAt)),
@@ -217,6 +256,9 @@ export function mergeArtifacts(
 		models: base.manifest.models,
 		mainAgentTier: base.manifest.mainAgentTier,
 		runtime: base.manifest.runtime,
+		...(base.manifest.repeat === undefined
+			? {}
+			: { repeat: base.manifest.repeat }),
 		selection: {
 			dataset: base.manifest.selection.dataset,
 			split: base.manifest.selection.split,
@@ -229,14 +271,39 @@ export function mergeArtifacts(
 		...(base.manifest.eval === undefined ? {} : { eval: base.manifest.eval }),
 	};
 
-	// 分片的 verdict 已经是官方结果，这里只把它们并起来，不重新评测
-	const resolved = results.filter((r) => r.passed).map((r) => r.instanceId);
-	const unresolved = results.filter((r) => !r.passed).map((r) => r.instanceId);
-	const emptyPatch = ids.filter((id) => (byId.get(id)?.patch ?? "") === "");
+	// 分片的 verdict 已经是官方结果，这里只把它们并起来，不重新评测。
+	// 官方 report 按尝试分组：k 次尝试的通过与否必须各自对齐，混成一份会错位。
+	const maxAttempt = Math.max(...results.map((r) => r.attempt ?? 1), 1);
+	const officials: (OfficialReport | undefined)[] = Array.from(
+		{ length: maxAttempt },
+		() => undefined,
+	);
+	for (let attempt = 1; attempt <= maxAttempt; attempt += 1) {
+		const inAttempt = ordered.filter(
+			(entry) => (entry.result.attempt ?? 1) === attempt,
+		);
+		if (inAttempt.length === 0) {
+			continue;
+		}
+		officials[attempt - 1] = {
+			runId: opts.runId,
+			resolved: inAttempt
+				.filter((entry) => entry.result.passed)
+				.map((entry) => entry.result.instanceId),
+			unresolved: inAttempt
+				.filter((entry) => !entry.result.passed)
+				.map((entry) => entry.result.instanceId),
+			emptyPatch: inAttempt
+				.filter((entry) => entry.patch === "")
+				.map((entry) => entry.result.instanceId),
+		};
+	}
 
 	const report = buildReport(
 		results,
-		{ runId: opts.runId, resolved, unresolved, emptyPatch },
+		officials.every((official) => official === undefined)
+			? undefined
+			: officials,
 		{
 			suite: base.manifest.suite,
 			dataset: base.manifest.selection.dataset,
@@ -244,9 +311,10 @@ export function mergeArtifacts(
 			manifest: mergedManifest,
 		},
 	);
-	const predictions = results.map((result) => ({
-		instanceId: result.instanceId,
-		patch: byId.get(result.instanceId)?.patch ?? "",
+	const predictions = ordered.map((entry) => ({
+		instanceId: entry.result.instanceId,
+		attempt: entry.result.attempt ?? 1,
+		patch: entry.patch,
 	}));
 	return { report, predictions };
 }
@@ -272,10 +340,22 @@ export async function mergeRunDirs(
 		runId: options.runId,
 	});
 	await mkdir(options.outputDir, { recursive: true });
-	await writePredictions(
-		join(options.outputDir, PREDICTIONS_FILE),
-		predictions,
-	);
+	// 每次尝试各写一个文件：合并后的目录与单次跑批的产物形状保持一致
+	const byAttempt = new Map<number, PredictionEntry[]>();
+	for (const entry of predictions) {
+		const attempt = entry.attempt ?? 1;
+		const bucket = byAttempt.get(attempt) ?? [];
+		bucket.push(entry);
+		byAttempt.set(attempt, bucket);
+	}
+	for (const [attempt, entries] of [...byAttempt.entries()].sort(
+		(a, b) => a[0] - b[0],
+	)) {
+		await writePredictions(
+			join(options.outputDir, predictionsFileName(attempt)),
+			entries,
+		);
+	}
 	const paths = await writeReport(report, options.outputDir);
 	return { paths, report, inputs };
 }

@@ -11,9 +11,13 @@ import {
 	mergeRunDirs,
 	type RunArtifacts,
 } from "../src/merge.ts";
-import { buildReport, REPORT_FILE } from "../src/report.ts";
 import {
-	PREDICTIONS_FILE,
+	buildReport,
+	type InstanceResult,
+	REPORT_FILE,
+} from "../src/report.ts";
+import {
+	predictionsFileName,
 	writePredictions,
 } from "../src/swebench/predictions.ts";
 import { makeManifest } from "./helpers/manifest.ts";
@@ -24,6 +28,10 @@ interface MakeArtifactOptions {
 	shardIndex?: number;
 	shardCount?: number;
 	passed?: readonly string[];
+	// 每个实例跑几次；缺省 1
+	repeat?: number;
+	// 只在指定尝试上失败，格式 "a#2"
+	failingAttempts?: readonly string[];
 	// 覆盖 manifest 里的某个字段，用来构造「不可比」的场景
 	models?: NonNullable<Parameters<typeof makeManifest>[0]>["models"];
 	status?: "running" | "completed";
@@ -34,10 +42,12 @@ function makeArtifact(
 	ids: readonly string[],
 	opts: MakeArtifactOptions = {},
 ): RunArtifacts {
+	const repeat = opts.repeat ?? 1;
 	const manifest = makeManifest({
 		suite: "swebench",
 		...(opts.status === undefined ? {} : { status: opts.status }),
 		...(opts.models === undefined ? {} : { models: opts.models }),
+		...(opts.repeat === undefined ? {} : { repeat: opts.repeat }),
 		selection: {
 			dataset: "SWE-bench/SWE-bench_Lite",
 			split: "test",
@@ -49,33 +59,45 @@ function makeArtifact(
 		},
 	});
 	const passedSet = new Set(opts.passed ?? []);
-	const results = ids.map((id) => ({
-		instanceId: id,
-		passed: passedSet.has(id),
-		durationMs: 1000,
-		inputTokens: 100,
-		outputTokens: 10,
-	}));
-	const report = buildReport(
-		results,
-		{
-			runId: manifest.runId,
-			resolved: results.filter((r) => r.passed).map((r) => r.instanceId),
-			unresolved: results.filter((r) => !r.passed).map((r) => r.instanceId),
+	const failing = new Set(opts.failingAttempts ?? []);
+	const results: InstanceResult[] = [];
+	for (let attempt = 1; attempt <= repeat; attempt += 1) {
+		for (const id of ids) {
+			results.push({
+				instanceId: id,
+				attempt,
+				passed: !failing.has(`${id}#${attempt}`) && passedSet.has(id),
+				durationMs: 1000,
+				inputTokens: 100,
+				outputTokens: 10,
+			});
+		}
+	}
+	const officials = Array.from({ length: repeat }, (_, index) => {
+		const inAttempt = results.filter((item) => item.attempt === index + 1);
+		return {
+			runId: `${manifest.runId}-a${index + 1}`,
+			resolved: inAttempt.filter((r) => r.passed).map((r) => r.instanceId),
+			unresolved: inAttempt.filter((r) => !r.passed).map((r) => r.instanceId),
 			emptyPatch: [],
-		},
-		{
-			suite: "swebench",
-			dataset: "SWE-bench/SWE-bench_Lite",
-			split: "test",
-			manifest,
-		},
-	);
+		};
+	});
+	const report = buildReport(results, officials, {
+		suite: "swebench",
+		dataset: "SWE-bench/SWE-bench_Lite",
+		split: "test",
+		manifest,
+	});
+	const predictions = results.map((result) => ({
+		instanceId: result.instanceId,
+		attempt: result.attempt,
+		patch: `diff-${result.instanceId}-a${result.attempt}`,
+	}));
 	return {
 		dir,
 		manifest,
 		report,
-		predictions: ids.map((id) => ({ instanceId: id, patch: `diff-${id}` })),
+		predictions,
 	};
 }
 
@@ -175,6 +197,44 @@ describe("mergeArtifacts", () => {
 		expect(report.manifest.status).toBe("running");
 		expect(report.manifest.finishedAt).toBeUndefined();
 	});
+
+	it("重复尝试按 (instance, attempt) 合并，不把同题的两次当重叠", () => {
+		const first = makeArtifact("runs/shard-1", ["a", "b"], {
+			shardIndex: 0,
+			passed: ["a", "b"],
+			repeat: 2,
+			// a 的第 2 次没通过：合并后应保留 1/2 的通过率，而不是被覆盖
+			failingAttempts: ["a#2"],
+		});
+		const second = makeArtifact("runs/shard-2", ["c", "d"], {
+			shardIndex: 1,
+			passed: ["c", "d"],
+			repeat: 2,
+		});
+
+		const { report, predictions } = mergeArtifacts([first, second], {
+			runId: "merged-repeat",
+		});
+
+		expect(report.total).toBe(4);
+		expect(report.instances).toHaveLength(8);
+		expect(report.repeat.attempts).toBe(2);
+		// 第 1 轮 4/4；第 2 轮只有 a 失败
+		expect(report.repeat.passRateByAttempt).toEqual([1, 0.75]);
+		expect(
+			report.perInstance.find((item) => item.instanceId === "a"),
+		).toMatchObject({ attempts: 2, passed: 1, flaky: true });
+		expect(predictions).toHaveLength(8);
+		expect(report.manifest.repeat).toBe(2);
+	});
+
+	it("尝试次数不同的分片不可合并", () => {
+		const first = makeArtifact("runs/a", ["a", "b"], { repeat: 1 });
+		const second = makeArtifact("runs/b", ["c", "d"], { repeat: 3 });
+		expect(() =>
+			mergeArtifacts([first, second], { runId: "merged-r" }),
+		).toThrow(/不可合并[\s\S]*repeat/);
+	});
 });
 
 describe("mergeRunDirs", () => {
@@ -196,7 +256,10 @@ describe("mergeRunDirs", () => {
 				join(dir, REPORT_FILE),
 				`${JSON.stringify(artifact.report, null, 2)}\n`,
 			);
-			await writePredictions(join(dir, PREDICTIONS_FILE), artifact.predictions);
+			await writePredictions(
+				join(dir, predictionsFileName(1)),
+				artifact.predictions,
+			);
 		}
 
 		const output = join(root, "merged");

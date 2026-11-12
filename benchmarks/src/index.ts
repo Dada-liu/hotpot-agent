@@ -11,6 +11,7 @@ export * from "./process.ts";
 export * from "./report.ts";
 export * from "./runtime-profile.ts";
 export * from "./shard.ts";
+export * from "./suites.ts";
 export * from "./swebench/evaluate.ts";
 export * from "./swebench/instances.ts";
 export * from "./swebench/predictions.ts";

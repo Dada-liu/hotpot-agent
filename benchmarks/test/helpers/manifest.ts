@@ -50,6 +50,8 @@ export interface MakeManifestOptions {
 	models?: Record<ModelTier, ModelFingerprint>;
 	mainAgentTier?: ModelTier;
 	runtime?: BenchmarkRuntime;
+	// 每个实例的尝试次数；缺省不写字段（等价于 1）
+	repeat?: number;
 	selection?: Partial<ManifestSelection>;
 	status?: "running" | "completed" | "failed";
 }
@@ -63,6 +65,7 @@ export function makeManifest(opts: MakeManifestOptions = {}): RunManifest {
 		models: opts.models ?? TEST_MODELS,
 		mainAgentTier: opts.mainAgentTier ?? "high",
 		runtime: opts.runtime ?? BENCHMARK_RUNTIME,
+		...(opts.repeat === undefined ? {} : { repeat: opts.repeat }),
 		selection: {
 			count: 0,
 			idsHash: "ids-hash",
