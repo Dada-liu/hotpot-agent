@@ -1,13 +1,15 @@
-// 遥测事件契约（schemaVersion = 2）：字段是严格白名单，只允许数量、耗时、模型名等匿名指标。
+// 遥测事件契约（schemaVersion = 3）：字段是严格白名单，只允许数量、耗时、模型名等匿名指标。
 // 明确禁止 prompt/回复文本、工具入参/输出、文件内容、文件路径、命令、URL、用户名、仓库名。
 // 每个对象都用 .strict()，未知字段直接判为非法，避免上报端悄悄夹带新内容。
 //
-// v2 相对 v1 的唯一变化：benchmark_run 的可比条件（runId/model/tier/patchOnly）改为必填。
-// 不接受 v1 客户端上报——半套条件的跑批在服务端只能算混合通过率，宁可拒收也不要脏数据。
+// v2：benchmark_run 的可比条件（runId/model/tier/patchOnly）改为必填。
+// v3：benchmark_run 的 attempt 改为必填——默认每题重复 3 次，没有尝试序号就无法
+// 按 (runId, instanceId, attempt) 去重，也无法把「同一题的第二次」与「另一题」分开。
+// 不接受 v1/v2 客户端上报：半套条件或压平尝试的数据只能算出错误的通过率，宁可拒收。
 
 import { z } from "zod";
 
-export const SCHEMA_VERSION = 2;
+export const SCHEMA_VERSION = 3;
 
 export type TelemetryKind = "user" | "benchmark";
 export type TurnOutcome = "success" | "error" | "aborted";
@@ -155,14 +157,17 @@ export const BENCHMARK_FAILURE_CLASSES: readonly BenchmarkFailureClass[] = [
 ];
 
 // benchmark_run 同时承担「结果」与「实验条件」：
-// runId 把一轮跑批的 N 条事件绑在一起；commit/model/tier/patchOnly/tasksetHash
-// 是本地 manifest 里那套可比性条件的远端副本，缺了它们服务端只能算混合通过率。
+// runId 把一轮跑批的 N 条事件绑在一起；attempt 是同一题的第几次尝试
+// （默认每题重复 3 次，没有它就无法按 (run, instance, attempt) 去重）；
+// commit/model/tier/patchOnly/tasksetHash 是本地 manifest 那套可比性条件的远端副本。
 export interface BenchmarkRunEvent extends EventBase {
 	type: "benchmark_run";
 	benchmark: string;
 	dataset: string;
 	split: string;
 	instanceId: string;
+	// 1-based 尝试序号；同一 run 内 (instanceId, attempt) 唯一
+	attempt: number;
 	passed: boolean;
 	durationMs: number;
 	inputTokens: number;
@@ -348,9 +353,11 @@ const benchmarkRunSchema = z
 		durationMs: durationSchema,
 		inputTokens: countSchema,
 		outputTokens: countSchema,
-		// 可比较上下文：runId 把一轮跑批绑在一起，model/tier/patchOnly 决定这轮结论
-		// 对应哪个实验条件。v2 起必填——缺了它们远端无从判断两轮能否对比。
+		// 可比较上下文：runId 把一轮跑批绑在一起，attempt 标识同一题的第几次尝试
+		// （默认每题重复 3 次），model/tier/patchOnly 决定这轮结论对应哪个实验条件。
+		// v2 起 runId/model/tier/patchOnly 必填，v3 起 attempt 必填。
 		runId: z.string(),
+		attempt: z.number().int().min(1).max(1000),
 		commit: z
 			.string()
 			.regex(/^[0-9a-f]{7,40}$/)

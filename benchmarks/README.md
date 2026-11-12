@@ -238,7 +238,7 @@ pnpm bench custom --domain finance
 
 投递结果写回 `report.json` 的 `telemetry` 字段（`enabled`/`events`/`sent`/`failed`/`batches`/`dropped`），`report.md` 的 Run 段会显示 `7/300 events delivered` 这类行——**丢了多少条必须可查**。遥测关闭、endpoint 为空或网络失败都不影响跑批与报告，也不会抛错。
 
-`--repeat k` 时每条尝试一个事件（`events` 是题数 × k），同一 `instanceId` 会出现多次；服务端按 `runId` 聚合后得到的是尝试级通过率，与 `report.passRate` 口径一致。事件契约里没有 `attempt` 字段，不要从远端反推单题稳定性。
+`--repeat k` 时每条尝试一个事件（`events` 是题数 × k），同一 `instanceId` 会出现多次；每条事件带 `attempt`，服务端以 `(runId, instanceId, attempt)` 为主键做去重与聚合。远端算出的通过率是尝试级，与 `report.passRate` 同口径；`report.perInstance` 里的 flaky 判断只在本地完整，远端需要自己按题汇总。契约版本为 3，服务端不接收 v1/v2 批次，客户端与服务端必须同时升级。
 
 ## 测试
 

@@ -118,6 +118,9 @@ function buildEvent(
 		dataset: meta.dataset,
 		split: meta.split,
 		instanceId: instance.instanceId,
+		// 同一题的第几次尝试；单次跑批（custom）没有 attempt 字段，按 1 上报。
+		// 服务端以 (runId, instanceId, attempt) 为主键，缺了它就无法区分重复尝试。
+		attempt: instance.attempt ?? 1,
 		passed: instance.passed,
 		durationMs: instance.durationMs,
 		inputTokens: instance.inputTokens,

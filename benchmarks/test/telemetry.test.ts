@@ -71,6 +71,7 @@ const fetchImpl = (async (_url: unknown, init: { body?: string }) => {
 function instance(index: number): InstanceResult {
 	return {
 		instanceId: `django__django-${11000 + index}`,
+		attempt: 1,
 		passed: index % 2 === 0,
 		durationMs: 1000 + index,
 		inputTokens: 100 + index,
@@ -163,6 +164,19 @@ describe("reportBenchmarkRun", () => {
 			high: { inputTokens: 100, outputTokens: 10 },
 			low: { inputTokens: 20, outputTokens: 2 },
 		});
+	});
+
+	it("attempt 透传：同一题的三次尝试是三条独立事件", async () => {
+		await reportBenchmarkRun(
+			SETTINGS,
+			META,
+			[1, 2, 3].map((attempt) => ({ ...instance(0), attempt })),
+			{ fetchImpl },
+		);
+		const events = bodies[0]?.events ?? [];
+		expect(events.map((event) => event.attempt)).toEqual([1, 2, 3]);
+		// 同一 instanceId 出现三次：服务端以 (runId, instanceId, attempt) 为主键区分
+		expect(new Set(events.map((event) => event.instanceId)).size).toBe(1);
 	});
 
 	it("遥测关闭时不发请求，返回 enabled=false", async () => {
