@@ -2,8 +2,9 @@
 
 import type { FinishReason, LlmAdapter, LlmError, ModelInfo } from "@hotpot/ai";
 import type { ApprovalChain } from "../approval/chain.ts";
+import type { Settings } from "../config/config.ts";
 import type { HookChain } from "../hooks/hooks.ts";
-import type { ModelTier } from "../session/events.ts";
+import type { ModelTier, SessionEvent } from "../session/events.ts";
 import type { Session } from "../session/store.ts";
 import type { ToolRegistry } from "../tools/registry.ts";
 import type { ToolOutput } from "../tools/tool.ts";
@@ -28,11 +29,18 @@ export interface LoopConfig {
 	// 生命周期钩子链（M4 hooks）：pre_tool 在工具执行前、post_tool 在执行后（含失败）触发；
 	// session_start/turn_end 由装配层与回合包装层触发。默认不挂钩子
 	hooks?: HookChain;
+	// 自动压缩开关与用户级预算；缺省开启，triggerRatio=0.8、keepRecentTokens=20000
+	features?: Settings["features"];
+	compaction?: Settings["compaction"];
 }
 
 export type AgentEvent =
 	| { type: "text"; delta: string }
 	| { type: "tool_call"; name: string; input: unknown }
 	| { type: "tool_result"; name: string; output: ToolOutput }
+	| {
+			type: "compaction";
+			event: Extract<SessionEvent, { type: "compaction" }>;
+	  }
 	| { type: "done"; stopReason: FinishReason }
 	| { type: "error"; error: LlmError };

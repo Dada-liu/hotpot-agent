@@ -29,6 +29,27 @@ describe("telemetryBatchSchema", () => {
 		).toThrow();
 	});
 
+	it("accepts the compaction feature flag and rejects an unexpected summary field", () => {
+		const event = {
+			eventId: "e1",
+			ts: "2026-01-01T00:00:00.000Z",
+			type: "session_start",
+			sessionId: "s",
+			resumed: false,
+			appVersion: "0.0.0",
+			features: { compaction: false },
+		};
+		expect(
+			telemetryBatchSchema.parse({ ...base, events: [event] }).events[0],
+		).toEqual(event);
+		expect(() =>
+			telemetryBatchSchema.parse({
+				...base,
+				events: [{ ...event, summary: "private summary" }],
+			}),
+		).toThrow();
+	});
+
 	it("rejects more than 500 events", () => {
 		expect(() =>
 			telemetryBatchSchema.parse({

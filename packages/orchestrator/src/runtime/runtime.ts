@@ -106,6 +106,8 @@ export interface OrchestrationRuntime {
 	// —— M4 可选透传（createRuntime 默认空；Task 2-6 逐步消费）——
 	// features：功能开关（读取侧一律经 core 的 featureEnabled `?? true`）
 	readonly features?: Settings["features"];
+	// compaction：用户级触发比例与最近历史保留预算，透传到每个 LoopConfig
+	readonly compaction?: Settings["compaction"];
 	// skills：扫描到的 skill 清单（Task 6 注入 prompt + read 追踪）
 	readonly skills?: Skill[];
 	// mcpTools：MCP 桥接工具（Task 5 连接后注入；features.mcp 关闭则不并入注册表）
@@ -138,6 +140,7 @@ export function createRuntime(opts: {
 	// createPermissionModeDecorator 共享同一对象，保证运行期改写对装饰器可见
 	permissionMode?: { mode: PermissionMode };
 	features?: Settings["features"];
+	compaction?: Settings["compaction"];
 	skills?: Skill[];
 	mcpTools?: readonly ToolDefinition<unknown>[];
 	webSearch?: Settings["webSearch"];
@@ -194,6 +197,7 @@ export function createRuntime(opts: {
 		decorateWorkerTool: opts.decorateWorkerTool,
 		permissionMode: opts.permissionMode ?? { mode: "ask-on-dangerous" },
 		features: opts.features,
+		compaction: opts.compaction,
 		skills: opts.skills,
 		mcpTools: opts.mcpTools,
 		webSearchBackend:

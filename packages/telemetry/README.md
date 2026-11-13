@@ -52,8 +52,9 @@ schema v1 只允许以下字段（每个事件另有 `eventId`、`ts`）。所�
 | `benchmark_run` | benchmark、dataset、split、instanceId、attempt、passed、durationMs、inputTokens、outputTokens、runId、commit?、commitDirty?、model、tier、patchOnly、tasksetHash?、errorClass?、byTier? |
 
 - `benchmark_run` 的 `runId`/`attempt`/`model`/`tier`/`patchOnly` 必填：前四个把「一轮跑批」与「同一题的第几次尝试」变成服务端可聚合的键，缺一项就无法按轮比较或按尝试去重。`commit` 允许缺失（跑批目录可能不是 git 仓库）。
-- `features` 只含布尔开关：todo/hooks/skills/promptTemplates/webSearch/webFetch/mcp。
-- `turn_end` 的 token 汇总覆盖该用户 turn 的整棵 agent 树（main + worker + task），`byTier`/`byModel` 提供拆分。
+- `features` 只含布尔开关：todo/hooks/skills/promptTemplates/webSearch/webFetch/mcp/compaction。
+- `turn_end` 的 token 汇总覆盖该用户 turn 的整棵 agent 树（main + worker + task）以及压缩摘要请求，`byTier`/`byModel` 提供拆分；压缩摘要生成一条 `llm_call`，但不增加 `assistantMessages` 或 `mainSteps`。
+- durable `compaction` 折成 `feature_usage(feature="compaction")` 的 `events` 计数；摘要正文、保留点与消息内容均不上报。
 - `outcome` 为 `success` / `error` / `aborted`；`success` 必须显式观察到 `done(stop)`。
 - 批量信封：`{ schemaVersion: 3, kind, appVersion, installId, events }`，单批最多 500 条；`kind` 为 `user` 或 `benchmark`。服务端不接收 v1/v2 批次。
 

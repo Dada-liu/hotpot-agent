@@ -52,6 +52,7 @@
 ### packages/core — agent 核心
 - **turn/step 两级循环**（借鉴 dsh）：turn = 一次用户意图的完整处理；step = 一次 LLM 请求 + 它触发的工具批次。无新工作时 turn 关闭
 - **消息历史 = 会话日志投影**（借鉴 dsh/pi，最重要的一个决策）：不维护游离的内存消息数组。所有状态（消息、工具结果、系统提示词变更、队列变更）都是 append-only 事件日志里的条目，调 LLM 前由 `deriveMessages()` 从日志折叠出模型可见历史。不变量：**模型可见 ⟺ 已记录**。恢复、回放、审计、调试由此免费获得
+- **上下文自动压缩**：每个正式请求前按 `(contextWindow - maxTokens) * triggerRatio` 检查估算用量；超限先调用同一模型生成摘要并落 durable `compaction`，再投影压缩后的历史。实现见 [packages/core/src/compaction/README.md](../../packages/core/src/compaction/README.md)
 - 中断：AbortSignal 贯穿流式请求与每个工具执行；被中断的 assistant 消息把已收到的前缀落盘并标记 `interrupted: true`，不伪造历史
 - 防御细节（借鉴 pi）：`finish reason === max_tokens` 的消息，其 tool call 全部判失败不执行（参数可能被截断）
 - 系统提示词：**section 注册表**（借鉴 dsh/pi）——每段有 name + order，插件/功能模块注册自己的段；集中分配 order 常量；英文撰写，组装逻辑有单元测试
@@ -101,6 +102,7 @@ packages/core/src/
 ├── node-builtins.d.ts
 ├── agent/                   # turn/step 循环
 ├── approval/                # 审批 waterfall 与审计包装
+├── compaction/              # 上下文估算、摘要请求与 durable 压缩点
 ├── config/                  # 双层 settings 加载
 ├── frontmatter/             # 最小 frontmatter 解析（skill / prompt template 共用）
 ├── hooks/                   # 生命周期钩子链
@@ -153,6 +155,7 @@ cli / server
        ├─ collector.start()/observe()/finish() # 观察编排事件 + 从会话 JSONL 折叠
        │     · done/error/plan/agent_spawn 只判 outcome，不读内容
        │     · llm_call/tool_call/error/feature_usage 只取元数据
+       │     · compaction 摘要用量计入 llm_call/token，不计 assistantMessages
        │     · turn_end 覆盖整棵 agent 树（main + worker + task）
        └─ client.enqueue()                     # 内存队列
             └─ 阈值(50)/定时(30s)/close flush
@@ -163,7 +166,7 @@ cli / server
 
 边界与保证：
 
-- **无用户内容**：不上报 prompt/回复文本、工具入参/输出、文件内容、文件路径、命令、URL 查询参数、用户名、仓库名。错误只上报机器码与脱敏后的消息；脱敏失败时丢弃原文。
+- **无用户内容**：不上报 prompt/回复/压缩摘要文本、工具入参/输出、文件内容、文件路径、命令、URL 查询参数、用户名、仓库名。错误只上报机器码与脱敏后的消息；脱敏失败时丢弃原文。
 - **不阻塞、不失败**：`enqueue` 同步返回；`flush` 串行执行并吞掉所有网络/序列化异常；`close()` 只做一次有界尝试（不重试、不退避，并持有 ref 定时器直到最后一次请求结算），cli 的 `/exit` 不会被网络拖住，也不会因事件循环提前排空而以 code 13 退出；会话日志缺失或损坏时按空日志折叠；server 读取 settings 失败只退化为「遥测关闭」。
 - **仅用户级配置**：`telemetry.endpoint`/`token` 不接受项目级覆盖，避免恶意仓库把上报数据与凭证导向别处。
 - 后台服务在仓库外（`../hotpot-telemetry/`），M5.2 尚未开始；客户端只约定 ingest 的 HTTP 契约（`POST <endpoint>/api/v1/ingest`，`schemaVersion = 1`）。后台不进入 CLI/server 的构建产物。
@@ -184,6 +187,7 @@ cli / server
 {"type":"user_msg","id":"...","ts":"...","content":"...","agentId":"main"}
 {"type":"internal_msg","id":"...","ts":"...","content":"...","agentId":"main"}
 {"type":"assistant_msg","id":"...","ts":"...","agentId":"main","content":[...],"usage":{"input":123,"output":45},"model":"...","tier":"high"}
+{"type":"compaction","id":"...","ts":"...","agentId":"main","throughEventId":"...","summary":"...","usage":{"input":123,"output":45},"model":"...","tier":"high"}
 {"type":"request_header","id":"...","ts":"...","agentId":"...","configHash":"...","toolsHash":"..."}
 {"type":"tool_call","id":"...","ts":"...","agentId":"...","name":"bash","input":{...}}
 {"type":"tool_result","id":"...","ts":"...","toolCallId":"...","content":"...","isError":false}
@@ -201,11 +205,13 @@ cli / server
 
 `internal_msg` 是编排层内部延续提示（plan 起草/修订、批准 kickoff 等）：`deriveMessages` 按 user 角色折入模型历史，但它不是用户输入，UI 不渲染。
 
+`compaction` 的 `throughEventId` 是该 agent 被折叠历史的末尾事件 id，`summary` 是供后续模型请求使用的摘要，`usage`/`model`/`tier` 记录摘要请求本身。恢复时每个 agent 只应用最新有效压缩点：将该点及之前的历史替换为一条 user 角色摘要，再拼接其后事件；原始 JSONL 不删除。CLI 只对瞬态通知打印简短提示，Web 对 durable 日志按 id 去重且不生成摘要聊天消息。
+
 要点：
 - 一个会话内所有 agent（含子 agent）写同一文件，`agentId` 区分
 - `request_header`：config + 工具 schema 快照变化时才记新条目（借鉴 dsh），支撑缓存命中分析
 - 队列变更（`inbox/spliced`）也落盘，崩溃恢复后 steering 队列不丢（借鉴 dsh）
-- M4 新增的 `todo/set`、`hook/fired`、`skill/loaded`、`prompt/invoked`、`mcp/attached` 均**不进模型历史**（`deriveMessages` 不折叠）：todo 由 `foldTodos` 重建清单并注入提示词段，其余供审计与遥测计数
+- M4 新增的 `todo/set`、`hook/fired`、`skill/loaded`、`prompt/invoked`、`mcp/attached` 均**不进模型历史**（`deriveMessages` 不折叠）：todo 由 `foldTodos` 重建清单并注入提示词段，其余供审计与遥测计数；`compaction` 则作为模型历史的保留点参与投影
 - 崩溃最多丢最后一行；关键事件写入后 fsync
 
 ## 6. 配置体系
@@ -240,7 +246,9 @@ cli / server
 | **maxParallelTasks** | **10** | 用户级+项目级 | 并行 TaskAgent 上限 |
 | **planMaxRevisions** | **3** | 用户级+项目级 | plan 审批修订轮次上限 |
 | permission.mode | ask-on-dangerous | 仅用户级 | 权限三档：readonly（read 类放行，其余 worker 工具逐个审批）/ ask-on-dangerous（危险操作询问）/ full（全部放行）；项目级 permission 会被忽略 |
-| features.* | 全开 | 仅用户级 | M4 功能开关：todo/hooks/skills/promptTemplates/webSearch/webFetch/mcp |
+| features.* | 全开 | 仅用户级 | M4 功能开关：todo/hooks/skills/promptTemplates/webSearch/webFetch/mcp/compaction |
+| compaction.triggerRatio | 0.8 | 仅用户级 | 正式请求前估算值严格超过 `(contextWindow - maxTokens) * triggerRatio` 时触发；合法范围 `(0,1]` |
+| compaction.keepRecentTokens | 20000 | 仅用户级 | 压缩时由尾向前保留的最近历史估算预算；正整数，工具调用与结果组不拆开 |
 | hooks | 无 | 仅用户级 | Claude Code 钩子格式（SessionStart/PreToolUse/PostToolUse/Stop） |
 | webSearch | duckduckgo | 仅用户级 | web_search 后端（duckduckgo 或 custom + baseUrl/apiKey/headers） |
 | mcpServers | 无 | 仅用户级 | MCP server：stdio（command/args/env）或 streamable HTTP（url/headers） |
@@ -251,7 +259,7 @@ cli / server
 | telemetry.token | 无 | 仅用户级 | ingest 的 Bearer token，支持整串 `$ENV` 引用；默认时不带 Authorization 头 |
 | telemetry.flushIntervalMs | 30000 | 仅用户级 | 定时批量上报间隔（毫秒），非负整数，`0` 表示不定时 flush；负数仍是校验错误 |
 
-项目级可覆盖白名单：`mainAgentTier`、`maxParallelTasks`、`planMaxRevisions`；其余字段（含 models 与 permission）一律忽略。凭证和权限只从用户级读取，规避恶意仓库注入或提权风险。M4 新增字段（features/hooks/webSearch/mcpServers/skillsDirs/promptsDirs）一律仅用户级：hooks/mcpServers 涉及任意命令执行，项目级注入即 RCE；扫描目录与外发流量同理。M5 的 `telemetry` 同样仅用户级：endpoint/token 决定数据与凭证去向，项目级可写等于允许仓库劫持上报。
+项目级可覆盖白名单：`mainAgentTier`、`maxParallelTasks`、`planMaxRevisions`；其余字段（含 models、permission 与 compaction）一律忽略。凭证和权限只从用户级读取，规避恶意仓库注入或提权风险。M4 新增字段（features/compaction/hooks/webSearch/mcpServers/skillsDirs/promptsDirs）一律仅用户级：hooks/mcpServers 涉及任意命令执行，项目级注入即 RCE；扫描目录与外发流量同理。M5 的 `telemetry` 同样仅用户级：endpoint/token 决定数据与凭证去向，项目级可写等于允许仓库劫持上报。
 
 ## 7. 从 pi / dsh 借鉴的设计（汇总）
 

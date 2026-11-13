@@ -284,11 +284,12 @@ export function applyInboxSnapshot(
 	};
 }
 
-// 把一条 assistant_msg 的 usage 累加进 totals（按 tier 分桶）
+// 把 assistant_msg 或 compaction 的 usage 累加进 totals；count 只记 assistant 条数
 function accumulateUsage(
 	totals: UsageTotals,
 	usage: { input: number; output: number },
 	tier: string,
+	countMessage = true,
 ): UsageTotals {
 	const bucket = totals.byTier[tier] ?? { input: 0, output: 0, count: 0 };
 	return {
@@ -301,7 +302,7 @@ function accumulateUsage(
 			[tier]: {
 				input: bucket.input + usage.input,
 				output: bucket.output + usage.output,
-				count: bucket.count + 1,
+				count: bucket.count + (countMessage ? 1 : 0),
 			},
 		},
 	};
@@ -587,6 +588,12 @@ function reduceLog(state: ChatState, event: SessionEvent): ChatState {
 					[event.agentId]: event.todos,
 				},
 				lastTodoAgentId: event.agentId,
+			};
+		case "compaction":
+			// 摘要请求计入用量面板，但不是 assistant 消息，也不生成对话条目
+			return {
+				...state,
+				usage: accumulateUsage(state.usage, event.usage, event.tier, false),
 			};
 		// M3/M4 新增事件：与主对话渲染无关（hook/skill/prompt/mcp 由遥测与审计消费；
 		// permission/changed 为权限切换审计，档位由 wire permission 瞬态折叠），

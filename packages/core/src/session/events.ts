@@ -1,9 +1,9 @@
 // 会话事件类型（v1 定稿）：字段对齐 docs/archive/02-architecture.md 第 5 节
 // M1 只写入 meta/user_msg/assistant_msg/tool_call/tool_result/error；
 // M2 起 agent_spawn、approval/*、inbox/spliced 已由编排层（packages/orchestrator）产出。
-// M4 新增 todo/set、hook/fired、skill/loaded、prompt/invoked、mcp/attached 五个变体
-// （功能开关/钩子/skill/prompt 模板/MCP 挂载的落盘记录，均不进模型历史，
-// 与 inbox/spliced 同待遇——deriveMessages 不折叠，由各自 fold 纯函数重建状态）。
+// M4 新增 todo/set、hook/fired、skill/loaded、prompt/invoked、mcp/attached 五个审计变体
+// （均不进模型历史，与 inbox/spliced 同待遇——deriveMessages 不折叠，由各自 fold 纯函数重建状态）。
+// compaction 也属 M4 新增，但会作为最新保留点参与 deriveMessages 的消息投影。
 // agent_end 为下层 agent turn 收尾事件（web 卡片状态数据源），同样不进模型历史。
 // permission/changed 为权限模式切换审计（M1），亦不进模型历史。
 // internal_msg 为编排层内部延续提示（如 plan 起草/批准 kickoff）：deriveMessages 按
@@ -74,6 +74,18 @@ export type SessionEvent =
 			agentId: string;
 			name: string;
 			input: unknown;
+	  }
+	// compaction：throughEventId 及之前的该 agent 历史折叠为摘要；usage 记录摘要请求用量
+	| {
+			type: "compaction";
+			id: string;
+			ts: string;
+			agentId: string;
+			throughEventId: string;
+			summary: string;
+			usage: Usage;
+			model: string;
+			tier: ModelTier;
 	  }
 	// tool_result 通过 toolCallId 关联上游调用；agentId 标记结果归属（derive 按它过滤）。
 	// 默认 "main"：M1 旧日志的 tool_result 无此字段，视为主 agent 的结果（向后兼容）

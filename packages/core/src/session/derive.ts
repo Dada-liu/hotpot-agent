@@ -5,6 +5,7 @@
 // - assistant_msg → role:"assistant"（content 即 ContentBlock[]）
 // - tool_result → role:"user" 消息承载 tool_result 块；连续的 tool_result 合并为一条
 //   （Anthropic 要求同一轮的全部 tool_result 放在一条 user 消息里）
+// - compaction → 每个 agent 只应用最新有效保留点，旧段替换为 user 角色摘要
 // - 其余事件类型（meta/tool_call/approval/* 等）不进消息历史
 // - 只转换指定 agentId 的事件；tool_result 按 agentId 过滤，
 //   无 agentId 的（M1 旧日志）视为 "main"
@@ -17,7 +18,33 @@ export function deriveMessages(
 	agentId: string,
 ): Message[] {
 	const messages: Message[] = [];
-	for (const event of events) {
+	let startIndex = 0;
+	let summary: string | undefined;
+
+	// 同一 agent 可能有多次压缩；只应用最新有效保留点，旧摘要随折叠段一起跳过
+	for (const [index, event] of events.entries()) {
+		if (event.type !== "compaction" || event.agentId !== agentId) {
+			continue;
+		}
+		const throughIndex = events.findIndex(
+			(candidate, candidateIndex) =>
+				candidateIndex < index &&
+				"id" in candidate &&
+				candidate.id === event.throughEventId,
+		);
+		if (throughIndex >= 0) {
+			startIndex = throughIndex + 1;
+			summary = event.summary;
+		}
+	}
+	if (summary !== undefined) {
+		messages.push({
+			role: "user",
+			content: [{ type: "text", text: summary }],
+		});
+	}
+
+	for (const event of events.slice(startIndex)) {
 		if (
 			(event.type === "user_msg" || event.type === "internal_msg") &&
 			event.agentId === agentId

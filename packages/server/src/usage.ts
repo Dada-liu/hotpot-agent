@@ -1,6 +1,6 @@
 // usage 统计：从持久化事件流折叠 token 用量与 M4 功能用量。
-// token：只累 assistant_msg.usage 的 input/output（cacheRead/cacheWrite 存在也不展示、不计入）；
-// byTier 额外记 assistant_msg 条数 count，byAgent 按 agentId 聚合。
+// token：累计 assistant_msg 与 compaction 的 input/output（cacheRead/cacheWrite 不展示、不计入）；
+// byTier 的 count 只记 assistant_msg 条数，byAgent 按 agentId 聚合两类用量。
 // features（M4 验收「遥测能看到该功能的开关与用量」）：按事件类型与工具名计数，
 // 开关取 settings.features（默认全开）。M5 报表直接消费该结构。
 
@@ -23,14 +23,7 @@ export interface FeatureUsage {
 	toolCalls: number;
 }
 
-export type FeatureKey =
-	| "todo"
-	| "hooks"
-	| "skills"
-	| "promptTemplates"
-	| "webSearch"
-	| "webFetch"
-	| "mcp";
+export type FeatureKey = keyof NonNullable<Settings["features"]>;
 
 export type FeatureUsageSummary = Record<FeatureKey, FeatureUsage>;
 
@@ -49,6 +42,7 @@ const FEATURE_KEYS: readonly FeatureKey[] = [
 	"webSearch",
 	"webFetch",
 	"mcp",
+	"compaction",
 ];
 
 function emptyFeatureUsage(
@@ -100,7 +94,8 @@ export function summarizeUsage(
 	const byAgent: Record<string, UsageBucket> = {};
 	const featureUsage = emptyFeatureUsage(features);
 	for (const e of events) {
-		const featureByEvent = featureForEvent(e);
+		const featureByEvent =
+			e.type === "compaction" ? "compaction" : featureForEvent(e);
 		if (featureByEvent !== undefined) {
 			featureUsage[featureByEvent].events += 1;
 		}
@@ -110,12 +105,14 @@ export function summarizeUsage(
 			// 内容块为准（下方分支），避免双计
 			continue;
 		}
-		if (e.type === "assistant_msg") {
-			for (const block of e.content) {
-				if (block.type !== "tool_call") continue;
-				const feature = featureForTool(block.name);
-				if (feature !== undefined) {
-					featureUsage[feature].toolCalls += 1;
+		if (e.type === "assistant_msg" || e.type === "compaction") {
+			if (e.type === "assistant_msg") {
+				for (const block of e.content) {
+					if (block.type !== "tool_call") continue;
+					const feature = featureForTool(block.name);
+					if (feature !== undefined) {
+						featureUsage[feature].toolCalls += 1;
+					}
 				}
 			}
 			const { input, output } = e.usage;
@@ -124,7 +121,7 @@ export function summarizeUsage(
 			const tier = byTier[e.tier] ?? { input: 0, output: 0, count: 0 };
 			tier.input += input;
 			tier.output += output;
-			tier.count += 1;
+			tier.count += e.type === "assistant_msg" ? 1 : 0;
 			byTier[e.tier] = tier;
 			const agent = byAgent[e.agentId] ?? { input: 0, output: 0 };
 			agent.input += input;

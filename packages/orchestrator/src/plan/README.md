@@ -9,4 +9,5 @@ complex 任务的 plan 审批与修订循环（human-in-the-loop）。
   - `annotate`：修订轮次 +1；超过 `planMaxRevisions`（默认 3）时 yield `revision_exhausted` 并结束；否则落盘 asked/decided(denied, note=批注)，带批注进入下一轮。
   - `reject`：落盘 asked/decided(denied, note=拒绝理由)，yield denied，追加拒绝提示并跑一轮收尾 `runTurn`。
 - plan 阶段不注册工具（刻意用空注册表，不走 `createRoleRegistry("main")`——M1 起 main 标配的 read 在 plan 阶段也不可用）；内部提示写 `internal_msg`（进模型历史、UI 不渲染）。
+- 起草、修订与拒绝收尾轮均透传 `runtime.features` / `runtime.compaction`，压缩事件随 main 事件流上报。
 - `index.ts` 是本特性的对外出口。

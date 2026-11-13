@@ -103,6 +103,8 @@ export async function runAgentInline(
 			{ skills, todos },
 		),
 		tier,
+		features: runtime.features,
+		compaction: runtime.compaction,
 		hooks: runtime.hooks,
 	};
 	const failures: string[] = [];

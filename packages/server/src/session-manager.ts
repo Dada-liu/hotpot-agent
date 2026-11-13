@@ -932,6 +932,7 @@ export function createSessionManager(
 			decorateWorkerTool,
 			permissionMode: permissionHolder,
 			features: settings.features,
+			compaction: settings.compaction,
 			skills,
 			mcpTools: mcpConnections.flatMap((c) => c.tools),
 			webSearch: settings.webSearch,

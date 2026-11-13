@@ -68,6 +68,7 @@ const FEATURE_KEYS: FeatureKey[] = [
 	"webSearch",
 	"webFetch",
 	"mcp",
+	"compaction",
 ];
 
 type FeatureKey = keyof NonNullable<Settings["features"]>;
@@ -314,6 +315,32 @@ function foldTurn(
 
 	for (const event of events) {
 		switch (event.type) {
+			case "compaction": {
+				const stepIndex = stepIndexByAgent.get(event.agentId) ?? 0;
+				const input = toTokenCount(event.usage.input);
+				const output = toTokenCount(event.usage.output);
+				inputTokens += input;
+				outputTokens += output;
+				addTotals(tierTotals, event.tier, input, output);
+				addTotals(modelTotals, event.model, input, output);
+				folded.push({
+					eventId: randomUUID(),
+					ts: event.ts,
+					type: "llm_call",
+					turnId: ctx.turnId,
+					agentId: event.agentId,
+					agentRole: resolveAgentRole(event.agentId, roleByAgent),
+					tier: event.tier,
+					model: event.model,
+					inputTokens: input,
+					outputTokens: output,
+					cacheReadTokens: toTokenCount(event.usage.cacheRead),
+					cacheWriteTokens: toTokenCount(event.usage.cacheWrite),
+					stepIndex,
+				} satisfies LlmCallEvent);
+				bumpFeature(featureCounts, "compaction", "events");
+				break;
+			}
 			case "assistant_msg": {
 				const agentRole = resolveAgentRole(event.agentId, roleByAgent);
 				const stepIndex = stepIndexByAgent.get(event.agentId) ?? 0;

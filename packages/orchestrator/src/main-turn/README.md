@@ -7,5 +7,6 @@
 - 初始 turn 结束后 `detectPlanDraft` 命中（锚定本回合 user_msg 事件，steer 注入不挤出窗口）→ `state.phase="planning"`，进入 `plan/` 的 `runPlanPhase`（首轮草稿直接复用）；批准后跑执行 turn（注册表仍只挂 spawn_workers，`planApproved` 翻转后门禁放行）。未命中 → trivial/simple 已闭环，`endTurn` 收尾。
 - worker 的 spawn 经包装 `runtime.spawn` 推入本回合待产队列，主循环先 drain 再透传，保证 `agent_spawn` 先于对应 tool_result 到达且与调用序一致。
 - 传入 `inbox` 时，初始轮、plan 起草/修订轮与执行轮都在 step 顶部消费 next-step。
+- 初始轮与执行轮把 `runtime.features` / `runtime.compaction` 透传给 core，并透传 main 的瞬态 compaction 事件。
 - `onPlanApproval` 默认时 plan 阶段 fail-closed（拒绝并收尾）。
 - `index.ts` 是本特性的对外出口。

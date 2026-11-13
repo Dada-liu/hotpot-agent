@@ -882,6 +882,42 @@ describe("reduce：usage 按 tier 累计", () => {
 			count: 1,
 		});
 	});
+
+	it("assistant+compaction 累计摘要 token，cache 字段可透传且 count 不增加", () => {
+		let state = createInitialState();
+		state = reduce(
+			state,
+			log(
+				1,
+				assistantUsageMsg(
+					"a-usage",
+					"main",
+					{ input: 100, output: 50 },
+					"high",
+				),
+			),
+		);
+		const compaction: SessionEvent = {
+			type: "compaction",
+			id: "cp-usage",
+			ts,
+			agentId: "main",
+			throughEventId: "a-usage",
+			summary: "摘要不进对话",
+			usage: { input: 20, output: 8, cacheRead: 3, cacheWrite: 2 },
+			model: "m",
+			tier: "high",
+		};
+		state = reduce(state, log(2, compaction));
+		state = reduce(state, log(3, compaction));
+
+		expect(state.usage.total).toEqual({ input: 120, output: 58 });
+		expect(state.usage.byTier.high).toEqual({
+			input: 120,
+			output: 58,
+			count: 1,
+		});
+	});
 });
 
 describe("reduce：plan 卡片与正文去重", () => {
@@ -961,6 +997,39 @@ describe("reduce：plan 卡片与正文去重", () => {
 		state = reduce(state, { seq: 3, kind: "plan", phase: "approved" });
 		expect(state.pendingPlan).toBeNull();
 		expect(state.pendingApprovals).toEqual({});
+	});
+});
+
+describe("reduce：compaction 审计事件", () => {
+	it("durable compaction 保留既有对话且不生成摘要气泡，重放按 id 幂等", () => {
+		let state = createInitialState();
+		state = reduce(state, log(1, userMsg("u-1", "原始问题")));
+		state = reduce(
+			state,
+			log(2, assistantMsg("a-1", "main", [{ type: "text", text: "原回答" }])),
+		);
+		const transcript = state.transcript;
+		const event: SessionEvent = {
+			type: "compaction",
+			id: "cp-1",
+			ts,
+			agentId: "main",
+			throughEventId: "u-1",
+			summary: "只供模型恢复的摘要",
+			usage: { input: 10, output: 5 },
+			model: "m",
+			tier: "high",
+		};
+
+		state = reduce(state, log(3, event));
+		state = reduce(state, log(4, event));
+
+		expect(state.transcript).toEqual(transcript);
+		expect(state.transcript).toHaveLength(2);
+		expect(JSON.stringify(state.transcript)).not.toContain(
+			"只供模型恢复的摘要",
+		);
+		expect(state.seenEventIds.filter((id) => id === "cp-1")).toHaveLength(1);
 	});
 });
 

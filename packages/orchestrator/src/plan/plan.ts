@@ -214,6 +214,8 @@ export async function* runPlanPhase(
 		),
 		tier,
 		pollInbox,
+		features: runtime.features,
+		compaction: runtime.compaction,
 	};
 
 	// 初始草稿复用与首轮流路由同一标准（锚定窗口 + 标记校验）：「计划正文 + 同轮

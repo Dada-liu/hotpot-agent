@@ -33,8 +33,9 @@ M3 服务层：在 cli 与 orchestrator 之上提供 REST + SSE API，负责会�
 - **装配扩展**：`assemble()` 按 `settings.features` 装配 M4 能力——扫描 skill / prompt template 目录、连接 MCP server（成功落 `mcp/attached`）、构造 hooks 链并触发一次 `session_start`；功能开关、`webSearch` 后端与附件配置全部经 `createRuntime` 透传。
 - **prompt templates**：`send()` 对 `/name args` 统一展开并落 `prompt/invoked`；未知命令抛 `PromptCommandError`，REST 转 400（消息不进入回合）。
 - **新增路由**：`GET /api/sessions/:id/prompts`（`/` 补全列表）、`GET /api/sessions/:id/inbox`（steer/queue 两队列快照）。
-- **usage 扩展**：`summarizeUsage(events, features)` 增加 `features` 段（todo/hooks/skills/promptTemplates/webSearch/webFetch/mcp 的开关 + 事件/工具调用计数），满足 M4 遥测验收；M5 报表直接消费。
+- **usage 扩展**：`summarizeUsage(events, features)` 增加 `features` 段（todo/hooks/skills/promptTemplates/webSearch/webFetch/mcp/compaction 的开关 + 事件/工具调用计数），满足 M4 遥测验收；compaction 的 input/output 同时计入 total/byTier/byAgent，但 byTier.count 只记 assistant_msg；M5 报表直接消费。
 - **hooks 生命周期**：`session_start` 在装配完成时触发；pre/post tool 与 turn_end 由 core / orchestrator 的回合路径触发，server 只负责装配与关闭。
+- **上下文自动压缩**：装配时透传用户级 `features` / `compaction`；瞬态 compaction 不另发 wire 变体，durable compaction 统一经 tailer 的 `log` 路径推送与重放。
 
 ## M5 增量
 

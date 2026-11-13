@@ -113,6 +113,12 @@ function renderAgentEvent(event: AgentEvent, output: ChatOutput): void {
 			);
 			break;
 		}
+		case "compaction":
+			// 只提示压缩发生与归属；摘要正文留在 durable 事件供恢复，不打印到终端
+			output.write(
+				`\n[compaction] 已压缩上下文（agent=${event.event.agentId}）\n`,
+			);
+			break;
 		case "done":
 			// stop 是正常出口只补换行；其余 stopReason（aborted/max_tokens/error 等）按文本展示
 			output.write(
@@ -303,6 +309,7 @@ export async function runChat(opts: RunChatOptions): Promise<void> {
 		decorateWorkerTool,
 		permissionMode: permissionHolder,
 		features: settings.features,
+		compaction: settings.compaction,
 		skills,
 		mcpTools: mcpConnections.flatMap((c) => c.tools),
 		webSearch: settings.webSearch,

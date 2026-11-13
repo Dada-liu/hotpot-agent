@@ -129,6 +129,8 @@ M6 已完成：Web 端交互完善——运行中发送默认进入 next-turn �
 
    内置目录模型的协议自动选择（anthropic→anthropic-messages，其余→openai-completions）；`baseUrl` 可省略，默认走各家官方端点（openai 系默认 `https://api.openai.com/v1`，deepseek/moonshot 等第三方端点需显式填写）。项目级可在 cwd 向上任一目录放 `.hotpot/settings.json` 覆盖非凭证白名单字段（`mainAgentTier`/`maxParallelTasks`/`planMaxRevisions`），凭证和权限只从用户级读取，项目配置中的 `permission` 会被忽略。Web 设置弹窗只显示 apiKey 掩码，原样保存不会覆盖磁盘中的真实密钥。
 
+   上下文自动压缩默认开启，可在用户级配置中用 `features.compaction: false` 关闭；`compaction.triggerRatio`（默认 `0.8`，范围 `(0,1]`）控制触发比例，`compaction.keepRecentTokens`（默认 `20000`，正整数）控制保留的最近历史预算。两者均不接受项目级覆盖。
+
 2. 命令行入口为 `hotpot`（安装后直接可用；源码仓库开发态：`pnpm dev cli chat`），启动行式对话：`/exit` 退出，Ctrl-C 中断当前回合；高危命令与覆盖写会询问 `y/n` 审批（默认 n）。
 3. 会话以 JSONL 落盘在 `~/.hotpot/sessions/`；`hotpot chat --session <会话文件路径>` 恢复历史继续对话（源码仓库开发态：`pnpm dev cli chat --session <会话文件路径>`）。
 4. Web 端：安装后运行 `hotpot web` 一键启动（默认监听 http://127.0.0.1:4573，启动时生成 API token，就绪后自动打开带 `?token=` 的地址；同一 settings 配置，会话与 CLI 互通）；源码仓库开发态运行 `pnpm dev web`。浏览器会将 token 存入会话存储并清理地址栏，刷新后 REST/SSE 仍携带认证。手动访问时使用终端打印的完整地址；开发态改前端时另开 `pnpm --filter @hotpot/web dev`，Vite 将 `/api` 代理到 4573。

@@ -731,6 +731,335 @@ describe("runTurn", () => {
 	});
 });
 
+describe("runTurn compaction", () => {
+	function prepareOversized(cfg: LoopConfig): void {
+		cfg.model = { ...MODEL, contextWindow: 1000, maxTokens: 20 };
+		cfg.compaction = { triggerRatio: 0.5, keepRecentTokens: 20 };
+		cfg.registry.register({
+			name: "dummy",
+			description: "dummy tool",
+			parameters: z.object({}),
+			execute: async () => ({ content: "dummy" }),
+		});
+	}
+
+	function recordRequests(cfg: LoopConfig): ChatRequest[] {
+		const requests: ChatRequest[] = [];
+		const inner = cfg.adapter;
+		cfg.adapter = {
+			api: inner.api,
+			streamChat(
+				req: ChatRequest,
+				signal: AbortSignal,
+			): AsyncIterable<StreamEvent> {
+				requests.push(req);
+				return inner.streamChat(req, signal);
+			},
+		};
+		return requests;
+	}
+
+	async function appendUser(
+		cfg: LoopConfig,
+		id: string,
+		content: string,
+	): Promise<void> {
+		await cfg.session.append({
+			type: "user_msg",
+			id,
+			ts: TS,
+			agentId: "main",
+			content,
+		});
+	}
+
+	const SUMMARY_ROUND: StreamEvent[] = [
+		{ type: "text_delta", delta: "历史摘要" },
+		{ type: "usage", usage: { input: 30, output: 4 } },
+		{ type: "finish", reason: "stop" },
+	];
+
+	it("超过 (contextWindow-maxTokens)*triggerRatio 时先无工具摘要，再发送正式请求", async () => {
+		const cfg = await makeConfig([SUMMARY_ROUND, STOP_ROUND]);
+		prepareOversized(cfg);
+		await appendUser(cfg, "old", "旧历史".repeat(100));
+		await appendUser(cfg, "recent", "最新消息");
+		const requests = recordRequests(cfg);
+
+		const events = await collectTurn(cfg, new AbortController().signal);
+		expect(events.some((e) => e.type === "compaction")).toBe(true);
+		expect(events.at(-1)).toEqual({ type: "done", stopReason: "stop" });
+		expect(requests).toHaveLength(2);
+		expect(requests[0]?.tools).toEqual([]);
+		expect(requests[0]?.model).toBe(cfg.model);
+		expect(requests[1]?.tools.map((t) => t.name)).toEqual(["dummy"]);
+		expect(JSON.stringify(requests[0]?.messages)).toContain("旧历史");
+		expect(JSON.stringify(requests[1]?.messages)).toContain("历史摘要");
+		expect(JSON.stringify(requests[1]?.messages)).not.toContain("旧历史");
+
+		const { events: fileEvents } = await loadSession(cfg.session.filePath);
+		expect(fileEvents.map((e) => e.type)).toEqual([
+			"meta",
+			"user_msg",
+			"user_msg",
+			"user_msg",
+			"compaction",
+			"assistant_msg",
+		]);
+		const compaction = fileEvents.find((e) => e.type === "compaction");
+		expect(compaction).toMatchObject({
+			agentId: "main",
+			throughEventId: "old",
+			summary: "历史摘要",
+			usage: { input: 30, output: 4 },
+			model: "test-model",
+			tier: "high",
+		});
+	});
+
+	it("features.compaction=false 时不调用摘要模型，保留原正式请求行为", async () => {
+		const cfg = await makeConfig([STOP_ROUND]);
+		prepareOversized(cfg);
+		cfg.features = { compaction: false };
+		await appendUser(cfg, "old", "旧历史".repeat(100));
+		await appendUser(cfg, "recent", "最新消息");
+		const requests = recordRequests(cfg);
+
+		const events = await collectTurn(cfg, new AbortController().signal);
+		expect(events.at(-1)).toEqual({ type: "done", stopReason: "stop" });
+		expect(requests).toHaveLength(1);
+		expect(requests[0]?.tools.map((t) => t.name)).toEqual(["dummy"]);
+		const { events: fileEvents } = await loadSession(cfg.session.filePath);
+		expect(fileEvents.some((e) => e.type === "compaction")).toBe(false);
+	});
+
+	it("保留最近完整历史，保留边界不拆 assistant tool_call 与 tool_result 组", async () => {
+		const cfg = await makeConfig([SUMMARY_ROUND, STOP_ROUND]);
+		prepareOversized(cfg);
+		cfg.model = { ...cfg.model, contextWindow: 1600 };
+		cfg.compaction = { triggerRatio: 0.5, keepRecentTokens: 1 };
+		await appendUser(cfg, "old", "旧历史".repeat(200));
+		await appendUser(cfg, "recent", "最新消息");
+		await appendUser(cfg, "boundary-user", "边界前消息");
+		await cfg.session.append({
+			type: "assistant_msg",
+			id: "boundary-assistant",
+			ts: TS,
+			agentId: "main",
+			content: [
+				{ type: "tool_call", id: "boundary-call", name: "dummy", input: {} },
+			],
+			usage: { input: 1, output: 1 },
+			model: "test-model",
+			tier: "high",
+		});
+		await cfg.session.append({
+			type: "tool_result",
+			id: "boundary-result",
+			ts: TS,
+			agentId: "main",
+			toolCallId: "boundary-call",
+			content: "完整工具结果",
+			isError: false,
+		});
+		const requests = recordRequests(cfg);
+
+		await collectTurn(cfg, new AbortController().signal);
+		expect(requests).toHaveLength(2);
+		expect(requests[1]?.messages).toEqual([
+			{ role: "user", content: [{ type: "text", text: "历史摘要" }] },
+			{
+				role: "assistant",
+				content: [
+					{ type: "tool_call", id: "boundary-call", name: "dummy", input: {} },
+				],
+			},
+			{
+				role: "user",
+				content: [
+					{
+						type: "tool_result",
+						toolCallId: "boundary-call",
+						content: "完整工具结果",
+						isError: false,
+					},
+				],
+			},
+		]);
+	});
+
+	it("多 agent 交错时保留边界仍不拆 main 的 assistant/tool_result，也不混入 worker", async () => {
+		const cfg = await makeConfig([SUMMARY_ROUND, STOP_ROUND]);
+		prepareOversized(cfg);
+		cfg.model = { ...cfg.model, contextWindow: 1600 };
+		cfg.compaction = { triggerRatio: 0.5, keepRecentTokens: 1 };
+		await appendUser(cfg, "old-interleaved", "旧历史".repeat(200));
+		await cfg.session.append({
+			type: "assistant_msg",
+			id: "worker-assistant",
+			ts: TS,
+			agentId: "worker-1",
+			content: [
+				{ type: "tool_call", id: "worker-call", name: "dummy", input: {} },
+			],
+			usage: { input: 1, output: 1 },
+			model: "test-model",
+			tier: "low",
+		});
+		await cfg.session.append({
+			type: "tool_result",
+			id: "worker-result",
+			ts: TS,
+			agentId: "worker-1",
+			toolCallId: "worker-call",
+			content: "worker 私有结果",
+			isError: false,
+		});
+		await cfg.session.append({
+			type: "assistant_msg",
+			id: "main-boundary-assistant",
+			ts: TS,
+			agentId: "main",
+			content: [
+				{
+					type: "tool_call",
+					id: "main-boundary-call",
+					name: "dummy",
+					input: {},
+				},
+			],
+			usage: { input: 1, output: 1 },
+			model: "test-model",
+			tier: "high",
+		});
+		await cfg.session.append({
+			type: "user_msg",
+			id: "worker-message",
+			ts: TS,
+			agentId: "worker-1",
+			content: "worker 消息",
+		});
+		await cfg.session.append({
+			type: "tool_result",
+			id: "main-boundary-result",
+			ts: TS,
+			agentId: "main",
+			toolCallId: "main-boundary-call",
+			content: "main 完整工具结果",
+			isError: false,
+		});
+		const requests = recordRequests(cfg);
+
+		await collectTurn(cfg, new AbortController().signal);
+
+		expect(requests).toHaveLength(2);
+		expect(requests[1]?.messages).toEqual([
+			{ role: "user", content: [{ type: "text", text: "历史摘要" }] },
+			{
+				role: "assistant",
+				content: [
+					{
+						type: "tool_call",
+						id: "main-boundary-call",
+						name: "dummy",
+						input: {},
+					},
+				],
+			},
+			{
+				role: "user",
+				content: [
+					{
+						type: "tool_result",
+						toolCallId: "main-boundary-call",
+						content: "main 完整工具结果",
+						isError: false,
+					},
+				],
+			},
+		]);
+		expect(JSON.stringify(requests[1]?.messages)).not.toContain("worker");
+	});
+
+	it("摘要失败不落 compaction，也不继续发送已知超限的正式请求", async () => {
+		const cfg = await makeConfig([]);
+		prepareOversized(cfg);
+		await appendUser(cfg, "old", "旧历史".repeat(100));
+		await appendUser(cfg, "recent", "最新消息");
+		const requests: ChatRequest[] = [];
+		cfg.adapter = {
+			api: "failing-summary",
+			streamChat(req: ChatRequest): AsyncIterable<StreamEvent> {
+				requests.push(req);
+				return (async function* (): AsyncGenerator<StreamEvent> {
+					yield { type: "reasoning_delta", delta: "" };
+					throw new Error("summary unavailable");
+				})();
+			},
+		};
+
+		const events = await collectTurn(cfg, new AbortController().signal);
+		expect(requests).toHaveLength(1);
+		expect(requests[0]?.tools).toEqual([]);
+		expect(events.at(-1)?.type).toBe("error");
+		const { events: fileEvents } = await loadSession(cfg.session.filePath);
+		expect(fileEvents.some((e) => e.type === "compaction")).toBe(false);
+		expect(fileEvents.some((e) => e.type === "assistant_msg")).toBe(false);
+	});
+
+	it("摘要请求 abort 安全退出，不落 compaction 或 error", async () => {
+		const cfg = await makeConfig([]);
+		prepareOversized(cfg);
+		await appendUser(cfg, "old", "旧历史".repeat(100));
+		await appendUser(cfg, "recent", "最新消息");
+		const ac = new AbortController();
+		const requests: ChatRequest[] = [];
+		cfg.adapter = {
+			api: "abort-summary",
+			streamChat(req: ChatRequest): AsyncIterable<StreamEvent> {
+				requests.push(req);
+				return (async function* (): AsyncGenerator<StreamEvent> {
+					yield { type: "reasoning_delta", delta: "" };
+					ac.abort();
+					throw new DOMException("The operation was aborted", "AbortError");
+				})();
+			},
+		};
+
+		const events = await collectTurn(cfg, ac.signal);
+		expect(requests[0]?.tools).toEqual([]);
+		expect(events).toEqual([{ type: "done", stopReason: "aborted" }]);
+		const { events: fileEvents } = await loadSession(cfg.session.filePath);
+		expect(fileEvents.map((e) => e.type)).toEqual([
+			"meta",
+			"user_msg",
+			"user_msg",
+			"user_msg",
+		]);
+	});
+
+	it("压缩后仍超阈值返回 context_limit，不发送正式请求", async () => {
+		const hugeSummary: StreamEvent[] = [
+			{ type: "text_delta", delta: "仍然超限".repeat(100) },
+			{ type: "usage", usage: { input: 30, output: 100 } },
+			{ type: "finish", reason: "stop" },
+		];
+		const cfg = await makeConfig([hugeSummary, STOP_ROUND]);
+		prepareOversized(cfg);
+		await appendUser(cfg, "old", "旧历史".repeat(100));
+		await appendUser(cfg, "recent", "最新消息");
+		const requests = recordRequests(cfg);
+
+		const events = await collectTurn(cfg, new AbortController().signal);
+		expect(requests).toHaveLength(1);
+		const error = events.find((e) => e.type === "error");
+		expect(error).toMatchObject({ error: { code: "context_limit" } });
+		const { events: fileEvents } = await loadSession(cfg.session.filePath);
+		expect(fileEvents.some((e) => e.type === "compaction")).toBe(true);
+		expect(fileEvents.some((e) => e.type === "assistant_msg")).toBe(false);
+	});
+});
+
 // M4 Feature③：hooks 与 runTurn 的接线（pre 阻断 / post 失败仍触发）
 describe("runTurn hooks 接线", () => {
 	it("PreToolUse 阻断：工具不执行、isError 结果落盘、hook/fired 记 pre_tool", async () => {

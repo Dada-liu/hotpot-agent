@@ -36,3 +36,4 @@
 - **skill**：启动扫描 `<home>/skills`、`<cwd>/.hotpot/skills` 与 `skillsDirs`，清单注入三角色提示词（渐进式，模型按需 read）。
 - **MCP**：按 `settings.mcpServers` 连接（stdio/HTTP），`[mcp] attached: ...` 提示，工具桥接为 `mcp__<server>__<tool>`；退出时关闭连接。
 - **todo / web 工具**：由 orchestrator 按 `features.*` 注入 worker/task，CLI 无需额外接线。
+- **上下文自动压缩**：把用户级 `features` / `compaction` 配置透传给 runtime；main 发生压缩时打印简短的 `[compaction]` 提示，不打印摘要正文，durable 事件仍由会话日志保存并用于重启恢复。

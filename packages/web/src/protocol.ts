@@ -82,8 +82,30 @@ export type SessionEvent =
 			content: ContentBlock[];
 			// server 侧 usage/tier 恒有；镜像为可选以兼容历史日志与测试构造
 			// （tier 默认语义与 core 一致：默认视为 "high"）
-			usage?: { input: number; output: number };
+			usage?: {
+				input: number;
+				output: number;
+				cacheRead?: number;
+				cacheWrite?: number;
+			};
 			tier?: string;
+	  }
+	// compaction：durable 审计与模型历史保留点；reducer 不生成聊天消息
+	| {
+			type: "compaction";
+			id: string;
+			ts: string;
+			agentId: string;
+			throughEventId: string;
+			summary: string;
+			usage: {
+				input: number;
+				output: number;
+				cacheRead?: number;
+				cacheWrite?: number;
+			};
+			model: string;
+			tier: "high" | "medium" | "low";
 	  }
 	| {
 			type: "tool_result";

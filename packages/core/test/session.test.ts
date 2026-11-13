@@ -31,7 +31,7 @@ function nextId(): string {
 
 const TS = "2026-10-10T08:00:00.000Z";
 
-function userMsg(text: string): SessionEvent {
+function userMsg(text: string): Extract<SessionEvent, { type: "user_msg" }> {
 	return {
 		type: "user_msg",
 		id: nextId(),
@@ -344,5 +344,117 @@ describe("deriveMessages", () => {
 				},
 			],
 		});
+	});
+});
+
+describe("deriveMessages compaction", () => {
+	function compaction(
+		id: string,
+		throughEventId: string,
+		summary: string,
+		agentId = "main",
+	): SessionEvent {
+		return {
+			type: "compaction",
+			id,
+			ts: TS,
+			agentId,
+			throughEventId,
+			summary,
+			usage: { input: 100, output: 20 },
+			model: "test-model",
+			tier: "high",
+		};
+	}
+
+	it("用 user 角色摘要替代 throughEventId 及之前的旧文本", () => {
+		const old = userMsg("不应再出现的旧问题");
+		old.id = "old-user";
+		const recent = userMsg("保留的新问题");
+		const messages = deriveMessages(
+			[old, compaction("cp-1", old.id, "旧历史摘要"), recent],
+			"main",
+		);
+
+		expect(messages).toEqual([
+			{ role: "user", content: [{ type: "text", text: "旧历史摘要" }] },
+			{ role: "user", content: [{ type: "text", text: "保留的新问题" }] },
+		]);
+	});
+
+	it("重启加载同一 JSONL 后恢复的消息与内存投影一致", async () => {
+		const session = await createSession("/Users/test/project", home);
+		const old = userMsg("旧消息");
+		await session.append(old);
+		await session.append(compaction("cp-restart", old.id, "恢复摘要"));
+		await session.append(userMsg("新消息"));
+		const before = deriveMessages(
+			await loadSession(session.filePath).then((r) => r.events),
+			"main",
+		);
+
+		const resumed = await resumeSession(session.filePath);
+		expect(resumed.id).toBe(session.id);
+		const after = deriveMessages(
+			await loadSession(resumed.filePath).then((r) => r.events),
+			"main",
+		);
+		expect(after).toEqual(before);
+		expect(after.map((m) => m.content)).toEqual([
+			[{ type: "text", text: "恢复摘要" }],
+			[{ type: "text", text: "新消息" }],
+		]);
+	});
+
+	it("压缩点按 agentId 隔离，不折叠其他 agent 的历史", () => {
+		const mainOld = userMsg("main 旧消息");
+		mainOld.id = "main-old";
+		const workerOld: SessionEvent = {
+			...userMsg("worker 旧消息"),
+			id: "worker-old",
+			agentId: "worker-1",
+		};
+		const workerNew: SessionEvent = {
+			...userMsg("worker 新消息"),
+			id: "worker-new",
+			agentId: "worker-1",
+		};
+		const events = [
+			mainOld,
+			workerOld,
+			compaction("cp-main", mainOld.id, "main 摘要"),
+			userMsg("main 新消息"),
+			workerNew,
+		];
+
+		expect(deriveMessages(events, "main").flatMap((m) => m.content)).toEqual([
+			{ type: "text", text: "main 摘要" },
+			{ type: "text", text: "main 新消息" },
+		]);
+		expect(
+			deriveMessages(events, "worker-1").flatMap((m) => m.content),
+		).toEqual([
+			{ type: "text", text: "worker 旧消息" },
+			{ type: "text", text: "worker 新消息" },
+		]);
+	});
+
+	it("多次压缩只使用最新保留点和最新摘要", () => {
+		const first = userMsg("第一段");
+		first.id = "first";
+		const second = userMsg("第二段");
+		second.id = "second";
+		const events = [
+			first,
+			compaction("cp-1", first.id, "第一份摘要"),
+			second,
+			compaction("cp-2", second.id, "累积摘要"),
+			userMsg("最新问题"),
+		];
+
+		expect(deriveMessages(events, "main")).toEqual([
+			{ role: "user", content: [{ type: "text", text: "累积摘要" }] },
+			{ role: "user", content: [{ type: "text", text: "最新问题" }] },
+		]);
 	});
 });
