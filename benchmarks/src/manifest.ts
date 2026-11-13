@@ -263,9 +263,24 @@ export async function readRunManifest(path: string): Promise<RunManifest> {
 
 // 可比性判定：返回空数组表示两次跑批是同一实验条件。
 // 只比较会影响结论的字段；runId/时间戳/耗时天然不同，不参与比较。
-export function describeManifestDiff(a: RunManifest, b: RunManifest): string[] {
+export interface ManifestDiffOptions {
+	// 同一实验的 base 与 head 本来就在不同提交、不同包版本上：
+	// 比较「改动的效果」时忽略这两项，其余条件仍必须一致。
+	ignoreIdentity?: boolean;
+}
+
+const IDENTITY_FIELDS = new Set(["git commit", "agent package version"]);
+
+export function describeManifestDiff(
+	a: RunManifest,
+	b: RunManifest,
+	opts: ManifestDiffOptions = {},
+): string[] {
 	const diffs: string[] = [];
 	const push = (field: string, left: unknown, right: unknown): void => {
+		if (opts.ignoreIdentity === true && IDENTITY_FIELDS.has(field)) {
+			return;
+		}
 		if (JSON.stringify(left) !== JSON.stringify(right)) {
 			diffs.push(`${field}: ${format(left)} -> ${format(right)}`);
 		}

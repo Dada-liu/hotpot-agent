@@ -9,6 +9,7 @@
 - `changelog/` — 重大功能与架构变更记录：一变更一文件（`YYYY-MM-DD-<slug>.md`），合入 main 后立刻补写，格式与写作时机见目录内 README
 - `benchmark-authoring.md` — 自建 benchmark 题目沉淀流程（筛选历史会话 → 脱敏 → 题目化 → 校验脚本 → 回归）
 - `benchmark-reports/` — 正式跑批记录：固定数据集、模型档位、口径与逐题结果，如 [2026-11-08 SWE-bench Lite 300](./benchmark-reports/2026-11-08-swebench-lite300.md)
+- `experiments/` — 实验台账：一条记录对应一个「需求 → worktree → 跑批 → 决策」闭环，由 `pnpm exp` 维护，详见[目录说明](./experiments/README.md)
 - `superpowers/plans/` — 实现计划（按里程碑生成，如 M1 计划）
 - 实现细节下沉到各包 README，如 [packages/telemetry/README.md](../packages/telemetry/README.md)（M5.1 遥测客户端：事件白名单、脱敏、上报链路）、[benchmarks/README.md](../benchmarks/README.md)（M5 benchmark runner：SWE-bench 官方评测、自建题三类）。
 

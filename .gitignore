@@ -6,6 +6,8 @@ artifacts/
 !packages/web/src/lib/
 .superpowers/
 .worktrees/
+# 跑批产物（含实验产出的 base/head 报告）：体积大、可重跑，只提交 docs 里的人工报告
+benchmark-runs/
 # 项目级 agent skill（本机私有，不提交）
 .kimi-code/
 # 用户/agent 在 temp/ 下生成的独立项目，不纳入本仓库校验与提交

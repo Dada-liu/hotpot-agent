@@ -9,6 +9,7 @@
 	},
 	"scripts": {
 		"bench": "tsx benchmarks/src/cli.ts",
+		"exp": "tsx benchmarks/src/experiment/exp.ts",
 		"build": "pnpm --filter @hotpot/web build && pnpm --filter hotpot-agent build",
 		"dev": "tsx scripts/dev.ts",
 		"pack:npm": "pnpm build && rm -rf artifacts && pnpm --dir packages/hotpot-agent pack --pack-destination ../../artifacts",

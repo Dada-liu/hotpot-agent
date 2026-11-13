@@ -28,6 +28,7 @@ M5 benchmark runner：在真实仓库上跑无交互 agent 生成 patch，调用
 | `src/report.ts`                    | `report.json` / `report.md`：通过率、逐尝试波动、每题汇总、均值/中位数/p90、分档位 token、失败列表，内嵌运行清单 |
 | `src/telemetry.ts`                 | 一轮跑批的 `benchmark_run` 批量上报（`kind=benchmark`，独立安装 ID，按 200 条一批）                 |
 | `src/failure.ts`                   | 失败分类：把自由文本归成 `empty_patch` / `agent_aborted` / `max_tokens` 等枚举                    |
+| `src/experiment/`                  | `pnpm exp`：需求 → 一对 worktree → 跑批登记 → 决策的台账（`docs/experiments/` 是唯一事实源）        |
 | `src/process.ts`                   | 子进程执行辅助（超时、输出捕获、流式日志回调）                                                              |
 | `scripts/export_instances.py`      | 用 `datasets` 从 HuggingFace 导出实例 JSONL                                                               |
 
@@ -185,6 +186,39 @@ pnpm bench merge runs/s1 runs/s2 runs/s3 --output runs/merged
 - 汇总：只聚合逐波 `report.json`，并校验 300 行、instance 集合与 `predictions-a*.jsonl` 一致。
 
 **读报告注意**：续跑合并只改写 `report.json` 与 predictions 文件，逐波 `report.md` 与 `official/` 保留该波首次尝试的快照。通过率、token 与失败原因一律以 `report.json` 为准。
+
+## 实验脚手架（`pnpm exp`）
+
+`bench` 回答「这一版打了多少分」，`exp` 回答「这一版在跟什么比、凭什么能比、结论是什么」。一条命令把功能需求变成一对可对比的 worktree 和一条台账记录：
+
+```bash
+pnpm exp new ctx-budget \
+  --hypothesis "给上下文加预算上限，max_tokens 失败会减少" \
+  --requirement "跑批里 max_tokens 占失败的 20%" \
+  --title "上下文预算"
+```
+
+它做四件事：
+
+- 建分支 `exp/<slug>` 与 `.worktrees/<slug>`（候选代码）；
+- 建 `.worktrees/<slug>-base`，**detached 在 baseCommit**：基线锁在改动前，不会因为 main 前进或有人在主工作区改代码而漂移；
+- 写 `docs/experiments/registry.json` 与 `docs/experiments/<slug>.md`：需求、假设、主指标、护栏指标、回滚条件与套件条件一次写清；
+- 打印两段可直接执行的 `pnpm bench`，两处共用同一份 `--instances-file` 与同一个 `--repeat`。
+
+跑批产物落在 `benchmark-runs/experiments/<slug>/{base,head}`（已 gitignore），**不放在 worktree 里**：`exp close` 会删掉 worktree，产物要能活下来。
+
+```bash
+pnpm exp record ctx-budget --variant base   # 校验 manifest.commit == 台账里的 baseCommit
+pnpm exp record ctx-budget --variant head   # 校验 manifest.commit == worktree HEAD
+pnpm exp show ctx-budget                    # 环境现状、跑批、对比、下一步
+pnpm exp decide ctx-budget --verdict ship --note "10pp 提升，成本持平"
+pnpm exp close ctx-budget                   # 回收两个 worktree，保留分支
+pnpm exp list                               # 所有实验与进度（B=base 已登记，H=head）
+```
+
+`record` 拒绝登记的情形：跑批没走完（`status=running`）、跑批时工作区不干净、base 提交与台账不一致、重复次数不一致、两轮条件不同（`describeManifestDiff` 忽略 commit 与包版本后仍有差异）。这些拒绝不是保守，而是防止「拿两个不同实验的通过率相减」。
+
+两轮登记完自动给方向结论：差异必须超过 `max(两组自身极差, 100/题数)` 才是 `better`/`worse`，否则 `inconclusive`。**这不是显著性检验**（配对 McNemar 尚未实现），只用于排除明显变差；`decide` 仍是人做。台账细节见 [docs/experiments/README.md](../docs/experiments/README.md)。
 
 ## 自建题（三类）
 

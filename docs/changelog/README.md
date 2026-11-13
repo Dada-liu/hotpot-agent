@@ -48,3 +48,4 @@
 | [2026-10-25-draft-sessions.md](./2026-10-25-draft-sessions.md) | 草稿会话、权限预选与发送前附件上传 |
 | [2026-10-26-local-api-auth-and-project-permissions.md](./2026-10-26-local-api-auth-and-project-permissions.md) | 本地 API 认证、apiKey 掩码与禁止项目权限覆盖（进行中） |
 | [2026-10-26-permission-ask-on-dangerous-2.md](./2026-10-26-permission-ask-on-dangerous-2.md) | 权限档位 workspace 改名为 ask-on-dangerous（进行中） |
+| [2026-11-13-experiment-ledger.md](./2026-11-13-experiment-ledger.md) | 实验台账与 `pnpm exp` 脚手架：需求 → 一对 worktree → 跑批登记 → 决策（进行中） |

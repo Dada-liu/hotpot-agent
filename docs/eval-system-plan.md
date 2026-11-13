@@ -166,14 +166,18 @@ failureClass 枚举（互斥、可聚合）：`infra_error`、`agent_timeout`、
 ## 4. 与优化闭环的接口
 
 ```
-跑批 → analysis.md（failureClass × 诊断标记 × 成本）
+需求 → pnpm exp new（一对 worktree + 台账）
+     → 跑批 → analysis.md（failureClass × 诊断标记 × 成本）
      → 选一个桶（例如 max_tokens 26 题 + context_bloat 命中数）
      → 改一层（core 循环 / prompt / 编排）
      → smoke ×3 看方向，dev ×1 看幅度，compare 出三态结论
      → 过 gate 才能进 baseline
+     → pnpm exp decide / close（决策留痕，上线后按回滚条件观察）
 ```
 
 每个优化 PR 必须写清四件事，缺一不可：假设（哪一层、为什么有效）、指标（主指标 + 护栏指标）、套件（smoke/dev，是否重复）、compare 输出。没有这四项，"变好了"不可证伪。
+
+**状态（2026-11-13）：闭环的首尾两步已落地。** `pnpm exp new` 建 `exp/<slug>` 与 detached 在 `baseCommit` 的基线 worktree，并把需求/假设/指标/套件/回滚条件写进 `docs/experiments/registry.json`（`<slug>.md` 是渲染视图）；`pnpm exp record` 校验提交、题集与重复次数后登记跑批，两轮齐了给出 `better`/`worse`/`inconclusive`；`pnpm exp decide` 记录人的结论与理由。判定阈值是 `max(两组自身极差, 100/题数)`，`attempts < 2` 直接 inconclusive——这是 P3-2 落地前的临时口径，**不能替代配对检验**，只能用于排除明显变差。
 
 第一批用它验证的候选（既有报告已指出、且有现成信号）：P1-7 上下文预算与 step 上限（看 `maxStepInputTokens`、aborted、max_tokens 三类桶）、P1-8 请求超时与退避（看 `infra_error` 与 tool_error_rate）。这两个如果跑不出可判定的差异，说明体系还没到位，先别去碰 prompt。
 
