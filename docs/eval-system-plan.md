@@ -167,7 +167,9 @@ failureClass 枚举（互斥、可聚合）：`infra_error`、`agent_timeout`、
 
 ```
 需求 → pnpm exp new（一对 worktree + 台账）
-     → 跑批 → analysis.md（failureClass × 诊断标记 × 成本）
+     → pnpm exp run（两轮跑批 + 自动登记，失败即停/中断续跑）
+     → pnpm exp pull（回读远端遥测，与本地报告对账）
+     → analysis.md（failureClass × 诊断标记 × 成本）
      → 选一个桶（例如 max_tokens 26 题 + context_bloat 命中数）
      → 改一层（core 循环 / prompt / 编排）
      → smoke ×3 看方向，dev ×1 看幅度，compare 出三态结论
@@ -177,7 +179,9 @@ failureClass 枚举（互斥、可聚合）：`infra_error`、`agent_timeout`、
 
 每个优化 PR 必须写清四件事，缺一不可：假设（哪一层、为什么有效）、指标（主指标 + 护栏指标）、套件（smoke/dev，是否重复）、compare 输出。没有这四项，"变好了"不可证伪。
 
-**状态（2026-11-13）：闭环的首尾两步已落地。** `pnpm exp new` 建 `exp/<slug>` 与 detached 在 `baseCommit` 的基线 worktree，并把需求/假设/指标/套件/回滚条件写进 `docs/experiments/registry.json`（`<slug>.md` 是渲染视图）；`pnpm exp record` 校验提交、题集与重复次数后登记跑批，两轮齐了给出 `better`/`worse`/`inconclusive`；`pnpm exp decide` 记录人的结论与理由。判定阈值是 `max(两组自身极差, 100/题数)`，`attempts < 2` 直接 inconclusive——这是 P3-2 落地前的临时口径，**不能替代配对检验**，只能用于排除明显变差。
+**状态（2026-11-13）：需求 → 隔离实现 → 双版本跑批 → 拉数据对账 → 决策，这条链上除「跨实验基线」与「门禁」外都能用命令走完。** `pnpm exp new` 建 `exp/<slug>` 与 detached 在 `baseCommit` 的基线 worktree，把需求/假设/指标/套件/回滚条件写进 `docs/experiments/registry.json`（`<slug>.md` 是渲染视图）；`pnpm exp run` 按 base → head 顺序跑两轮 bench 并自动登记（与 `record` 同一套校验），流式日志落 `exp-run.log`，失败即停、中断可续；`pnpm exp pull` 用只读客户端按 runId 回读远端遥测，与本地 `report.json` 逐项对账后把摘要写进台账；`pnpm exp decide` 记录人的结论与理由。判定阈值是 `max(两组自身极差, 100/题数)`，`attempts < 2` 直接 inconclusive——这是 P3-2 落地前的临时口径，**不能替代配对检验**，只能用于排除明显变差。
+
+**仍未完成**（按缺口清单）：`bench compare` 与 `benchmarks/baselines/`（跨实验复用基线，避免每次都重跑 base）、配对 McNemar / 成本 bootstrap（P3-2）、dev/holdout 套件、`bench gate` 与 CI、`bench analysis` 诊断汇总、线上遥测的 commit/experimentId 归因。因此 `pull` 目前回读的是 `kind=benchmark` 跑批事件，只能证明「远端与本地说的是同一件事」，还不能验证上线后的真实用户效果。
 
 第一批用它验证的候选（既有报告已指出、且有现成信号）：P1-7 上下文预算与 step 上限（看 `maxStepInputTokens`、aborted、max_tokens 三类桶）、P1-8 请求超时与退避（看 `infra_error` 与 tool_error_rate）。这两个如果跑不出可判定的差异，说明体系还没到位，先别去碰 prompt。
 

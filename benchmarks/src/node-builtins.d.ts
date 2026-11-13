@@ -71,6 +71,8 @@ declare module "node:fs" {
 		data: string,
 		encoding?: "utf8",
 	): void;
+	// exp run 的子进程日志逐块追加：跑批可能数小时，中断时也要保留已产生的输出
+	export function appendFileSync(path: string, data: string): void;
 	export function mkdirSync(
 		path: string,
 		options?: { recursive?: boolean },

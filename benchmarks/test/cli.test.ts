@@ -30,6 +30,7 @@ describe("parseBenchArgs", () => {
 		expect(defaults).toMatchObject({
 			suite: "swebench",
 			instancesFile: "instances.jsonl",
+			suiteName: "lite10",
 			dataset: "SWE-bench/SWE-bench_Lite",
 			split: "test",
 			seed: 0,
@@ -64,6 +65,15 @@ describe("parseBenchArgs", () => {
 			maxWorkers: 3,
 			modelTier: "low",
 		});
+	});
+
+	it("--suite 显式指定固定 id 套件", () => {
+		expect(parseBenchArgs(["swebench", "--suite", "dev100"])).toMatchObject({
+			suiteName: "dev100",
+		});
+		expect(() => parseBenchArgs(["swebench", "--suite"])).toThrow(
+			/requires a value/,
+		);
 	});
 
 	it("custom 支持 --domain", () => {

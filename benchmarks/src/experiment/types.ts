@@ -84,6 +84,27 @@ export interface ExperimentDecision {
 	comparison?: ExperimentComparison;
 }
 
+// 远端遥测回读的快照：只存摘要，不存逐题明细（明细在 benchmark-runs/.../telemetry.json）。
+// 存进台账是为了让「决策时有没有核对过远端数据」这件事可查，而不是让人再开一次网页。
+export interface ExperimentTelemetryRun {
+	variant: ExperimentVariant;
+	runId: string;
+	status: "ok" | "missing" | "mismatch";
+	attempts: number | null;
+	passed: number | null;
+	passRate: number | null;
+	resolvedInstances: number | null;
+	flakyInstances: number | null;
+	diffs: string[];
+}
+
+export interface ExperimentTelemetry {
+	pulledAt: string;
+	endpoint: string;
+	window: { from: string; to: string };
+	runs: ExperimentTelemetryRun[];
+}
+
 export interface ExperimentRecord {
 	slug: string;
 	title: string;
@@ -110,6 +131,7 @@ export interface ExperimentRecord {
 	rollback: string;
 	runs: ExperimentRun[];
 	comparison?: ExperimentComparison;
+	telemetry?: ExperimentTelemetry;
 	decision?: ExperimentDecision;
 	closedAt?: string;
 }

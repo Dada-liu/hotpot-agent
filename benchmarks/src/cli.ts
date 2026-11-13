@@ -165,7 +165,7 @@ async function runSwebenchSuite(command: SwebenchCommand): Promise<number> {
 	// 用 id 清单而不是 --limit 10，才能保证换一份实例文件后仍然是同一批题，前后可配对。
 	const suite =
 		command.instanceIds === undefined && command.limit === undefined
-			? await loadBenchSuite()
+			? await loadBenchSuite(command.suiteName)
 			: undefined;
 	const selected = selectSelection(allInstances, command, suite);
 	// 分片在「父集合」之上切：idsHash 记的是全量选择，parentIdsHash 让 merge 能认亲

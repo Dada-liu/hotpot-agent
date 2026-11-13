@@ -27,8 +27,11 @@ M5 benchmark runner：在真实仓库上跑无交互 agent 生成 patch，调用
 | `src/custom/runner.ts`             | 自建题执行：临时 workspace + 校验命令                                                                       |
 | `src/report.ts`                    | `report.json` / `report.md`：通过率、逐尝试波动、每题汇总、均值/中位数/p90、分档位 token、失败列表，内嵌运行清单 |
 | `src/telemetry.ts`                 | 一轮跑批的 `benchmark_run` 批量上报（`kind=benchmark`，独立安装 ID，按 200 条一批）                 |
+| `src/telemetry-read.ts`            | 遥测**只读**客户端：admin 登录换 cookie、按 runId 拉跑批列表与逐题明细，响应按 schema 校验 |
 | `src/failure.ts`                   | 失败分类：把自由文本归成 `empty_patch` / `agent_aborted` / `max_tokens` 等枚举                    |
-| `src/experiment/`                  | `pnpm exp`：需求 → 一对 worktree → 跑批登记 → 决策的台账（`docs/experiments/` 是唯一事实源）        |
+| `src/experiment/`                  | `pnpm exp`：需求 → 一对 worktree → 双版本跑批 → 遥测回读 → 决策的台账（`docs/experiments/` 是唯一事实源） |
+| `src/experiment/run.ts`            | `exp run`：双版本跑批编排（前置校验、流式日志、失败即停、中断续跑、自动登记）                 |
+| `src/experiment/pull.ts`           | `exp pull`：按 runId 回读远端遥测，与本地 `report.json` 逐项对账                                 |
 | `src/process.ts`                   | 子进程执行辅助（超时、输出捕获、流式日志回调）                                                              |
 | `scripts/export_instances.py`      | 用 `datasets` 从 HuggingFace 导出实例 JSONL                                                               |
 
@@ -62,6 +65,9 @@ pnpm bench swebench --instances-file instances.jsonl --repeat 1
 # 换成自己的题集：显式给 id（或 --limit）后不再套用 lite10
 pnpm bench swebench --instances-file instances.jsonl \
   --instance-ids django__django-13710,sympy__sympy-13647 --repeat 3
+
+# 显式指定套件（实验台账用它保证 base/head 跑同一批题）
+pnpm bench swebench --instances-file instances.jsonl --suite lite10
 
 # 远程评测（例如在 macmini 上跑 Docker）
 pnpm bench swebench --instances-file instances.jsonl --eval-mode remote --eval-host macmini
@@ -203,18 +209,48 @@ pnpm exp new ctx-budget \
 - 建分支 `exp/<slug>` 与 `.worktrees/<slug>`（候选代码）；
 - 建 `.worktrees/<slug>-base`，**detached 在 baseCommit**：基线锁在改动前，不会因为 main 前进或有人在主工作区改代码而漂移；
 - 写 `docs/experiments/registry.json` 与 `docs/experiments/<slug>.md`：需求、假设、主指标、护栏指标、回滚条件与套件条件一次写清；
-- 打印两段可直接执行的 `pnpm bench`，两处共用同一份 `--instances-file` 与同一个 `--repeat`。
+- 打印推荐命令 `pnpm exp run <slug>`，以及等价的手工 `pnpm bench` 步骤（两处共用同一套件、实例文件与 `--repeat`）。
 
 跑批产物落在 `benchmark-runs/experiments/<slug>/{base,head}`（已 gitignore），**不放在 worktree 里**：`exp close` 会删掉 worktree，产物要能活下来。
+
+### 一条命令跑完两轮
+
+```bash
+pnpm exp run ctx-budget                 # 顺序跑 base/head，成功后自动登记两轮
+pnpm exp run ctx-budget --dry-run       # 只打印将执行的命令
+pnpm exp run ctx-budget --skip-install  # worktree 已装过依赖
+pnpm exp run ctx-budget --force         # 重跑；旧产物整目录移为 .bak-<时间>
+pnpm exp run ctx-budget --pull          # 跑完自动回读遥测（需要 admin 凭据）
+```
+
+`run` 在开跑前拦掉会白跑的条件：实例文件缺失、worktree 脏、基线 worktree 的 HEAD 不等于台账锁定的 `baseCommit`、已有产物与当前提交或 `--repeat` 对不上。执行时按 base → head 顺序，每个 worktree 先 `pnpm install` 再跑 `pnpm bench swebench --suite <台账套件> --repeat <k> --output <绝对路径>`；子进程输出同时进控制台与 `<runDir>/exp-run.log`。
+
+- **失败即停**：任一变体非 0 立即停止，且不登记任何东西——半套证据比没有证据更糟。修好后重跑同一条命令即可：已完成的变体跳过，未完成的带 `--resume` 续跑。
+- **成功后自动登记**：调用与 `exp record` 完全相同的校验逻辑（不绕过可比性判定），两轮齐了直接算出对比结论。
+- 默认串行，不做并发：两轮同时抢同一模型额度会让结果更不可比。`--eval-mode` / `--eval-host` / `--max-workers` 透传给 bench。
+
+手工路径仍然可用（`new` 会打印完整命令）：
 
 ```bash
 pnpm exp record ctx-budget --variant base   # 校验 manifest.commit == 台账里的 baseCommit
 pnpm exp record ctx-budget --variant head   # 校验 manifest.commit == worktree HEAD
-pnpm exp show ctx-budget                    # 环境现状、跑批、对比、下一步
-pnpm exp decide ctx-budget --verdict ship --note "10pp 提升，成本持平"
-pnpm exp close ctx-budget                   # 回收两个 worktree，保留分支
-pnpm exp list                               # 所有实验与进度（B=base 已登记，H=head）
 ```
+
+### 回读远端遥测
+
+```bash
+export HOTPOT_TELEMETRY_ADMIN_PASSWORD='<admin 密码>'
+pnpm exp pull ctx-budget                # 按台账里的 runId 拉远端数据并对账
+pnpm exp pull ctx-budget --json         # 机器可读；--no-save 只诊断不写台账
+pnpm exp show ctx-budget                # 环境、跑批、对比、遥测、决策
+pnpm exp decide ctx-budget --verdict ship --note "10pp 提升，成本持平"
+pnpm exp close ctx-budget                # 回收两个 worktree，保留分支
+pnpm exp list                            # 所有实验与进度（B=base 已登记，H=head）
+```
+
+`pull` 对每个 runId 比对：题数、尝试数、通过次数、通过率、`resolvedInstances`、`flaky` 题数，以及逐题 flaky 集合。汇总落在 `benchmark-runs/experiments/<slug>/telemetry.json`，摘要写进台账并渲染到 `<slug>.md`。对账状态是 `ok` / `missing`（远端查不到）/ `mismatch`（有差异），后者退出码为 1——上报丢事件时，远端通过率不该被当成决策依据。
+
+读侧认证走 `POST /api/v1/login` 换 `hp_admin` cookie（服务端读接口都在 admin 会话下）；密码只从环境变量读，不落盘、不打印。`--endpoint` / `--password-env` 可覆盖地址与变量名。客户端按 schema 校验响应，旧版本服务端返回缺字段时直接报错，不拿半套数据算结论。
 
 `record` 拒绝登记的情形：跑批没走完（`status=running`）、跑批时工作区不干净、base 提交与台账不一致、重复次数不一致、两轮条件不同（`describeManifestDiff` 忽略 commit 与包版本后仍有差异）。这些拒绝不是保守，而是防止「拿两个不同实验的通过率相减」。
 
@@ -273,6 +309,8 @@ pnpm bench custom --domain finance
 投递结果写回 `report.json` 的 `telemetry` 字段（`enabled`/`events`/`sent`/`failed`/`batches`/`dropped`），`report.md` 的 Run 段会显示 `7/300 events delivered` 这类行——**丢了多少条必须可查**。遥测关闭、endpoint 为空或网络失败都不影响跑批与报告，也不会抛错。
 
 `--repeat k` 时每条尝试一个事件（`events` 是题数 × k），同一 `instanceId` 会出现多次；每条事件带 `attempt`，服务端以 `(runId, instanceId, attempt)` 为主键做去重与聚合。远端算出的通过率是尝试级，与 `report.passRate` 同口径；`report.perInstance` 里的 flaky 判断只在本地完整，远端需要自己按题汇总。契约版本为 3，服务端不接收 v1/v2 批次，客户端与服务端必须同时升级。
+
+**读侧**：`src/telemetry-read.ts` 是独立的只读客户端（登录 → cookie → `/api/v1/benchmarks` 与 `/api/v1/benchmarks/:runId/instances`）。它与上报侧完全解耦（上报用 ingestToken，读用 admin 会话），`pnpm exp pull` 用它把远端数据拉回本地对账。查询必须带 `kind=benchmark&from&to`：服务端按事件时间过滤，且跑批列表有 `LIMIT 200`，窗口太宽或太窄都会让目标 runId 查不到。
 
 ## 测试
 

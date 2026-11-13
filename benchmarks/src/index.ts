@@ -17,5 +17,6 @@ export * from "./swebench/instances.ts";
 export * from "./swebench/predictions.ts";
 export * from "./swebench/workspace.ts";
 export * from "./telemetry.ts";
+export * from "./telemetry-read.ts";
 export * from "./tokens.ts";
 export * from "./workspace.ts";

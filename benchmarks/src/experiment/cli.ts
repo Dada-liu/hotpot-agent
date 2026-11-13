@@ -15,13 +15,7 @@ import { join, resolve } from "node:path";
 import type { ModelTier } from "@hotpot/core";
 import { DEFAULT_REPEAT } from "../cli-args.ts";
 import { DEFAULT_SUITE_NAME, loadBenchSuite } from "../suites.ts";
-import {
-	compareRuns,
-	type RunArtifacts,
-	readRunArtifacts,
-	toExperimentRun,
-	validateRun,
-} from "./compare.ts";
+import { type QueryWindow, TelemetryReadClient } from "../telemetry-read.ts";
 import {
 	addWorktree,
 	branchExists,
@@ -38,6 +32,9 @@ import {
 	readRegistry,
 	saveExperiment,
 } from "./ledger.ts";
+import { type BenchmarkReadSource, pullExperiment } from "./pull.ts";
+import { registerRun } from "./record.ts";
+import { type CommandExecutor, defaultExecutor, runExperiment } from "./run.ts";
 import {
 	EXPERIMENT_SCHEMA_VERSION,
 	type ExperimentRecord,
@@ -49,12 +46,14 @@ import {
 	findRun,
 } from "./types.ts";
 
-export const EXPERIMENT_USAGE = `Usage: pnpm exp <new|list|show|record|decide|close> [options]
+export const EXPERIMENT_USAGE = `Usage: pnpm exp <new|run|pull|list|show|record|decide|close> [options]
 
 Commands:
   new <slug>       建实验：head worktree（exp/<slug>）+ 基线 worktree + 台账
+  run <slug>       一条命令跑完两轮 bench 并登记（失败即停、中断可续）
+  pull <slug>      按台账 runId 回读远端遥测，与本地报告逐项对账
   list             列出全部实验（--status 过滤，--json 输出机器可读）
-  show <slug>      查看一个实验：环境状态、跑批、对比、决策
+  show <slug>      查看一个实验：环境状态、跑批、对比、遥测、决策
   record <slug>    登记一轮跑批（--variant base|head）
   decide <slug>    写下人的决策（--verdict ship|no-ship|inconclusive）
   close <slug>     回收 worktree（分支保留）
@@ -73,6 +72,27 @@ new options:
   --instances-file <f>   实例文件（默认 <repo>/instances.jsonl，两个 worktree 共用）
   --no-base              不建基线 worktree
   --dry-run              只打印将要执行的动作
+
+run options:
+  --variants <list>      base,head（默认按台账：有基线 worktree 就两轮都跑）
+  --skip-install         不执行 pnpm install（worktree 已装过依赖时用）
+  --force                重跑已有完成的跑批；旧产物移为 <dir>.bak-<时间>
+  --dry-run              只打印将执行的命令
+  --no-record            只跑不登记
+  --pull                 跑完自动回读遥测（需要 admin 凭据）
+  --endpoint <url>       --pull 时的遥测地址
+  --password-env <name>  --pull 时的凭据变量名
+  --eval-mode <mode>     local | remote（透传给 bench）
+  --eval-host <host>     远程评测主机
+  --max-workers <n>      官方 harness 并发数
+
+pull options:
+  --endpoint <url>       默认 HOTPOT_TELEMETRY_ENDPOINT 或内置地址
+  --password-env <name>  读取 admin 密码的环境变量名（默认 HOTPOT_TELEMETRY_ADMIN_PASSWORD）
+  --from <iso>           与 --to 成对，覆盖自动推导的查询窗口
+  --to <iso>
+  --no-save              只诊断，不写台账与 telemetry.json
+  --json                 只输出机器可读的对账结果
 
 record options:
   --variant <v>          base | head（必填）
@@ -123,6 +143,33 @@ interface ShowCommand {
 	slug: string;
 }
 
+interface RunCommand {
+	kind: "run";
+	slug: string;
+	variants?: ExperimentVariant[];
+	skipInstall: boolean;
+	force: boolean;
+	dryRun: boolean;
+	noRecord: boolean;
+	pull: boolean;
+	// --pull 时透传给只读客户端
+	endpoint?: string;
+	passwordEnv?: string;
+	evalMode?: string;
+	evalHost?: string;
+	maxWorkers?: number;
+}
+
+interface PullCommand {
+	kind: "pull";
+	slug: string;
+	endpoint?: string;
+	passwordEnv?: string;
+	window?: QueryWindow;
+	noSave: boolean;
+	json: boolean;
+}
+
 interface RecordCommand {
 	kind: "record";
 	slug: string;
@@ -149,6 +196,8 @@ type ExperimentCommand =
 	| NewCommand
 	| ListCommand
 	| ShowCommand
+	| RunCommand
+	| PullCommand
 	| RecordCommand
 	| DecideCommand
 	| CloseCommand;
@@ -158,6 +207,9 @@ export interface CliContext {
 	out: (line: string) => void;
 	err: (line: string) => void;
 	now: () => Date;
+	// 测试注入：不真跑 bench、不真发网络请求；生产路径缺省
+	exec?: CommandExecutor;
+	readSource?: BenchmarkReadSource;
 }
 
 export async function runExperimentCli(
@@ -169,6 +221,10 @@ export async function runExperimentCli(
 		out: overrides.out ?? ((line) => console.log(line)),
 		err: overrides.err ?? ((line) => console.error(line)),
 		now: overrides.now ?? (() => new Date()),
+		...(overrides.exec === undefined ? {} : { exec: overrides.exec }),
+		...(overrides.readSource === undefined
+			? {}
+			: { readSource: overrides.readSource }),
 	};
 	try {
 		const command = parseExperimentArgs(argv);
@@ -182,6 +238,10 @@ export async function runExperimentCli(
 				return await runList(command, context);
 			case "show":
 				return await runShow(command, context);
+			case "run":
+				return await runRun(command, context);
+			case "pull":
+				return await runPull(command, context);
 			case "record":
 				return await runRecord(command, context);
 			case "decide":
@@ -213,6 +273,10 @@ function parseExperimentArgs(argv: string[]): ExperimentCommand {
 			return parseList(rest);
 		case "show":
 			return { kind: "show", slug: takeSlug(rest).slug };
+		case "run":
+			return parseRun(rest);
+		case "pull":
+			return parsePull(rest);
 		case "record":
 			return parseRecord(rest);
 		case "decide":
@@ -314,6 +378,146 @@ function parseList(args: string[]): ListCommand {
 			default:
 				throw new ExperimentUsageError(`unknown option: ${flag}`);
 		}
+	}
+	return command;
+}
+
+function parseRun(args: string[]): RunCommand {
+	const { slug, flags } = takeSlug(args);
+	const command: RunCommand = {
+		kind: "run",
+		slug,
+		skipInstall: false,
+		force: false,
+		dryRun: false,
+		noRecord: false,
+		pull: false,
+	};
+	const cursor = new FlagCursor(flags);
+	for (const { flag, inline } of cursor) {
+		switch (flag) {
+			case "--variants": {
+				const raw = cursor.value(flag, inline);
+				const parts = [...new Set(raw.split(",").map((item) => item.trim()))];
+				if (
+					parts.length === 0 ||
+					parts.some((item) => item !== "base" && item !== "head")
+				) {
+					throw new ExperimentUsageError(
+						"--variants must be base,head / base / head",
+					);
+				}
+				// 固定 base 先、head 后：顺序不该靠用户输入的排列决定
+				const variants: ExperimentVariant[] = [];
+				if (parts.includes("base")) {
+					variants.push("base");
+				}
+				if (parts.includes("head")) {
+					variants.push("head");
+				}
+				command.variants = variants;
+				break;
+			}
+			case "--skip-install":
+				assertBooleanFlag(flag, inline);
+				command.skipInstall = true;
+				break;
+			case "--force":
+				assertBooleanFlag(flag, inline);
+				command.force = true;
+				break;
+			case "--dry-run":
+				assertBooleanFlag(flag, inline);
+				command.dryRun = true;
+				break;
+			case "--no-record":
+				assertBooleanFlag(flag, inline);
+				command.noRecord = true;
+				break;
+			case "--pull":
+				assertBooleanFlag(flag, inline);
+				command.pull = true;
+				break;
+			case "--endpoint":
+				command.endpoint = cursor.value(flag, inline);
+				break;
+			case "--password-env":
+				command.passwordEnv = cursor.value(flag, inline);
+				break;
+			case "--eval-mode": {
+				const value = cursor.value(flag, inline);
+				if (value !== "local" && value !== "remote") {
+					throw new ExperimentUsageError("--eval-mode must be local or remote");
+				}
+				command.evalMode = value;
+				break;
+			}
+			case "--eval-host":
+				command.evalHost = cursor.value(flag, inline);
+				break;
+			case "--max-workers":
+				command.maxWorkers = parsePositiveInt(flag, cursor.value(flag, inline));
+				break;
+			default:
+				throw new ExperimentUsageError(`unknown option: ${flag}`);
+		}
+	}
+	return command;
+}
+
+function parsePull(args: string[]): PullCommand {
+	const { slug, flags } = takeSlug(args);
+	const command: PullCommand = {
+		kind: "pull",
+		slug,
+		noSave: false,
+		json: false,
+	};
+	let from: string | undefined;
+	let to: string | undefined;
+	const cursor = new FlagCursor(flags);
+	for (const { flag, inline } of cursor) {
+		switch (flag) {
+			case "--endpoint":
+				command.endpoint = cursor.value(flag, inline);
+				break;
+			case "--password-env":
+				command.passwordEnv = cursor.value(flag, inline);
+				break;
+			case "--from":
+				from = cursor.value(flag, inline);
+				break;
+			case "--to":
+				to = cursor.value(flag, inline);
+				break;
+			case "--no-save":
+				assertBooleanFlag(flag, inline);
+				command.noSave = true;
+				break;
+			case "--json":
+				assertBooleanFlag(flag, inline);
+				command.json = true;
+				break;
+			default:
+				throw new ExperimentUsageError(`unknown option: ${flag}`);
+		}
+	}
+	if ((from === undefined) !== (to === undefined)) {
+		throw new ExperimentUsageError("--from and --to must be provided together");
+	}
+	if (from !== undefined && to !== undefined) {
+		const fromMs = Date.parse(from);
+		const toMs = Date.parse(to);
+		if (!Number.isFinite(fromMs) || !Number.isFinite(toMs)) {
+			throw new ExperimentUsageError("--from/--to must be ISO timestamps");
+		}
+		if (fromMs >= toMs) {
+			throw new ExperimentUsageError("--from must be earlier than --to");
+		}
+		command.window = {
+			from: new Date(fromMs).toISOString(),
+			to: new Date(toMs).toISOString(),
+		};
 	}
 	return command;
 }
@@ -544,6 +748,7 @@ function printNextSteps(
 	const bench = (output: string): string => {
 		const args = [
 			"pnpm bench swebench",
+			`--suite ${record.suite}`,
 			`--instances-file ${record.instancesFile}`,
 			`--repeat ${record.repeat}`,
 			...(record.modelTier === undefined
@@ -554,8 +759,11 @@ function printNextSteps(
 		return args.join(" ");
 	};
 
+	ctx.out("推荐：一条命令跑完两轮并自动登记（失败即停、中断可续）：");
+	ctx.out(`  pnpm exp run ${record.slug}`);
+	ctx.out("");
 	ctx.out(
-		"下一步（两个 worktree 各跑一轮，条件完全相同：同一份实例文件、同一重复次数）：",
+		"等价的手工步骤（两个 worktree 条件完全相同：同一套件、同一实例文件、同一重复次数）：",
 	);
 	if (record.baseWorktree !== undefined) {
 		ctx.out(
@@ -573,6 +781,7 @@ function printNextSteps(
 	ctx.out("跑完登记（会校验提交、题集、重复次数，任何一项不同都拒绝登记）：");
 	ctx.out(`  pnpm exp record ${record.slug} --variant base`);
 	ctx.out(`  pnpm exp record ${record.slug} --variant head`);
+	ctx.out(`  pnpm exp pull ${record.slug}   # 回读远端遥测并对账`);
 	ctx.out(`  pnpm exp show ${record.slug}`);
 	if (opts.dryRun) {
 		ctx.out("");
@@ -693,6 +902,25 @@ async function runShow(command: ShowCommand, ctx: CliContext): Promise<number> {
 		}
 	}
 	ctx.out("");
+	if (record.telemetry === undefined) {
+		ctx.out(
+			`遥测：尚未回读（pnpm exp pull ${record.slug} 会对账远端与本地报告）`,
+		);
+	} else {
+		const telemetry = record.telemetry;
+		ctx.out(
+			`遥测：${telemetry.pulledAt}  窗口 ${telemetry.window.from} ~ ${telemetry.window.to}`,
+		);
+		for (const run of telemetry.runs) {
+			ctx.out(
+				`  ${run.variant.padEnd(4)} ${short(run.runId)}  ${run.status}  尝试 ${run.attempts ?? "-"}  通过 ${run.passed ?? "-"}  通过率 ${run.passRate === null ? "-" : `${run.passRate.toFixed(2)}%`}  resolved ${run.resolvedInstances ?? "-"}  flaky ${run.flakyInstances ?? "-"}`,
+			);
+			for (const diff of run.diffs) {
+				ctx.out(`    - ${diff}`);
+			}
+		}
+	}
+	ctx.out("");
 	if (record.decision === undefined) {
 		ctx.out("决策：尚未写下");
 		ctx.out(
@@ -706,6 +934,123 @@ async function runShow(command: ShowCommand, ctx: CliContext): Promise<number> {
 	return 0;
 }
 
+async function runRun(command: RunCommand, ctx: CliContext): Promise<number> {
+	const repo = await resolveRepo(ctx.cwd);
+	const registry = await readRegistry(repo.mainRoot);
+	const record = findExperiment(registry, command.slug);
+	if (record === undefined) {
+		throw new Error(`台账里没有 ${command.slug}：pnpm exp list`);
+	}
+	const variants: ExperimentVariant[] =
+		command.variants ??
+		(record.baseWorktree === undefined ? ["head"] : ["base", "head"]);
+	const result = await runExperiment({
+		mainRoot: repo.mainRoot,
+		cwd: ctx.cwd,
+		record,
+		variants,
+		skipInstall: command.skipInstall,
+		force: command.force,
+		dryRun: command.dryRun,
+		noRecord: command.noRecord,
+		now: ctx.now,
+		log: ctx,
+		exec: ctx.exec ?? defaultExecutor,
+		...(command.evalMode === undefined ? {} : { evalMode: command.evalMode }),
+		...(command.evalHost === undefined ? {} : { evalHost: command.evalHost }),
+		...(command.maxWorkers === undefined
+			? {}
+			: { maxWorkers: command.maxWorkers }),
+	});
+	if (result.code !== 0 || !command.pull || !result.registered) {
+		return result.code;
+	}
+	// 跑批与登记已经成功；回读失败只是少了证据，不能把整轮实验判成失败
+	try {
+		const source = await makeReadSource(
+			command.endpoint,
+			command.passwordEnv,
+			ctx,
+		);
+		const fresh = findExperiment(
+			await readRegistry(repo.mainRoot),
+			command.slug,
+		);
+		if (fresh === undefined) {
+			throw new Error("登记后台账里找不到该实验");
+		}
+		await pullExperiment({
+			mainRoot: repo.mainRoot,
+			record: fresh,
+			source,
+			now: ctx.now,
+			log: ctx,
+		});
+	} catch (err) {
+		ctx.err(
+			`warning: 自动回读遥测失败（跑批与登记不受影响）：${err instanceof Error ? err.message : String(err)}\n  稍后可手动执行 pnpm exp pull ${command.slug}`,
+		);
+	}
+	return 0;
+}
+
+async function runPull(command: PullCommand, ctx: CliContext): Promise<number> {
+	const repo = await resolveRepo(ctx.cwd);
+	const registry = await readRegistry(repo.mainRoot);
+	const record = findExperiment(registry, command.slug);
+	if (record === undefined) {
+		throw new Error(`台账里没有 ${command.slug}：pnpm exp list`);
+	}
+	const source = await makeReadSource(
+		command.endpoint,
+		command.passwordEnv,
+		ctx,
+	);
+	const result = await pullExperiment({
+		mainRoot: repo.mainRoot,
+		record,
+		source,
+		now: ctx.now,
+		log: ctx,
+		save: !command.noSave,
+		quiet: command.json,
+		...(command.window === undefined ? {} : { window: command.window }),
+	});
+	if (command.json) {
+		ctx.out(
+			JSON.stringify(
+				{
+					endpoint: result.telemetry.endpoint,
+					pulledAt: result.telemetry.pulledAt,
+					window: result.window,
+					checks: result.checks,
+				},
+				null,
+				2,
+			),
+		);
+	}
+	const bad = result.checks.filter((check) => check.status !== "ok").length;
+	if (bad > 0 && !command.json) {
+		ctx.err("退出码 1 表示对账不一致（不是命令执行失败），差异见上方");
+	}
+	return bad > 0 ? 1 : 0;
+}
+
+async function makeReadSource(
+	endpoint: string | undefined,
+	passwordEnv: string | undefined,
+	ctx: CliContext,
+): Promise<BenchmarkReadSource> {
+	return (
+		ctx.readSource ??
+		(await TelemetryReadClient.login({
+			...(endpoint === undefined ? {} : { endpoint }),
+			...(passwordEnv === undefined ? {} : { passwordEnv }),
+		}))
+	);
+}
+
 async function runRecord(
 	command: RecordCommand,
 	ctx: CliContext,
@@ -716,115 +1061,18 @@ async function runRecord(
 	if (record === undefined) {
 		throw new Error(`台账里没有 ${command.slug}：pnpm exp list`);
 	}
-	if (
-		record.decision !== undefined &&
-		record.decision.verdict !== "inconclusive" &&
-		!command.force
-	) {
-		throw new Error(
-			`实验已决策（${record.decision.verdict}）：证据已经定稿，追加跑批会改写结论的依据。\n确实要覆盖请加 --force（决策会被丢弃），或新开一个实验`,
-		);
-	}
-	const paths = experimentPaths(repo.mainRoot, record.slug);
-	const runDir =
-		command.runDir === undefined
-			? join(paths.runsRoot, command.variant)
-			: resolve(ctx.cwd, command.runDir);
-	const artifacts = await readRunArtifacts(runDir);
-
-	const headPath = join(repo.mainRoot, record.worktree);
-	const headState = existsSync(headPath)
-		? await worktreeState(headPath)
-		: undefined;
-	const otherEntry = record.runs.find(
-		(item) => item.variant !== command.variant,
-	);
-	let other: RunArtifacts | undefined;
-	const warnings: string[] = [];
-	if (otherEntry !== undefined) {
-		try {
-			other = await readRunArtifacts(otherEntry.dir);
-		} catch (err) {
-			warnings.push(
-				`另一变体的跑批目录已不可读，跳过条件比对：${err instanceof Error ? err.message : String(err)}`,
-			);
-		}
-	}
-	const validation = validateRun({
+	const result = await registerRun({
+		mainRoot: repo.mainRoot,
+		cwd: ctx.cwd,
+		registry,
+		record,
 		variant: command.variant,
-		baseCommit: record.baseCommit,
-		repeat: record.repeat,
-		artifacts,
-		...(headState?.commit == null ? {} : { headCommit: headState.commit }),
-		...(other === undefined ? {} : { other }),
+		...(command.runDir === undefined ? {} : { runDir: command.runDir }),
+		force: command.force,
+		now: ctx.now,
+		log: ctx,
 	});
-	if (validation.errors.length > 0) {
-		ctx.err(`拒绝登记 ${command.slug} 的 ${command.variant} 跑批：`);
-		for (const error of validation.errors) {
-			ctx.err(`  - ${error}`);
-		}
-		return 1;
-	}
-	for (const warning of [...validation.warnings, ...warnings]) {
-		ctx.err(`warning: ${warning}`);
-	}
-
-	const now = ctx.now().toISOString();
-	const run = toExperimentRun(artifacts, command.variant, record.suite, now);
-	const runs: ExperimentRun[] = [
-		...record.runs.filter((item) => item.variant !== command.variant),
-		run,
-	];
-	const base = command.variant === "base" ? artifacts : other;
-	const head = command.variant === "head" ? artifacts : other;
-	const comparison =
-		base !== undefined && head !== undefined
-			? compareRuns(base, head, now)
-			: undefined;
-
-	const next: ExperimentRecord = {
-		...record,
-		runs,
-		updatedAt: now,
-		// 证据变了，旧决策就不再成立：inconclusive 可以就地重跑，
-		// ship/no-ship 要走 --force 并显式丢弃
-		status: record.decision === undefined ? record.status : "open",
-		...(comparison === undefined ? {} : { comparison }),
-	};
-	if (command.force && next.decision !== undefined) {
-		delete next.decision;
-	}
-	if (next.status === "closed") {
-		next.status = "open";
-	}
-	await saveExperiment(repo.mainRoot, registry, next);
-
-	ctx.out(
-		`已登记 ${command.slug} 的 ${command.variant}：${short(run.runId)}  ${formatRun(run)}  每轮 ${run.passRateByAttempt.map((value) => pct(value)).join(" / ")}`,
-	);
-	ctx.out(`  目录 ${run.dir}`);
-	if (next.decision === undefined && record.decision !== undefined) {
-		ctx.out("  已丢弃原决策：证据变了，结论要重新判");
-	}
-	if (comparison === undefined) {
-		const other = command.variant === "base" ? "head" : "base";
-		ctx.out(
-			`  另一变体尚未登记：pnpm exp record ${command.slug} --variant ${other}`,
-		);
-		return 0;
-	}
-	ctx.out("");
-	ctx.out(
-		`对比：${comparison.verdict}  差异 ${signed(comparison.deltaPp)}pp  阈值 ${comparison.noisePp.toFixed(1)}pp  翻转 ${comparison.improved}↑/${comparison.regressed}↓/${comparison.unchanged}=`,
-	);
-	for (const reason of comparison.reasons) {
-		ctx.out(`  - ${reason}`);
-	}
-	ctx.out("");
-	ctx.out(
-		`下一步：pnpm exp decide ${command.slug} --verdict ${comparison.verdict === "better" ? "ship" : comparison.verdict === "worse" ? "no-ship" : "inconclusive"} --note "..."（判定是人做的，这条只是建议）`,
-	);
-	return 0;
+	return result.code;
 }
 
 async function runDecide(

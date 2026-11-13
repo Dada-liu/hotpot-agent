@@ -260,9 +260,51 @@ export function renderExperimentMarkdown(record: ExperimentRecord): string {
 	}
 	lines.push("");
 
+	lines.push("## 远端遥测回读");
+	lines.push("");
+	if (record.telemetry === undefined) {
+		lines.push(
+			"尚未回读：`pnpm exp pull <slug>` 会按台账里的 runId 拉取远端数据并与本地报告逐项对账。",
+		);
+	} else {
+		const telemetry = record.telemetry;
+		lines.push(
+			`- 拉取时间：${telemetry.pulledAt}；服务：\`${telemetry.endpoint}\``,
+		);
+		lines.push(`- 查询窗口：${telemetry.window.from} ~ ${telemetry.window.to}`);
+		lines.push("");
+		lines.push(
+			"| 变体 | runId | 对账 | 尝试 | 通过 | 通过率 | resolved | flaky |",
+		);
+		lines.push("|---|---|---|---|---|---|---|---|");
+		for (const run of telemetry.runs) {
+			lines.push(
+				`| ${run.variant} | \`${run.runId}\` | ${run.status} | ${run.attempts ?? "-"} | ${run.passed ?? "-"} | ${run.passRate === null ? "-" : `${run.passRate.toFixed(2)}%`} | ${run.resolvedInstances ?? "-"} | ${run.flakyInstances ?? "-"} |`,
+			);
+		}
+		const diffs = telemetry.runs.flatMap((run) =>
+			run.diffs.map((diff) => `- ${run.variant}: ${diff}`),
+		);
+		if (diffs.length > 0) {
+			lines.push("");
+			lines.push("差异（远端数据不能直接当决策依据）：");
+			lines.push(...diffs);
+		} else {
+			lines.push("");
+			lines.push("逐项一致：远端数据与本地报告对得上。");
+		}
+	}
+	lines.push("");
+
 	lines.push("## 命令");
 	lines.push("");
 	lines.push("```bash");
+	lines.push(
+		`pnpm exp run ${record.slug}                 # 一条命令跑完两轮并登记`,
+	);
+	lines.push(
+		`pnpm exp pull ${record.slug}                # 回读远端遥测并对账`,
+	);
 	lines.push(`pnpm exp show ${record.slug}`);
 	lines.push(
 		`pnpm exp record ${record.slug} --variant base   # 默认读 ${record.slug}/base`,

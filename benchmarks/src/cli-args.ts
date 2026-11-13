@@ -38,6 +38,7 @@ swebench options:
                             Runs report the per-attempt pass rate plus its spread.
   --limit <n>               Keep at most n instances after selection
   --instance-ids <ids>      Comma-separated instance ids (keeps the given order)
+  --suite <name>            Fixed-id suite from benchmarks/suites (default: ${DEFAULT_SUITE_NAME})
   --seed <n>                Selection seed (default: 0)
   --shard <i/n>             Run only shard i of n (interleaved; 1-based)
   --resume                  Continue a previous run in --output, skip finished attempts
@@ -46,7 +47,7 @@ swebench options:
   --max-workers <n>         Official harness workers (default: ${DEFAULT_MAX_WORKERS})
   --workspace-root <dir>    Worktree root (default: <output>/workspaces)
 
-  Without --limit or --instance-ids, the ${DEFAULT_SUITE_NAME} suite is used (10 fixed instances).
+  Without --limit or --instance-ids, the suite's fixed ids are used (default: ${DEFAULT_SUITE_NAME}, 10 instances).
   Keep its instance file exported once; the suite only pins which ids to run.
 
 custom options:
@@ -75,6 +76,8 @@ export interface SwebenchCommand {
 	output?: string;
 	modelTier?: ModelTier;
 	instancesFile: string;
+	// 固定 id 清单的名字：跑批条件的一部分，实验台账据此保证 base/head 跑同一批题
+	suiteName: string;
 	dataset: string;
 	split: string;
 	limit?: number;
@@ -146,6 +149,7 @@ function parseSwebench(args: string[]): SwebenchCommand {
 	const command: SwebenchCommand = {
 		suite: "swebench",
 		instancesFile: DEFAULT_INSTANCES_FILE,
+		suiteName: DEFAULT_SUITE_NAME,
 		dataset: DEFAULT_DATASET,
 		split: DEFAULT_SPLIT,
 		seed: 0,
@@ -183,6 +187,9 @@ function parseSwebench(args: string[]): SwebenchCommand {
 				break;
 			case "--instance-ids":
 				command.instanceIds = parseIds(iter.value(flag, inlineValue));
+				break;
+			case "--suite":
+				command.suiteName = iter.value(flag, inlineValue);
 				break;
 			case "--seed":
 				command.seed = parseInteger(flag, iter.value(flag, inlineValue));

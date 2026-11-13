@@ -20,7 +20,8 @@
 | `<slug>.md` | 由记录渲染的人读视图。**不要手改**，改内容请用命令 |
 | `../.worktrees/<slug>` | 候选代码（分支 `exp/<slug>`），已 gitignore |
 | `../.worktrees/<slug>-base` | 基线代码，detached 在 `baseCommit`，已 gitignore |
-| `../../benchmark-runs/experiments/<slug>/{base,head}` | 两轮跑批产物，已 gitignore |
+| `../../benchmark-runs/experiments/<slug>/{base,head}` | 两轮跑批产物（含 `exp-run.log` 子进程日志），已 gitignore |
+| `../../benchmark-runs/experiments/<slug>/telemetry.json` | 远端回读的完整对账明细（`exp pull` 生成），已 gitignore |
 
 跑批产物刻意不放在 worktree 里：`pnpm exp close` 会删掉 worktree，产物必须能活下来。
 
@@ -29,12 +30,15 @@
 | 步骤 | 命令 | 产物 | 拦得住什么 |
 |---|---|---|---|
 | 1. 立假设 | `pnpm exp new <slug> --hypothesis "..."` | 两个 worktree + 台账记录 | 没有假设、slug 重复、分支已存在、目录残留 |
-| 2. 跑两轮 | 命令由 `new` 打印，两处共用同一份实例文件与 `--repeat` | `manifest.json` + `report.json` ×2 | 忘记装依赖、两边题集不同、重复次数不同 |
-| 3. 登记 | `pnpm exp record <slug> --variant base\|head` | `runs[]`，两轮齐了自动算对比 | 跑批没走完、工作区脏、base 提交漂移、条件不一致 |
-| 4. 看结论 | `pnpm exp show <slug>` / `pnpm exp list` | 逐题翻转与判定阈值 | —— |
-| 5. 决策 | `pnpm exp decide <slug> --verdict ... --note "..."`，之后 `pnpm exp close <slug>` | `decision`，状态转 `decided`/`closed` | 决策没有理由；结论与决策矛盾时警告 |
+| 2. 跑两轮 | `pnpm exp run <slug>` | `manifest.json` + `report.json` ×2、`exp-run.log` ×2 | 实例文件缺失、worktree 脏、基线漂移、重复次数不同、产物与提交对不上 |
+| 3. 登记 | `run` 自动完成（等价手工命令 `pnpm exp record <slug> --variant base\|head`） | `runs[]`，两轮齐了自动算对比 | 跑批没走完、工作区脏、base 提交漂移、条件不一致 |
+| 4. 回读遥测 | `pnpm exp pull <slug>` | `telemetry.json` + 台账 `telemetry` 摘要 | 远端缺轮、上报丢事件导致口径不一致 |
+| 5. 看结论 | `pnpm exp show <slug>` / `pnpm exp list` | 逐题翻转、判定阈值、远端对账 | —— |
+| 6. 决策 | `pnpm exp decide <slug> --verdict ... --note "..."`，之后 `pnpm exp close <slug>` | `decision`，状态转 `decided`/`closed` | 决策没有理由；结论与决策矛盾时警告 |
 
-第 5 步之后仍有一条尾巴：**上线后按记录里的回滚条件观察**。台账提供的是「当时凭什么判」，线上数据回归验证目前靠人工，尚未接自动化。
+`run` 是第 2、3 步的合体：默认按 base → head 顺序执行，任一变体失败立即停止且**不登记任何东西**；中断后重跑同一条命令会跳过已完成变体、带 `--resume` 续跑未完成的。`--pull` 可以把第 4 步也串进去。
+
+第 6 步之后仍有一条尾巴：**上线后按记录里的回滚条件观察**。台账提供的是「当时凭什么判」，线上数据回归验证目前靠人工，尚未接自动化。
 
 ## 记录里的字段
 
@@ -46,8 +50,9 @@
 | `instancesFile` | `new` | 两个 worktree 共用一份，避免「版本不同、题目也不同」 |
 | `hypothesis` | `new`（必填） | 没有可证伪的假设，跑完也判断不了 |
 | `primaryMetric` / `guardrailMetric` / `rollback` | `new`（有默认值） | 决策时要对着它判，不是事后挑指标 |
-| `runs[]` | `record` | 每轮跑批的事实：runId、提交、通过率、每轮通过率、成本 |
-| `comparison` | `record` | 机械结论：better/worse/inconclusive + 逐题翻转 |
+| `runs[]` | `record` / `run` | 每轮跑批的事实：runId、提交、通过率、每轮通过率、成本 |
+| `comparison` | `record` / `run` | 机械结论：better/worse/inconclusive + 逐题翻转 |
+| `telemetry` | `pull` | 远端回读摘要：拉取时间、窗口、每轮对账状态与差异；重跑后自动清空 |
 | `decision` | `decide` | 人的结论 + 理由 + 当时的对比快照 |
 
 `comparison` 与 `decision` 分开存，是因为两者可能不一致：人可以在数据 inconclusive 时凭代码评审上线，也可以在数据 better 时因成本否决。不一致本身不违反纪律，**不留痕**才违反。
@@ -74,6 +79,12 @@
 | `record` 报「跑完之后又改过代码」 | head 跑批后 worktree 又提交/改动 | 重跑 head，或把跑批后的提交记成新实验 |
 | `show` 显示 base 不在 head 历史里 | 分支被 rebase | 差异里混进了别人的提交，重新基于 `baseCommit` 建分支 |
 | `close` 拒绝回收 | worktree 有未提交改动 | 先提交到 `exp/<slug>`，确认无用再加 `--force` |
+| `run` 报「实例文件不存在」 | 没导出实例，或导出文件被删 | 按提示导出一份 Lite 实例文件，两个 worktree 共用 |
+| `run` 报「基线漂移」 | 基线 worktree 被 checkout 到了别的提交 | 新开实验；基线 worktree 是 detached，正常情况下不会漂 |
+| `run` 中途失败 | harness / 配额 / 网络 | 看 `<runDir>/exp-run.log`；修好后重跑同一条命令，会自动复用与续跑，且不会留下半套登记 |
+| `pull` 报 `missing` | 遥测被关闭、事件投递失败，或查询窗口没覆盖跑批时间 | 查 `report.json.telemetry.dropped`；用 `--from/--to` 手动指定窗口 |
+| `pull` 报 `mismatch` | 远端丢事件 / 服务端版本旧 | 先别用远端数字做决策；核对服务端 schema 版本与逐题明细 |
+| `pull` 报缺凭据 | 未设置 `HOTPOT_TELEMETRY_ADMIN_PASSWORD` | 用环境变量注入，不要写进仓库或命令行历史 |
 | `new` 报目录已存在 | 之前手动删了目录或中断 | `git worktree prune` 后重试 |
 | 台账里有记录但没有目录 | 目录被手动删除 | `pnpm exp close` 会把记录置为 `closed`，分支保留 |
 
@@ -87,3 +98,15 @@
 - 本地 `record` 校验过的实验条件，与远端同一条 `runId` 下的条件同源（都来自 `manifest.json`）。
 
 遥测是旁路：上报失败不影响跑批与台账，但 `report.json.telemetry.dropped > 0` 时要当心远端数据不全。
+
+### 回读与对账
+
+`pnpm exp pull <slug>` 用台账里的 runId 去服务端把同一轮数据拉回来，与本地 `report.json` 比对题数、尝试数、通过次数、通过率、`resolvedInstances`、flaky 题数与逐题 flaky 集合。三态结论：
+
+- `ok`：逐项一致，远端数据可以作为决策依据；
+- `missing`：窗口内查不到该 runId（遥测关闭 / 事件落在窗口外 / 上报失败）；
+- `mismatch`：有差异，退出码 1，差异逐条打印并写进台账——此时远端数字不能当决策依据。
+
+服务端所有读接口都在 admin 会话下（没有独立只读 token），所以 `pull` 通过 `POST /api/v1/login` 换 `hp_admin` cookie。密码只从 `HOTPOT_TELEMETRY_ADMIN_PASSWORD`（或 `--password-env` 指定的变量）读取，只存在进程内存里；cookie 不落盘，也不写进任何产物。查询窗口默认覆盖登记时间前 2 天到当前之后 1 天，可用 `--from/--to` 覆盖。
+
+**边界**：这里回读的是 `kind=benchmark` 跑批事件，用来验证「远端与本地说的是同一件事」。线上 `kind=user` 遥测目前没有 commit / experimentId，无法归因到具体实验，上线后的回归验证仍需人工（见 `docs/eval-system-plan.md` 的 P2 缺口）。

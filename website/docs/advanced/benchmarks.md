@@ -15,14 +15,19 @@
 | `swebench/evaluate` | 官方 harness 编排：local 直接执行，remote 经 rsync + tmux（无 tmux 回退 nohup） |
 | `custom/runner` | 自建题：临时 workspace + `check.mjs` 校验命令（退出码 + `expectedStdout`） |
 | `report` | `report.json` / `report.md`：通过率、逐尝试波动、每题汇总、均值/中位数/p90、脱敏失败列表 |
+| `telemetry-read` | 遥测只读客户端：admin 登录换 cookie，按 `runId` 拉跑批列表与逐题明细 |
+| `experiment/` | `pnpm exp` 实验台账：`new` 建一对 worktree → `run` 跑两轮并登记 → `pull` 回读遥测对账 → `decide` 留痕 |
 
 用法（前置条件与命令细节见[跑 Benchmark](/guide/benchmark)）：
 
 ```bash
 pnpm bench swebench --instances-file instances.jsonl            # lite10 × 3 次
 pnpm bench swebench --instances-file instances.jsonl --repeat 1 # 单次
+pnpm bench swebench --instances-file instances.jsonl --suite lite10  # 显式指定套件
 pnpm bench custom
 ```
+
+验证一个功能改动时不必手工拼两次跑批：`pnpm exp new <slug> --hypothesis "..."` 建一对隔离的 worktree 与台账，`pnpm exp run <slug>` 顺序跑完两轮并自动登记，`pnpm exp pull <slug>` 把远端遥测拉回来与本地报告对账。细节见仓库 `docs/experiments/README.md`。
 
 ## 默认套件与重复尝试
 
