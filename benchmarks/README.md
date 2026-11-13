@@ -69,9 +69,16 @@ pnpm bench swebench --instances-file instances.jsonl \
 # 显式指定套件（实验台账用它保证 base/head 跑同一批题）
 pnpm bench swebench --instances-file instances.jsonl --suite lite10
 
-# 远程评测（例如在 macmini 上跑 Docker）
+# 远程评测（把 Docker 评测放到 macmini 上）
 pnpm bench swebench --instances-file instances.jsonl --eval-mode remote --eval-host macmini
+# 局域网 ssh 别名 macmini 连不上时改用 Tailscale 别名（同一台机器的另一条路径）
+pnpm bench swebench --instances-file instances.jsonl --eval-mode remote --eval-host macmini-tailscale
+
+# 实验跑批同理：exp run 会把这两个参数透传给两个 worktree
+pnpm exp run <slug> --skip-install --eval-mode remote --eval-host macmini-tailscale
 ```
+
+远程主机需要 `~/swebench-venv`（含 `swebench` 与 `datasets`）、Docker daemon、tmux 或 nohup、rsync。生成的 `run.sh` 会显式把 `/usr/local/bin` 与 `/opt/homebrew/bin` 加进 PATH：非交互 ssh / tmux 会话不加载登录 shell 的 PATH，而 macOS Docker Desktop 的 `docker` 在 `/usr/local/bin`，缺了它 harness 会在 agent 跑完之后才报找不到 docker。
 
 不给 `--limit` 也不给 `--instance-ids` 时，跑的是 `suites/lite10.json` 里固定的 10 题——不是 `--limit 10`。`--limit` 是在实例文件的行序上洗牌再截取，换一份导出文件就会抽到不同的题，两次跑批无法按题配对；套件把 id 清单变成数据，题集哈希只取决于这 10 个 id。
 

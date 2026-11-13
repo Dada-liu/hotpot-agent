@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
 	buildEvaluationCommand,
+	buildRemoteEvalScript,
 	parseOfficialReport,
 } from "../src/swebench/evaluate.ts";
 
@@ -41,6 +42,34 @@ describe("buildEvaluationCommand", () => {
 			"--report_dir",
 			"/runs/1/report",
 		]);
+	});
+});
+
+describe("buildRemoteEvalScript", () => {
+	it("非交互 shell 也要能找到 docker，且 PATH 在激活 venv 之前设置", () => {
+		const argv = buildEvaluationCommand({
+			dataset: "SWE-bench/SWE-bench_Lite",
+			split: "test",
+			predictionsPath: "predictions.jsonl",
+			maxWorkers: 1,
+			runId: "run-1",
+			reportDir: "report",
+		});
+		const script = buildRemoteEvalScript({
+			remoteDir: "~/hotpot-bench/run-1",
+			argv,
+		});
+		expect(script).toContain(
+			'export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"',
+		);
+		expect(script).toContain("swebench.harness.run_evaluation");
+		expect(script).toContain("'--run_id' 'run-1'");
+		expect(script).toContain("$HOME/swebench-venv/bin/activate");
+		expect(script).toContain("export HF_ENDPOINT=");
+		expect(script.indexOf("export PATH")).toBeLessThan(
+			script.indexOf("swebench-venv/bin/activate"),
+		);
+		expect(script).toContain("echo $? > report/exit-code");
 	});
 });
 

@@ -67,6 +67,35 @@ export function buildEvaluationCommand(
 	];
 }
 
+export interface BuildRemoteEvalScriptOptions {
+	remoteDir: string;
+	argv: string[];
+	hfEndpoint?: string;
+}
+
+// 远程脚本显式尝试 macmini 约定的 venv；不存在时退回系统 python3。
+// 参数经单引号转义，避免 dataset/run id 影响 shell 解析。
+//
+// PATH 这一行不是装饰：非交互 ssh / tmux 会话不加载登录 shell 的 PATH，
+// macOS Docker Desktop 的 docker 在 /usr/local/bin；缺了它，swebench harness
+// 内部 subprocess 找不到 docker，会在 agent 已经跑完几小时之后才失败。
+export function buildRemoteEvalScript(
+	opts: BuildRemoteEvalScriptOptions,
+): string {
+	const remoteArgv = opts.argv.slice(1).map(shellQuote).join(" ");
+	return [
+		"#!/bin/bash",
+		"set -u",
+		`cd ${opts.remoteDir} || exit 2`,
+		'export PATH="/usr/local/bin:/opt/homebrew/bin:$PATH"',
+		'if [ -f "$HOME/swebench-venv/bin/activate" ]; then . "$HOME/swebench-venv/bin/activate"; fi',
+		`export HF_ENDPOINT="\${HF_ENDPOINT:-${opts.hfEndpoint ?? DEFAULT_HF_ENDPOINT}}"`,
+		`python3 ${remoteArgv} > report/harness.log 2>&1`,
+		"echo $? > report/exit-code",
+		"",
+	].join("\n");
+}
+
 export async function runOfficialEvaluation(
 	opts: RunOfficialEvaluationOptions,
 ): Promise<OfficialReport> {
@@ -171,19 +200,7 @@ async function runRemote(
 		);
 	}
 
-	// 远程脚本显式尝试 macmini 约定的 venv；不存在时退回系统 python3。
-	// 参数经单引号转义，避免 dataset/run id 影响 shell 解析。
-	const remoteArgv = argv.slice(1).map(shellQuote).join(" ");
-	const script = [
-		"#!/bin/bash",
-		"set -u",
-		`cd ${remoteDir} || exit 2`,
-		'if [ -f "$HOME/swebench-venv/bin/activate" ]; then . "$HOME/swebench-venv/bin/activate"; fi',
-		`export HF_ENDPOINT="\${HF_ENDPOINT:-${DEFAULT_HF_ENDPOINT}}"`,
-		`python3 ${remoteArgv} > report/harness.log 2>&1`,
-		"echo $? > report/exit-code",
-		"",
-	].join("\n");
+	const script = buildRemoteEvalScript({ remoteDir, argv });
 	const scriptPath = join(reportDir, `${opts.runId}.remote.sh`);
 	await writeFile(scriptPath, script);
 	const pushScript = await runCommand(
