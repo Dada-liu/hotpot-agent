@@ -324,28 +324,33 @@ describe("CodeIndexService", () => {
 		}
 	});
 
-	it("崩溃遗留的陈旧项目锁会被回收，后续索引不再阻塞", async () => {
+	it("多个等待方可并发回收崩溃残留锁，后续索引不再阻塞", async () => {
 		await writeFile(join(cwd, "alpha.ts"), "export const alpha = 1;\n");
 		const projectKey = createHash("sha256").update(resolve(cwd)).digest("hex");
 		const vectors = join(home, "memory", "vectors");
 		await mkdir(vectors, { recursive: true });
 		const lockPath = join(vectors, `${projectKey}.lock`);
 		await writeFile(lockPath, "");
+		await writeFile(`${lockPath}.crashed.intent`, "");
 		const staleTime = new Date(Date.now() - 60_000);
 		await utimes(lockPath, staleTime, staleTime);
+		await utimes(`${lockPath}.crashed.intent`, staleTime, staleTime);
 		const controller = new AbortController();
 		const timeout = setTimeout(
 			() => controller.abort(new Error("stale lock was not recovered")),
-			500,
+			2_000,
 		);
 
 		try {
-			const results = await serviceWith(fakeEmbedding()).search(
-				"alpha",
-				5,
-				controller.signal,
+			const results = await Promise.all(
+				Array.from({ length: 8 }, () =>
+					serviceWith(fakeEmbedding()).search("alpha", 5, controller.signal),
+				),
 			);
-			expect(results).toMatchObject([{ path: "alpha.ts" }]);
+			for (const result of results) {
+				expect(result).toMatchObject([{ path: "alpha.ts" }]);
+			}
+			expect(await (await openProjectStore()).list("code")).toHaveLength(1);
 		} finally {
 			clearTimeout(timeout);
 		}

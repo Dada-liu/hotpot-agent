@@ -8,7 +8,14 @@ import {
 	unlink,
 	utimes,
 } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import {
+	basename,
+	dirname,
+	isAbsolute,
+	join,
+	relative,
+	resolve,
+} from "node:path";
 import type {
 	CodeIndexOptions,
 	CodeIndexService,
@@ -329,7 +336,129 @@ function waitForLock(signal: AbortSignal): Promise<void> {
 }
 
 const LOCK_STALE_MS = 10_000;
-const LOCK_HEARTBEAT_MS = 5_000;
+const LOCK_HEARTBEAT_MS = 1_000;
+
+async function createOwnedFile(path: string, owner: string): Promise<void> {
+	const handle = await open(path, "wx");
+	try {
+		const data = new TextEncoder().encode(owner);
+		let offset = 0;
+		while (offset < data.byteLength) {
+			const { bytesWritten } = await handle.write(data.subarray(offset));
+			if (bytesWritten <= 0) {
+				throw new Error("project lock write made no progress");
+			}
+			offset += bytesWritten;
+		}
+		await handle.close();
+	} catch (error) {
+		await handle.close().catch(() => {});
+		await unlink(path).catch(() => {});
+		throw error;
+	}
+}
+
+function startHeartbeat(path: string, owner: string): () => Promise<void> {
+	let stopped = false;
+	let heartbeat: Promise<void> = Promise.resolve();
+	const timer = setInterval(() => {
+		heartbeat = heartbeat
+			.then(async () => {
+				if (stopped || (await readFile(path, "utf8")) !== owner) return;
+				await utimes(path, new Date(), new Date());
+			})
+			.catch(() => {});
+	}, LOCK_HEARTBEAT_MS);
+	(timer as { unref?: () => void }).unref?.();
+	return async () => {
+		stopped = true;
+		clearInterval(timer);
+		await heartbeat;
+	};
+}
+
+// 所有共享锁删除都先登记唯一意向；新锁在意向清空前不能进入临界区。
+// 这样多个回收者即使交错，也不会删掉已经投入使用的新锁。
+async function withLockIntent(
+	path: string,
+	operation: () => Promise<void>,
+): Promise<void> {
+	const owner = randomUUID();
+	const intentPath = `${path}.${owner}.intent`;
+	await createOwnedFile(intentPath, owner);
+	const stopHeartbeat = startHeartbeat(intentPath, owner);
+	try {
+		await operation();
+	} finally {
+		await stopHeartbeat();
+		await unlink(intentPath).catch((error) => {
+			if (errorCode(error) !== "ENOENT") throw error;
+		});
+	}
+}
+
+async function removeOwnedLock(path: string, owner: string): Promise<void> {
+	await withLockIntent(path, async () => {
+		try {
+			if ((await readFile(path, "utf8")) === owner) await unlink(path);
+		} catch (error) {
+			if (errorCode(error) !== "ENOENT") throw error;
+		}
+	});
+}
+
+async function reclaimStaleLock(
+	path: string,
+	signal: AbortSignal,
+): Promise<void> {
+	await withLockIntent(path, async () => {
+		try {
+			const observed = await stat(path);
+			if (Date.now() - observed.mtimeMs < LOCK_STALE_MS) return;
+			const observedOwner = await readFile(path, "utf8");
+			await waitForLock(signal);
+			const current = await stat(path);
+			const currentOwner = await readFile(path, "utf8");
+			if (
+				current.mtimeMs === observed.mtimeMs &&
+				currentOwner === observedOwner &&
+				Date.now() - current.mtimeMs >= LOCK_STALE_MS
+			) {
+				await unlink(path);
+			}
+		} catch (error) {
+			if (errorCode(error) !== "ENOENT") throw error;
+		}
+	});
+}
+
+async function hasActiveLockIntents(path: string): Promise<boolean> {
+	const directory = dirname(path);
+	const prefix = `${basename(path)}.`;
+	const entries = await readdir(directory, { withFileTypes: true });
+	let active = false;
+	for (const entry of entries) {
+		if (
+			!entry.isFile() ||
+			!entry.name.startsWith(prefix) ||
+			!entry.name.endsWith(".intent")
+		) {
+			continue;
+		}
+		const intentPath = join(directory, entry.name);
+		try {
+			const info = await stat(intentPath);
+			if (Date.now() - info.mtimeMs >= LOCK_STALE_MS) {
+				await unlink(intentPath);
+			} else {
+				active = true;
+			}
+		} catch (error) {
+			if (errorCode(error) !== "ENOENT") throw error;
+		}
+	}
+	return active;
+}
 
 async function acquireProjectLock(
 	path: string,
@@ -339,68 +468,28 @@ async function acquireProjectLock(
 	for (;;) {
 		signal.throwIfAborted();
 		try {
-			const handle = await open(path, "wx");
-			try {
-				const data = new TextEncoder().encode(owner);
-				let offset = 0;
-				while (offset < data.byteLength) {
-					const { bytesWritten } = await handle.write(data.subarray(offset));
-					if (bytesWritten <= 0) {
-						throw new Error("project lock write made no progress");
-					}
-					offset += bytesWritten;
-				}
-				await handle.close();
-			} catch (error) {
-				await handle.close().catch(() => {});
-				await unlink(path).catch(() => {});
-				throw error;
-			}
-
-			let released = false;
-			let heartbeat: Promise<void> = Promise.resolve();
-			const timer = setInterval(() => {
-				heartbeat = heartbeat
-					.then(async () => {
-						if (released || (await readFile(path, "utf8")) !== owner) return;
-						await utimes(path, new Date(), new Date());
-					})
-					.catch(() => {});
-			}, LOCK_HEARTBEAT_MS);
-			(timer as { unref?: () => void }).unref?.();
-			return async () => {
-				released = true;
-				clearInterval(timer);
-				await heartbeat;
-				try {
-					if ((await readFile(path, "utf8")) === owner) await unlink(path);
-				} catch (error) {
-					if (errorCode(error) !== "ENOENT") throw error;
-				}
-			};
+			await createOwnedFile(path, owner);
 		} catch (error) {
 			if (errorCode(error) !== "EEXIST") throw error;
+			await reclaimStaleLock(path, signal);
+			await waitForLock(signal);
+			continue;
 		}
 
+		const stopHeartbeat = startHeartbeat(path, owner);
 		try {
-			const observed = await stat(path);
-			if (Date.now() - observed.mtimeMs >= LOCK_STALE_MS) {
-				const observedOwner = await readFile(path, "utf8");
+			while (await hasActiveLockIntents(path)) {
 				await waitForLock(signal);
-				const current = await stat(path);
-				const currentOwner = await readFile(path, "utf8");
-				if (
-					current.mtimeMs === observed.mtimeMs &&
-					currentOwner === observedOwner &&
-					Date.now() - current.mtimeMs >= LOCK_STALE_MS
-				) {
-					await unlink(path);
-				}
 			}
 		} catch (error) {
-			if (errorCode(error) !== "ENOENT") throw error;
+			await stopHeartbeat();
+			await removeOwnedLock(path, owner);
+			throw error;
 		}
-		await waitForLock(signal);
+		return async () => {
+			await stopHeartbeat();
+			await removeOwnedLock(path, owner);
+		};
 	}
 }
 
