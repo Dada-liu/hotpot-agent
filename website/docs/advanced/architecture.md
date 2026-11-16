@@ -30,11 +30,12 @@ hotpot-agent 是 pnpm monorepo，Node >= 22 + TypeScript（erasable-syntax-only�
 └───────────────────────────────────────────────────────────────────────────┘
 ```
 
-依赖方向严格自上而下（`server → orchestrator → core → ai`；`cli` 与 `server` 同为 orchestrator 之上的入口，`web` 不引 workspace 包、构建产物由 server 托管），禁止反向依赖。
+依赖方向严格自上而下（`server → orchestrator → core → ai`；`cli` 与 `server` 同为 orchestrator 之上的入口，`web` 不引 workspace 包、构建产物由 server 托管），禁止反向依赖。代码检索由 `cli`/`server` 在装配时直接实例化 `packages/memory`（`cli/server → memory`，无 workspace 依赖），再经 orchestrator 向各层 agent 注册工具。
 
 旁路包：
 
 - `packages/telemetry`：`cli`/`server` → `telemetry` → `core`，只做匿名指标上报，不进入 agent 主链路。
+- `packages/memory`：代码检索基础设施（OpenAI 兼容 embedding 客户端 + 本地 JSONL 精确向量库 + 增量 `code_search` 索引），由 cli/server 直接实例化；不读取或写入 `MEMORY.md`，不提供用户语义记忆。
 - `benchmarks/`（根级，与 `packages/` 并列）：复用 core/orchestrator/telemetry 跑批，不被 `cli`/`server` 引用，也不进入工具产物。
 - `packages/hotpot-agent`：唯一 npm 发布包（`hotpot` 命令 + Web 产物），tsup 把 workspace 源码打进单文件 CLI。
 
@@ -63,6 +64,7 @@ cli / web
 | `@hotpot/web` | React SPA：会话列表、流式对话、工具卡片、plan 审查、队列与用量面板（纯前端，不依赖 node 包） |
 | `@hotpot/cli` | 行式交互入口：参数解析、终端渲染、审批交互 |
 | `@hotpot/telemetry` | 匿名遥测客户端：事件白名单、脱敏、批量上报 |
+| `@hotpot/memory` | 代码检索基础设施：embedding 客户端、本地 JSONL 向量库、增量代码索引与 `code_search` 工具 |
 | `@hotpot/benchmarks` | benchmark runner：SWE-bench 官方评测 + 自建题三类 |
 
 ## 工程原则

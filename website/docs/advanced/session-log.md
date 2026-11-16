@@ -14,7 +14,7 @@ hotpot-agent 的**会话 JSONL 事件日志是唯一事实源**：append-only，
 
 ## 事件类型
 
-日志中的事件（JSONL v1 规范）覆盖会话全生命周期，包括：`user_msg` / `assistant_msg`（含 tool_call 块与 usage）、`tool_result`、`approval/asked` 与 `approval/decided`（经 `createAuditedApprovalChain` 落盘）、`plan/drafted` / `plan/approved` / `plan/denied`、`spawn`（worker/task 诞生）、`inbox/spliced`（steer/queue 注入）、todo 集合、hook 触发、skill 加载、prompt 模板展开、MCP 接入、`compaction`（上下文压缩点：保留点、摘要与摘要请求用量）与 `memory/saved`（记忆写入审计，不含记忆正文）等。
+日志中的事件（JSONL v1 规范）覆盖会话全生命周期，包括：`user_msg` / `assistant_msg`（含 tool_call 块与 usage）、`tool_result`、`approval/asked` 与 `approval/decided`（经 `createAuditedApprovalChain` 落盘）、`plan/drafted` / `plan/approved` / `plan/denied`、`spawn`（worker/task 诞生）、`inbox/spliced`（steer/queue 注入）、todo 集合、hook 触发、skill 加载、prompt 模板展开、MCP 接入、`compaction`（上下文压缩点：保留点、摘要与摘要请求用量）、`memory/saved`（记忆写入审计，不含记忆正文）与 `vector/indexed`（代码索引审计，只含 files/chunks/durationMs）等。
 
 新功能引入的事件类型必须纳入 JSONL v1 规范，这是 M4 起的硬性验收项——保证日志始终能完整重建上下文。
 

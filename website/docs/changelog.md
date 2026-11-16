@@ -1,5 +1,37 @@
 # 更新日志
 
+## v0.3.0（2026-11-16）
+
+新增代码向量检索，并交付跨会话用户记忆、上下文自动压缩与设置弹窗全量配置。
+
+### 新能力：代码向量检索
+
+- 用户级设置 `features.vector=true` 并配置 OpenAI 兼容 `vector.embedding`（`model` / `baseUrl` / `apiKey`，apiKey 支持 `$ENV` 引用）后，main/worker/task 获得 `code_search` 工具，按语义检索当前工作区源码，结果带路径、起止行、得分与摘要片段。
+- 惰性启动：装配与项目启动不扫描、不联网；首次检索才扫描当前目录，之后每次检索前按文件 hash 增量刷新索引。本地向量库与索引文件存于 `~/.hotpot/memory/vectors/<sha256(cwd)>.jsonl`，不进入项目目录。
+- 外发边界：`.env*`、私钥、凭证/密码/token 文件与 YAML/JSON 等部署配置不参与索引；只有筛选后的待索引源码 chunk 与查询文本会 POST 到所配 embedding endpoint，未修改内容不重复请求索引 embedding。审计与遥测只含计数，不含路径与源码。
+- 默认关闭；`vector` 相关字段只从用户级读取，项目级 `.hotpot/settings.json` 中的同名字段会被剥离，防止仓库重定向代码与凭证外发目的地。
+
+### 新能力：用户记忆与上下文压缩
+
+- `features.memory`（默认关闭）：main/worker 可经 `memory_save` 把稳定偏好或事实写入 `~/.hotpot/MEMORY.md`（人工可编辑的 Markdown），task 只读；每轮注入最新有界摘要，遥测只报开关与次数，正文永不上报。
+- 上下文自动压缩（默认开启）：正式请求前按模型上下文预算触发摘要，压缩点落盘、恢复时注入摘要并跳过旧历史；`compaction.triggerRatio` / `keepRecentTokens` 可调（仅用户级）。
+
+### Web 端
+
+- 设置弹窗支持全部用户级配置（models / permission / features / compaction / hooks / webSearch / mcpServers / skillsDirs / promptsDirs / telemetry 等），敏感字段掩码展示、保存时保留原值。
+- 主对话区只展示 main agent 内容与审批交互，worker/task 执行过程收进右侧面板。
+
+### Benchmark 与基础设施
+
+- 跑批新增实验台账（`pnpm exp`）与 worktree 脚手架、分片/续跑/合并，以及 `bench doctor` 自检；`exp run` 支持双版本对比编排，遥测回读只读。
+- 遥测契约升到 v3：`benchmark_run` 必带 `attempt`（第几次尝试），服务端按 `(runId, instanceId, attempt)` 去重，v1/v2 客户端会被拒收。
+- 源码仓库 `pnpm dev web` 正确透传 `--port` / `--host` / `--no-open`（此前 `--port` 会被静默忽略）。
+
+### 官网
+
+- 首页卡片入场动画、开场序列每个标签页永久只展示一次、loading 与图片体积优化。
+- 配置页补充代码向量检索完整说明；架构页与遥测页同步 `packages/memory` 与 `vector/indexed` 事件。
+
 ## v0.2.0（2026-11-04）
 
 新增会话文件预览与首屏启动动画。

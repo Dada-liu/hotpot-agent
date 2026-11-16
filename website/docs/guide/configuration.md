@@ -52,6 +52,7 @@ M4 功能开关，全部可选布尔。既有功能默认全开；`memory` 为�
 | `mcp` | 开 | MCP server 接入（配合 `mcpServers`） |
 | `compaction` | 开 | 上下文自动压缩 |
 | `memory` | 关 | 用户记忆：关闭时不读 `MEMORY.md`、不注册 `memory_save`、不注入记忆段 |
+| `vector` | 关 | 代码向量检索：关闭时不注册 `code_search`、不扫描目录、不请求 embedding |
 
 `features.memory=true` 后，新会话与 `--session` 恢复会话从同一 `<home>/MEMORY.md` 构建 prompt，每轮注入最新有界摘要（最多 8,000 字符，超出只保留末尾完整条目并带截断标记，读取失败降级为空）；main/worker 可调用 `memory_save` 追加写入，task 只读。记忆文件可人工编辑，但不要保存密钥、凭证或临时任务状态。
 
@@ -63,6 +64,29 @@ M4 功能开关，全部可选布尔。既有功能默认全开；`memory` 为�
 |------|------|------|
 | `triggerRatio` | `0.8` | 正式请求前估算值严格超过 `(contextWindow - maxTokens) * triggerRatio` 时触发；合法范围 `(0,1]` |
 | `keepRecentTokens` | `20000` | 压缩时由尾向前保留的最近历史估算预算，正整数，工具调用与结果组不拆开 |
+
+### vector（可选）
+
+代码向量检索的用户级配置（`features.vector` 总开关默认关）：
+
+```json
+{
+  "features": { "vector": true },
+  "vector": {
+    "embedding": {
+      "model": "text-embedding-3-small",
+      "baseUrl": "https://api.openai.com/v1",
+      "apiKey": "$OPENAI_API_KEY"
+    }
+  }
+}
+```
+
+- `vector.embedding` 为 OpenAI 兼容 endpoint：`model` / `baseUrl` / `apiKey` 必填，`apiKey` 支持 `"$ENV_VAR"` 引用。
+- 配置完整且 `features.vector=true` 时，向 main/worker/task 注册 `code_search` 工具，语义检索当前工作区源码。
+- 惰性启动：装配与项目启动不扫描、不联网；首次检索才扫描 cwd，之后每次检索前按文件 hash 增量刷新。本地向量库与索引文件存于 `<home>/memory/vectors/<sha256(cwd)>.jsonl`，不进入项目目录。
+- 外发边界：只有筛选后的待索引源码 chunk 与查询文本会 POST 到所配 endpoint；未修改内容不重复请求索引 embedding。`.env*`、私钥、凭证/密码/token 文件与 YAML/JSON 等部署配置不参与索引。
+- `vector` 相关字段（含 `features.vector` 与 `vector.embedding`）**只从用户级读取**，项目级 `.hotpot/settings.json` 中的同名字段会被剥离，防止仓库重定向代码与凭证外发目的地。审计与遥测只含计数，不含路径与源码。
 
 ### telemetry（可选）
 
