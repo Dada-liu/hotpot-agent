@@ -41,6 +41,29 @@ plan 被批注后的最大修订轮数，默认 `3`。
 
 配置示例：`{ "permission": { "mode": "ask-on-dangerous" } }`。
 
+### features（可选）
+
+M4 功能开关，全部可选布尔。既有功能默认全开；`memory` 为避免隐式增加 prompt token **默认关闭**。关闭开关 = 不注册工具 / 不挂钩子 / 不扫描目录，读取统一经 `featureEnabled`，不直接裸读 `settings.features`：
+
+| 开关 | 默认 | 控制 |
+|------|------|------|
+| `todo` / `hooks` / `skills` / `promptTemplates` | 开 | 任务清单 / 钩子链 / SKILL.md 技能发现 / `/` 命令 prompt 模板 |
+| `webSearch` / `webFetch` | 开 | 联网搜索与网页抓取工具 |
+| `mcp` | 开 | MCP server 接入（配合 `mcpServers`） |
+| `compaction` | 开 | 上下文自动压缩 |
+| `memory` | 关 | 用户记忆：关闭时不读 `MEMORY.md`、不注册 `memory_save`、不注入记忆段 |
+
+`features.memory=true` 后，新会话与 `--session` 恢复会话从同一 `<home>/MEMORY.md` 构建 prompt，每轮注入最新有界摘要（最多 8,000 字符，超出只保留末尾完整条目并带截断标记，读取失败降级为空）；main/worker 可调用 `memory_save` 追加写入，task 只读。记忆文件可人工编辑，但不要保存密钥、凭证或临时任务状态。
+
+### compaction（可选）
+
+上下文自动压缩的用户级配置（`features.compaction` 总开关默认开）：
+
+| 字段 | 默认 | 说明 |
+|------|------|------|
+| `triggerRatio` | `0.8` | 正式请求前估算值严格超过 `(contextWindow - maxTokens) * triggerRatio` 时触发；合法范围 `(0,1]` |
+| `keepRecentTokens` | `20000` | 压缩时由尾向前保留的最近历史估算预算，正整数，工具调用与结果组不拆开 |
+
 ### telemetry（可选）
 
 匿名遥测开关，只从用户级读取：

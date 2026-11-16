@@ -14,13 +14,13 @@ hotpot-agent 的**会话 JSONL 事件日志是唯一事实源**：append-only，
 
 ## 事件类型
 
-日志中的事件（JSONL v1 规范）覆盖会话全生命周期，包括：`user_msg` / `assistant_msg`（含 tool_call 块与 usage）、`tool_result`、`approval/asked` 与 `approval/decided`（经 `createAuditedApprovalChain` 落盘）、`plan/drafted` / `plan/approved` / `plan/denied`、`spawn`（worker/task 诞生）、`inbox/spliced`（steer/queue 注入）、todo 集合、hook 触发、skill 加载、prompt 模板展开、MCP 接入等。
+日志中的事件（JSONL v1 规范）覆盖会话全生命周期，包括：`user_msg` / `assistant_msg`（含 tool_call 块与 usage）、`tool_result`、`approval/asked` 与 `approval/decided`（经 `createAuditedApprovalChain` 落盘）、`plan/drafted` / `plan/approved` / `plan/denied`、`spawn`（worker/task 诞生）、`inbox/spliced`（steer/queue 注入）、todo 集合、hook 触发、skill 加载、prompt 模板展开、MCP 接入、`compaction`（上下文压缩点：保留点、摘要与摘要请求用量）与 `memory/saved`（记忆写入审计，不含记忆正文）等。
 
 新功能引入的事件类型必须纳入 JSONL v1 规范，这是 M4 起的硬性验收项——保证日志始终能完整重建上下文。
 
 ## deriveMessages
 
-`deriveMessages()` 的职责是从事件流折叠出模型历史：用户消息、assistant 消息（含工具调用）、工具结果按序排列，被中断的半回合不进入历史，压缩点（未来的上下文压缩功能）之后的折叠规则由日志中的保留点事件决定。
+`deriveMessages()` 的职责是从事件流折叠出模型历史：用户消息、assistant 消息（含工具调用）、工具结果按序排列，被中断的半回合不进入历史。上下文压缩发生后，对每个 agent 只应用最新有效的 `compaction` 保留点：摘要注入为一条用户消息，该点之前的事件被折叠跳过。
 
 ## 存储与位置
 

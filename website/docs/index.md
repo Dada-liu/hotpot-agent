@@ -24,6 +24,12 @@ features:
   - icon: /icons/log.svg
     title: 会话日志即唯一事实源
     details: append-only JSONL 事件日志，deriveMessages 从中转换出模型历史；进程被杀、断线重连后都能折叠恢复、继续对话。
+  - icon: /icons/minimize-2.svg
+    title: 上下文自动压缩
+    details: 正式请求前按模型上下文预算触发摘要，压缩点落盘为 compaction 事件，恢复时注入摘要并跳过旧历史；保留最近完整 tool 调用组，摘要失败不写事件。默认开启。
+  - icon: /icons/bookmark.svg
+    title: 用户记忆
+    details: features.memory=true 后 main/worker 可经 memory_save 把稳定偏好写入 ~/.hotpot/MEMORY.md（人工可编辑的 Markdown），每轮只注入最新有界摘要；task 只读，遥测只报开关与次数。默认关闭。
   - icon: /icons/shield.svg
     title: 三档权限与审批
     details: 只读 / 危险操作询问 / 完全权限三档；main 只用只读工具，worker 按档位放行；高危命令与覆盖写先询问，asked / decided 全程落盘可审计。

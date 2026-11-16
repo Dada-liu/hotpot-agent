@@ -4,7 +4,7 @@
 
 定位是**旁路**：上报失败、配置错误、会话日志损坏都不会抛错或阻塞 agent 主流程。
 
-## 事件白名单（schema v1）
+## 事件白名单（schema v3）
 
 事件 schema 是严格白名单：所有对象 `.strict()`，未知字段直接判为非法。九类事件：
 
@@ -15,10 +15,12 @@
 | `llm_call` | agent 角色、档位、模型、token（含 cache read/write）、step 序号 |
 | `tool_call` | 工具名、耗时、是否出错 |
 | `error` | phase、机器码、**脱敏后**的错误消息 |
-| `feature_usage` | 功能开关与事件/工具调用计数 |
+| `feature_usage` | 功能开关（todo/hooks/skills/promptTemplates/webSearch/webFetch/mcp/compaction/memory）与事件/工具调用计数 |
 | `benchmark_run` | 单题通过与否、时长、token |
 
-`turn_end` 的 token 汇总覆盖该用户 turn 的**整棵 agent 树**（main + worker + task）。
+schema 版本随契约升级：`benchmark_run` 的可比条件（`runId`/`model`/`tier`/`patchOnly`）自 v2 必填，`attempt`（第几次尝试）自 v3 必填——服务端按 `(runId, instanceId, attempt)` 去重，v1/v2 客户端会被拒收。
+
+`turn_end` 的 token 汇总覆盖该用户 turn 的**整棵 agent 树**（main + worker + task）；压缩摘要请求也计入 token 并生成一条 `llm_call`，但不增加 `assistantMessages` / `mainSteps`。用户记忆只上报 `memory` 开关与 `memory_save` / `memory/saved` 计数，`MEMORY.md` 正文永不上报。
 
 ## 不采集用户内容
 
