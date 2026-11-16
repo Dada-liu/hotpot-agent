@@ -27,6 +27,7 @@ export interface TelemetryFeatureFlags {
 	mcp?: boolean;
 	compaction?: boolean;
 	memory?: boolean;
+	vector?: boolean;
 }
 
 // token 汇总：byTier/byModel 的值，以及 turn_end 的拆分维度。
@@ -211,6 +212,7 @@ const featureFlagsSchema = z
 		mcp: z.boolean().optional(),
 		compaction: z.boolean().optional(),
 		memory: z.boolean().optional(),
+		vector: z.boolean().optional(),
 	})
 	.strict();
 

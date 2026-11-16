@@ -13,6 +13,7 @@
 		"@hono/node-server": "^2.1.5",
 		"@hotpot/ai": "workspace:*",
 		"@hotpot/core": "workspace:*",
+		"@hotpot/memory": "workspace:*",
 		"@hotpot/orchestrator": "workspace:*",
 		"@hotpot/telemetry": "workspace:*",
 		"hono": "^4.13.13",

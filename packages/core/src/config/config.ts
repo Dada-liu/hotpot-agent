@@ -27,7 +27,8 @@ export const modelsSchema = z.object({
 });
 export type ModelsSettings = z.infer<typeof modelsSchema>;
 
-// M4 功能开关：全部 optional boolean；既有功能默认全开，memory 为避免隐式增加 prompt token 默认关闭
+// M4 功能开关：全部 optional boolean；既有功能默认全开，memory/vector 默认关闭，
+// 分别避免隐式增加 prompt token 和未经同意外发代码
 const featuresSchema = z.object({
 	todo: z.boolean().optional(),
 	hooks: z.boolean().optional(),
@@ -38,6 +39,7 @@ const featuresSchema = z.object({
 	mcp: z.boolean().optional(),
 	compaction: z.boolean().optional(),
 	memory: z.boolean().optional(),
+	vector: z.boolean().optional(),
 });
 
 // M4 上下文压缩：触发比例与最近历史保留预算，仅用户级配置
@@ -98,6 +100,17 @@ const telemetrySchema = z.object({
 	flushIntervalMs: z.number().int().nonnegative().optional(),
 });
 
+// 代码检索 embedding：整段仅用户级；baseUrl 指向 OpenAI 兼容服务，apiKey 支持 $ENV
+const vectorSchema = z.object({
+	embedding: z
+		.object({
+			model: z.string().min(1),
+			baseUrl: z.string().min(1),
+			apiKey: z.string().min(1),
+		})
+		.optional(),
+});
+
 // 权限三档（M1 定案，替代旧 approval.policy）：
 // - readonly：read 类自动放行，其余一切 worker 工具逐个经用户审批
 // - ask-on-dangerous：仅危险操作询问（默认档）
@@ -122,12 +135,14 @@ export const settingsSchema = z.object({
 	skillsDirs: z.array(z.string()).optional(),
 	promptsDirs: z.array(z.string()).optional(),
 	telemetry: telemetrySchema.optional(),
+	vector: vectorSchema.optional(),
 });
 
 // 项目级收窄 schema：只含 4 个白名单字段；zod 默认 strip 静默丢弃 models 等未知字段。
 // 安全理由（M4 定案）：M4/M5 新增字段一律仅用户级 —— hooks/mcpServers 涉及任意命令执行，
 // 项目级注入即 RCE；skillsDirs/promptsDirs 决定磁盘扫描范围，features/webSearch 影响外发流量，
-// telemetry 的 endpoint/token 更不能由仓库改写（否则会把遥测与凭证导向攻击者），
+// telemetry 的 endpoint/token 更不能由仓库改写（否则会把遥测与凭证导向攻击者）；
+// vector.embedding 决定代码发往何处，连同 features.vector 也只能由用户显式配置，
 // 均不允许恶意仓库经 .hotpot/settings.json 篡改
 const projectSettingsSchema = z.object({
 	mainAgentTier: z.enum(["high", "medium", "low"]).optional(),
@@ -142,22 +157,22 @@ export type HooksConfig = z.infer<typeof hooksSchema>;
 export type WebSearchConfig = z.infer<typeof webSearchSchema>;
 export type McpServersConfig = z.infer<typeof mcpServersSchema>;
 export type TelemetryConfig = z.infer<typeof telemetrySchema>;
+export type VectorConfig = z.infer<typeof vectorSchema>;
 type ProjectSettings = z.infer<typeof projectSettingsSchema>;
 
-// 功能开关统一读取口：缺省时既有功能全开，memory 默认关闭。关闭开关 = 不注册工具/不挂钩子/不扫描目录，
-// 注册表与装配层一律经这里判读，不直接裸读 settings.features?.x
+// 功能开关统一读取口：既有功能默认全开，memory/vector 默认关闭。
+// 关闭开关 = 不注册工具/不挂钩子/不扫描目录，注册表与装配层一律经这里判读
 export function featureEnabled(
 	features: Settings["features"] | undefined,
 	key: keyof NonNullable<Settings["features"]>,
 ): boolean {
-	const configured = features?.[key];
-	return configured ?? key !== "memory";
+	return features?.[key] ?? (key !== "memory" && key !== "vector");
 }
 
 // apiKey 的 $ENV 引用要求整串匹配，避免误伤字面值里恰好含 $ 的 key
 const ENV_REF_PATTERN = /^\$([A-Za-z_][A-Za-z0-9_]*)$/;
 
-function resolveApiKey(tier: string, apiKey: string, path: string): string {
+function resolveApiKey(location: string, apiKey: string, path: string): string {
 	const match = ENV_REF_PATTERN.exec(apiKey);
 	if (!match) {
 		return apiKey;
@@ -166,7 +181,7 @@ function resolveApiKey(tier: string, apiKey: string, path: string): string {
 	const value = name === undefined ? undefined : process.env[name];
 	if (value === undefined || value === "") {
 		throw new Error(
-			`settings file ${path}: models.${tier}.apiKey references environment variable "$${name}", but it is not set`,
+			`settings file ${path}: ${location}.apiKey references environment variable "$${name}", but it is not set`,
 		);
 	}
 	return value;
@@ -207,8 +222,16 @@ function loadUserSettingsFrom(path: string): Settings {
 	const settings = parsed.data;
 	for (const tier of ["high", "medium", "low"] as const) {
 		settings.models[tier].apiKey = resolveApiKey(
-			tier,
+			`models.${tier}`,
 			settings.models[tier].apiKey,
+			path,
+		);
+	}
+	const embedding = settings.vector?.embedding;
+	if (embedding) {
+		embedding.apiKey = resolveApiKey(
+			"vector.embedding",
+			embedding.apiKey,
 			path,
 		);
 	}

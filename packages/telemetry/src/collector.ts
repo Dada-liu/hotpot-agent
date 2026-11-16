@@ -70,6 +70,7 @@ const FEATURE_KEYS: FeatureKey[] = [
 	"mcp",
 	"compaction",
 	"memory",
+	"vector",
 ];
 
 type FeatureKey = keyof NonNullable<Settings["features"]>;
@@ -566,6 +567,8 @@ function featureForSessionEvent(event: SessionEvent): FeatureKey | undefined {
 			return "mcp";
 		case "memory/saved":
 			return "memory";
+		case "vector/indexed":
+			return "vector";
 		default:
 			return undefined;
 	}
@@ -581,6 +584,8 @@ function featureForToolName(name: string): FeatureKey | undefined {
 			return "webFetch";
 		case "memory_save":
 			return "memory";
+		case "code_search":
+			return "vector";
 		default:
 			return name.startsWith("mcp__") ? "mcp" : undefined;
 	}

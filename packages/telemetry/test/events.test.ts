@@ -76,6 +76,32 @@ describe("telemetryBatchSchema", () => {
 		).toThrow();
 	});
 
+	it("accepts the vector feature switch without adding content fields", () => {
+		const event = {
+			eventId: "e1",
+			ts: "2026-01-01T00:00:00.000Z",
+			type: "session_start",
+			sessionId: "s2",
+			resumed: false,
+			appVersion: "0.0.0",
+			features: { vector: true },
+		};
+		expect(
+			telemetryBatchSchema.parse({ ...base, events: [event] }).events[0],
+		).toEqual(event);
+		expect(() =>
+			telemetryBatchSchema.parse({
+				...base,
+				events: [
+					{
+						...event,
+						features: { vector: true, path: "/private/project" },
+					},
+				],
+			}),
+		).toThrow();
+	});
+
 	it("rejects more than 500 events", () => {
 		expect(() =>
 			telemetryBatchSchema.parse({

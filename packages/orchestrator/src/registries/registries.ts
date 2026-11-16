@@ -30,6 +30,7 @@ import {
 	todoTool,
 	writeTool,
 } from "@hotpot/core";
+import { createCodeSearchTool } from "@hotpot/memory";
 import type {
 	OrchestrationRuntime,
 	WorkerToolDecorator,
@@ -139,6 +140,12 @@ export function createRoleRegistry(
 	metaTools: readonly ToolDefinition<unknown>[],
 ): ToolRegistry {
 	const registry = createToolRegistry();
+	if (
+		featureEnabled(runtime.features, "vector") &&
+		runtime.codeSearch !== undefined
+	) {
+		registry.register(createCodeSearchTool(runtime.codeSearch));
+	}
 	if (role === "main") {
 		// M1：main 的唯一文件工具是 read，裸注册——不套 decorateWorkerTool
 		// （main 不消费权限预审批）也不套 skill 追踪（追踪只面向 worker/task 的

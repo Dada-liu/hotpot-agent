@@ -1180,6 +1180,14 @@ describe("inbox 队列（M4）", () => {
 				ts,
 				agentId: "main",
 			},
+			{
+				type: "vector/indexed",
+				id: "v1",
+				ts,
+				files: 2,
+				chunks: 7,
+				durationMs: 15,
+			},
 		];
 		for (const event of events) {
 			state = reduce(state, log(1, event));

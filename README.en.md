@@ -53,7 +53,7 @@ hotpot web
 └────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
-Dependencies flow strictly top-down (`server → orchestrator → core → ai`; `cli` and `server` are both entry points above orchestrator, and `web` imports no workspace packages — its build output is served by server). Reverse dependencies are forbidden. There is also a side package `packages/telemetry` (`cli`/`server` → `telemetry` → `core`) that only reports anonymous metrics and stays off the agent main path; the dev tool `benchmarks/` (root-level, sibling of `packages/`) reuses core/orchestrator/telemetry for batch runs, but is not referenced by `cli`/`server` and is not shipped in the tool artifact.
+Dependencies flow strictly top-down (`server → orchestrator → core → ai`; `cli` and `server` are both entry points above orchestrator, and `web` imports no workspace packages — its build output is served by server). Reverse dependencies are forbidden. There is also a side package `packages/telemetry` (`cli`/`server` → `telemetry` → `core`) that only reports anonymous metrics and stays off the agent main path; `packages/memory` is standalone code-retrieval infrastructure (embedding client + local JSONL vector store) and never reads or writes `MEMORY.md`; the dev tool `benchmarks/` (root-level, sibling of `packages/`) reuses core/orchestrator/telemetry for batch runs, but is not referenced by `cli`/`server` and is not shipped in the tool artifact.
 
 Data flow of one user message: cli → `runMainTurn` (first-turn prompt difficulty routing) → worker / task inline-runs core `runTurn` → each step's history is derived by `deriveMessages` from the session log → `ai.streamChat` → tool batches execute through the approval waterfall → all events are appended to JSONL and streamed back to the cli renderer.
 
@@ -74,7 +74,8 @@ Data flow of one user message: cli → `runMainTurn` (first-turn prompt difficul
 │   ├── web/           # @hotpot/web: React SPA (three-column UI, agent status panel)
 │   ├── cli/           # @hotpot/cli: line-based interactive entry
 │   ├── hotpot-agent/  # hotpot-agent: npm distribution package (hotpot command + web assets)
-│   └── telemetry/     # @hotpot/telemetry: M5 anonymous telemetry client (event schema, redaction, batching)
+│   ├── telemetry/     # @hotpot/telemetry: M5 anonymous telemetry client (event schema, redaction, batching)
+│   └── memory/        # @hotpot/memory: code-retrieval embedding client and local exact vector store
 ├── benchmarks/        # @hotpot/benchmarks: M5 benchmark runner (official SWE-bench evaluation + three categories of custom tasks)
 └── scripts/           # development helper scripts (pnpm dev, etc.)
 ```
@@ -136,6 +137,25 @@ How to run:
 
    Optional user memory is disabled by default. Set `"features": {"memory": true}` in user-level settings to let main/worker agents save stable preferences or facts with `memory_save`; task agents are read-only. Memory lives in `~/.hotpot/MEMORY.md` (overridable with `HOTPOT_HOME`), remains human-editable Markdown, and only its latest bounded summary is injected per turn. Do not save secrets, credentials, or temporary task state. Telemetry reports only the flag and counts, never memory content; neither `memory_search` nor vector retrieval is provided.
 4. Web: after installation run `hotpot web` (listens on http://127.0.0.1:4573 by default, generates an API token at startup, and opens a `?token=` URL once ready; same settings, sessions shared with CLI); in the source repo use `pnpm dev web`. The browser moves the token into session storage and removes it from the address bar, so REST/SSE remain authenticated after refreshes. For manual access, use the full URL printed in the terminal. When developing the frontend, run `pnpm --filter @hotpot/web dev` in another terminal and Vite proxies `/api` to 4573.
+
+## Optional: Semantic Code Search
+
+Code vector retrieval is disabled by default. To enable `code_search` for main/worker/task, add both settings to the user-level `~/.hotpot/settings.json`:
+
+```json
+{
+  "features": { "vector": true },
+  "vector": {
+    "embedding": {
+      "model": "text-embedding-3-small",
+      "baseUrl": "https://api.openai.com/v1",
+      "apiKey": "$OPENAI_API_KEY"
+    }
+  }
+}
+```
+
+Project assembly and startup do not scan files or use the network. Only an actual `code_search` call incrementally scans the current workspace and POSTs source chunks awaiting indexing plus the query text to the configured OpenAI-compatible embedding endpoint; unchanged files do not trigger indexing embedding requests again. By default, `.git`, `node_modules`, `dist`, `build`, `.hotpot`, symlinks, binary files, and files over 512KB are ignored. Only common source extensions are indexed; `.env*` files, private keys, credential/password/token files, arbitrary text, and YAML/JSON-style deployment configuration are never sent to embeddings. The local index lives at `~/.hotpot/memory/vectors/<sha256(cwd)>.jsonl`; audits and telemetry contain counts only, never paths or source. This feature never reads or writes `MEMORY.md` and is not user memory. See [packages/memory/README.md](packages/memory/README.md).
 
 ## Publishing the npm Package
 

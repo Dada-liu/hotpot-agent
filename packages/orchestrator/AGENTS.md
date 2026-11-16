@@ -1,7 +1,7 @@
 # Working in packages/orchestrator/
 
 - Source in `src/` with one subdirectory per feature: `inbox/`, `json-schema-to-zod/`, `main-turn/`, `mcp/`, `models/`, `plan/`, `prompts/`, `registries/`, `runtime/`, `types/`, `tools/`. Each folder has `index.ts` (barrel), implementation files, `README.md` (Chinese) and `AGENTS.md` (English); tests in `test/*.test.ts`. `src/index.ts` is the package entry (re-exports only) and deliberately keeps `tools/run-worker.ts` and `tools/spawn-tasks.ts` internal.
-- May depend on `@hotpot/core` (`workspace:*`) and `@hotpot/ai` (`workspace:*`); never import from `@hotpot/cli`.
+- May depend on `@hotpot/core`, `@hotpot/ai` and `@hotpot/memory` (`workspace:*`); never import from `@hotpot/cli`. Memory is consumed only for lazy code-search assembly and must not introduce startup scanning or network I/O.
 - This package holds the three-layer agent orchestration: the main agent (conversation entry, first-turn prompt routing by difficulty/model tier), worker agents (execution and parallel split), and task agents (atomic subtasks); plus the plan approval flow and the steer/queue dual-queue mechanism.
 - Dependency direction is fixed: `orchestrator → core → ai`. Never add a reverse edge.
 - LLM-facing prompt text is English; code comments in Simplified Chinese.

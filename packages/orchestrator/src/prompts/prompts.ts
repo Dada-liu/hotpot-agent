@@ -3,9 +3,10 @@
 // 因此这里不触碰全局注册表 —— 本地组好段列表后调用 buildSystemPrompt(ctx, sections)，
 // 同一进程内连续构建 main/worker/task 三种 prompt 互不污染（core 为此给 buildSystemPrompt
 // 增加了可选 sections 入参）。角色指令段插在 rules(2000) 与 env(3000) 之间的 2500。
-// M4 动态段（可选 opts，默认完全不出现、默认行为不变）：
+// M4 动态段（默认完全不出现、默认行为不变）：
 // skills 段 order 1400（discoverSkills 扫描结果）、todos 段 order 1500（foldTodos 结果）、
-// memory 段 order 1600（每轮读取的有界 MEMORY.md 摘要）；空列表或空摘要不出段。
+// memory 段 order 1600（每轮读取的有界 MEMORY.md 摘要）、code-search 段 order 1700
+// （仅在 code_search 工具注册时出现）；空列表或空摘要不出段。
 // 文案内容对齐 docs/archive/03-agent-orchestration.md：
 // main —— §1 职责 + §2 难度判定/模型路由（含边界示例）；worker —— §1 职责 + §4 并行拆分三条件
 // 与正反例 + §5 摘要回传；task —— §1 职责 + §5 摘要回传。LLM 面向文案全英文。
@@ -176,6 +177,12 @@ function memorySection(memory: string): PromptSection {
 	};
 }
 
+const CODE_SEARCH_SECTION: PromptSection = {
+	name: "code-search",
+	order: SECTION_ORDER.RULES - 300,
+	text: "Use code_search for semantic code discovery when the relevant location is unclear. Each call refreshes the current workspace incrementally; no index is built at startup. Use the returned relative paths and line ranges to guide subsequent read calls.",
+};
+
 // 基础四段 + 角色指令段，全部本地组装，不走全局注册表；
 // opts.skills/opts.todos/opts.memory 为可选动态段数据源（空值不出段）；
 // opts.instructions 覆盖角色指令段（main 的 plan / 执行阶段使用）
@@ -202,6 +209,9 @@ export function buildRoleSystemPrompt(
 	}
 	if (opts?.memory !== undefined && opts.memory.trim() !== "") {
 		sections.push(memorySection(opts.memory));
+	}
+	if (ctx.tools.some((tool) => tool.name === "code_search")) {
+		sections.push(CODE_SEARCH_SECTION);
 	}
 	sections.push(
 		roleInstructionSection(role, opts?.instructions ?? ROLE_INSTRUCTIONS[role]),

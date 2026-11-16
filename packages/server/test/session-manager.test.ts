@@ -3,10 +3,11 @@
 // 测试值，resolveModel 兜底告警但 llm 注入模式下不真正解析）。审批场景用 ask-on-dangerous，
 // 无审批场景用 permission.mode:"full" 且脚本不触发需要审批的工具。
 
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+	type ChatRequest,
 	type LlmAdapter,
 	type ModelInfo,
 	type StreamEvent,
@@ -64,6 +65,7 @@ async function writeSettings(
 	extra?: {
 		mcpServers?: Settings["mcpServers"];
 		features?: Settings["features"];
+		vector?: Settings["vector"];
 	},
 ): Promise<void> {
 	const settings: Settings = {
@@ -77,6 +79,7 @@ async function writeSettings(
 			? {}
 			: { mcpServers: extra.mcpServers }),
 		...(extra?.features === undefined ? {} : { features: extra.features }),
+		...(extra?.vector === undefined ? {} : { vector: extra.vector }),
 	};
 	await writeFile(
 		join(home, "settings.json"),
@@ -868,6 +871,103 @@ describe("M2 权限与内置指令", () => {
 			/readonly, ask-on-dangerous, full/,
 		);
 		await sm.close(rec.id);
+	});
+});
+
+describe("code_search 装配", () => {
+	const vector: Settings["vector"] = {
+		embedding: {
+			model: "embed-v1",
+			baseUrl: "https://embed.example.test/v1",
+			apiKey: "embed-key",
+		},
+	};
+
+	function fakeEmbeddingFetch(calls: string[][]): typeof fetch {
+		return async (_input, init) => {
+			const body = JSON.parse(String(init?.body)) as { input: string[] };
+			calls.push([...body.input]);
+			return new Response(
+				JSON.stringify({
+					data: body.input.map((text, index) => ({
+						index,
+						embedding: text.includes("alpha") ? [1, 0] : [0, 1],
+					})),
+				}),
+				{ status: 200, headers: { "content-type": "application/json" } },
+			);
+		};
+	}
+
+	it("建会话不扫描；首次真实 code_search 才索引、检索并落匿名审计", async () => {
+		await writeSettings("full", { features: { vector: true }, vector });
+		await writeFile(join(proj, "auth.ts"), "export const alphaAuth = true;\n");
+		const embeddingCalls: string[][] = [];
+		const adapter = scriptedAdapter([
+			toolCallRound("code_search", "c-code", '{"query":"alpha"}'),
+			textRound("检索完成", { input: 10, output: 5 }),
+		]);
+		const sm = createSessionManager({
+			home,
+			llm: { adapter, model: MODEL },
+			embeddingFetch: fakeEmbeddingFetch(embeddingCalls),
+		});
+		const rec = await sm.create(proj);
+		expect(embeddingCalls).toEqual([]);
+		await expect(access(join(home, "memory", "vectors"))).rejects.toThrow();
+		const { events, sink } = makeSink();
+		sm.subscribe(rec.id, null, sink);
+
+		await sm.send(rec.id, "查找认证代码");
+		await waitFor(() => events.some(isTurnEnd));
+
+		const results = logEvents(events, "tool_result");
+		expect(
+			results.some(
+				(event) =>
+					event.type === "tool_result" &&
+					event.content.includes("auth.ts") &&
+					event.content.includes("alphaAuth"),
+			),
+		).toBe(true);
+		expect(embeddingCalls).toHaveLength(2);
+		const { events: fileEvents } = await loadSession(rec.filePath);
+		const audit = fileEvents.find((event) => event.type === "vector/indexed");
+		expect(audit).toMatchObject({ files: 1, chunks: 1 });
+		expect(JSON.stringify(audit)).not.toContain("auth.ts");
+		expect(JSON.stringify(audit)).not.toContain("alphaAuth");
+		await sm.close(rec.id);
+	});
+
+	it("开关关闭或 embedding 缺失时 server 回合不声明 code_search", async () => {
+		for (const extra of [
+			{ features: { vector: false }, vector },
+			{ features: { vector: true } },
+		]) {
+			await writeSettings("full", extra);
+			const requests: ChatRequest[] = [];
+			const inner = scriptedAdapter([textRound("ok", { input: 1, output: 1 })]);
+			const recording: LlmAdapter = {
+				api: inner.api,
+				streamChat(request, signal) {
+					requests.push(request);
+					return inner.streamChat(request, signal);
+				},
+			};
+			const sm = createSessionManager({
+				home,
+				llm: { adapter: recording, model: MODEL },
+			});
+			const rec = await sm.create(proj);
+			const { events, sink } = makeSink();
+			sm.subscribe(rec.id, null, sink);
+			await sm.send(rec.id, "你好");
+			await waitFor(() => events.some(isTurnEnd));
+			expect(requests[0]?.tools.map((tool) => tool.name)).not.toContain(
+				"code_search",
+			);
+			await sm.close(rec.id);
+		}
 	});
 });
 

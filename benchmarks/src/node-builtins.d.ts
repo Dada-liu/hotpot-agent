@@ -5,15 +5,22 @@
 
 interface HotpotFileHandle {
 	write(data: string): Promise<unknown>;
+	write(data: Uint8Array): Promise<{ bytesWritten: number }>;
 	sync(): Promise<void>;
 	close(): Promise<void>;
 }
 
-// readdir withFileTypes 形态的目录项：core skills.ts 递归扫描用它区分文件/目录
+// readdir withFileTypes 形态的目录项：core skills.ts 与 memory 代码索引用它区分文件/目录
 interface HotpotDirent {
 	name: string;
 	isDirectory(): boolean;
 	isFile(): boolean;
+	isSymbolicLink(): boolean;
+}
+
+interface HotpotHash {
+	update(data: string | Uint8Array): HotpotHash;
+	digest(encoding: "hex"): string;
 }
 
 // 子进程 stdout/stderr 的可读流（只用到 data 事件；chunk 运行时是 Buffer，结构上有 toString）
@@ -25,17 +32,22 @@ interface HotpotChildStream {
 
 interface HotpotStats {
 	size: number;
+	mtimeMs: number;
 	isDirectory(): boolean;
 	isFile(): boolean;
 }
 
 declare module "node:fs/promises" {
-	export function open(path: string, flags: "a"): Promise<HotpotFileHandle>;
+	export function open(
+		path: string,
+		flags: "a" | "wx",
+	): Promise<HotpotFileHandle>;
 	export function mkdir(
 		path: string,
 		options?: { recursive?: boolean },
 	): Promise<string | undefined>;
 	export function readFile(path: string, encoding: "utf8"): Promise<string>;
+	export function readFile(path: string): Promise<Uint8Array>;
 	export function writeFile(path: string, data: string): Promise<void>;
 	export function writeFile(
 		path: string,
@@ -59,6 +71,8 @@ declare module "node:fs/promises" {
 	// 工作区注册表（core）编译进本包：realpath 校验目录，rename 原子替换存储
 	export function realpath(path: string): Promise<string>;
 	export function rename(oldPath: string, newPath: string): Promise<void>;
+	export function unlink(path: string): Promise<void>;
+	export function utimes(path: string, atime: Date, mtime: Date): Promise<void>;
 }
 
 declare module "node:fs" {
@@ -143,11 +157,7 @@ declare module "node:path" {
 
 declare module "node:crypto" {
 	export function randomUUID(): string;
-	// 运行清单用 sha256 标记题目集/被选实例集合：只要集合或题面变化，哈希就必须变
-	export interface HotpotHash {
-		update(data: string): HotpotHash;
-		digest(encoding: "hex"): string;
-	}
+	// 运行清单与代码索引共用 sha256；全局 HotpotHash 同时支持文本和字节输入
 	export function createHash(algorithm: string): HotpotHash;
 }
 

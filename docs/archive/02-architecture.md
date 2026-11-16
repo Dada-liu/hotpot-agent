@@ -89,6 +89,15 @@
 - 安装 ID：`<home>/telemetry/install-id`（benchmark 使用独立文件），不关联账号或机器名
 - 详见 [packages/telemetry/README.md](../../packages/telemetry/README.md)
 
+### packages/memory — 本地增量代码检索
+
+- OpenAI 兼容 embedding 客户端、JSONL 精确向量库与 `code_search` 工具；只服务代码检索，不读取/写入 `MEMORY.md`，不接入用户语义记忆。
+- `features.vector=true` 且用户级 `vector.embedding` 完整时，CLI/server 直接实例化 memory（直接 `cli/server → memory`），再经 orchestrator 向 main/worker/task 注册工具。装配与项目启动不扫描、不联网；每次实际检索前才增量刷新 cwd。
+- 默认忽略 `.git/node_modules/dist/build/.hotpot`、解析后的 `<home>/memory/vectors` 子树、符号链接、二进制/非 UTF-8 与超过 512KB 的文件；只接受常见源码扩展，排除 `.env*`、私钥、凭证/密码/token 文件、任意文本与 YAML/JSON 等部署配置。按最多 1200 字符、200 重叠分块；embedding 每批最多 16 个 chunk并按序合并向量。
+- 本地索引在 `<home>/memory/vectors/<sha256(cwd)>.jsonl`，旁边原子保存含空文件与预期 chunk ID 的 manifest。每次刷新重读 store/manifest并修复缺失/孤儿 chunk；完整未修改文件不保留文本。项目级 `wx` 锁协调跨 service/进程写入，异常与 abort 均释放。
+- 仅检索时把通过上述策略筛选的待索引源码 chunk 和查询文本发往用户配置的 embedding endpoint；索引审计与遥测只保留计数，不含路径或源码。
+- 详见 [packages/memory/README.md](../../packages/memory/README.md)
+
 ## 3.1 模块目录约定（core / orchestrator）
 
 `packages/core` 与 `packages/orchestrator` 的 `src/` 采用「一个特性一个子文件夹」：
@@ -204,6 +213,7 @@ cli / server
 {"type":"prompt/invoked","id":"...","ts":"...","agentId":"main","name":"commit","args":"fix lint","content":"..."}
 {"type":"mcp/attached","id":"...","ts":"...","server":"fs","transport":"stdio","tools":["mcp__fs__read"]}
 {"type":"memory/saved","id":"...","ts":"...","agentId":"main"}
+{"type":"vector/indexed","id":"...","ts":"...","files":2,"chunks":8,"durationMs":12}
 {"type":"error","id":"...","ts":"...","agentId":"...","code":"...","message":"..."}
 ```
 
@@ -215,7 +225,7 @@ cli / server
 - 一个会话内所有 agent（含子 agent）写同一文件，`agentId` 区分
 - `request_header`：config + 工具 schema 快照变化时才记新条目（借鉴 dsh），支撑缓存命中分析
 - 队列变更（`inbox/spliced`）也落盘，崩溃恢复后 steering 队列不丢（借鉴 dsh）
-- M4 新增的 `todo/set`、`hook/fired`、`skill/loaded`、`prompt/invoked`、`mcp/attached`、`memory/saved` 均**不进模型历史**（`deriveMessages` 不折叠）：todo 由 `foldTodos` 重建清单并注入提示词段，其余供审计与遥测计数；`compaction` 则作为模型历史的保留点参与投影；memory/saved 不含记忆正文，Web 只按 id 去重而不渲染
+- M4 新增的 `todo/set`、`hook/fired`、`skill/loaded`、`prompt/invoked`、`mcp/attached`、`memory/saved`、`vector/indexed` 均**不进模型历史**（`deriveMessages` 不折叠）：todo 由 `foldTodos` 重建清单并注入提示词段，其余供审计与遥测计数；`compaction` 则作为模型历史的保留点参与投影；memory/saved 不含记忆正文，Web 只按 id 去重而不渲染；`vector/indexed` 只含 files/chunks/durationMs，Web reducer 忽略它
 - 崩溃最多丢最后一行；关键事件写入后 fsync
 
 ## 6. 配置体系
@@ -231,7 +241,8 @@ cli / server
 ├── skills/           # M4 skill（<name>/SKILL.md）
 ├── prompts/          # M4 prompt templates（<name>.md → /命令）
 ├── telemetry/        # M5 匿名安装 ID（install-id；benchmark 用 benchmark-install-id）
-└── MEMORY.md         # M4 用户记忆（人工可编辑 Markdown，默认关闭）
+├── MEMORY.md         # M4 用户记忆（人工可编辑 Markdown，默认关闭）
+└── memory/vectors/   # M4 代码向量索引（按 cwd 哈希分项目；非用户记忆）
 ```
 
 **项目级 `./.hotpot/`**（自 cwd 向上逐级查找，首个含 `settings.json` 的目录生效）：
@@ -250,10 +261,11 @@ cli / server
 | **maxParallelTasks** | **10** | 用户级+项目级 | 并行 TaskAgent 上限 |
 | **planMaxRevisions** | **3** | 用户级+项目级 | plan 审批修订轮次上限 |
 | permission.mode | ask-on-dangerous | 仅用户级 | 权限三档：readonly（read 类放行，其余 worker 工具逐个审批）/ ask-on-dangerous（危险操作询问）/ full（全部放行）；项目级 permission 会被忽略 |
-| features.* | memory 默认关闭，其余全开 | 仅用户级 | M4 功能开关：todo/hooks/skills/promptTemplates/webSearch/webFetch/mcp/compaction/memory；memory 关闭时不读 MEMORY.md、不注册 memory_save、不注入记忆段 |
+| features.* | memory/vector 默认关闭，其余全开 | 仅用户级 | M4 功能开关：todo/hooks/skills/promptTemplates/webSearch/webFetch/mcp/compaction/memory/vector；memory 关闭时不读 MEMORY.md、不注册 memory_save、不注入记忆段；vector 默认关闭，避免未经同意扫描与外发代码 |
 | compaction.triggerRatio | 0.8 | 仅用户级 | 正式请求前估算值严格超过 `(contextWindow - maxTokens) * triggerRatio` 时触发；合法范围 `(0,1]` |
 | compaction.keepRecentTokens | 20000 | 仅用户级 | 压缩时由尾向前保留的最近历史估算预算；正整数，工具调用与结果组不拆开 |
 | hooks | 无 | 仅用户级 | Claude Code 钩子格式（SessionStart/PreToolUse/PostToolUse/Stop） |
+| vector.embedding | 无 | 仅用户级 | OpenAI 兼容 embedding 的 model/baseUrl/apiKey；配置完整且 features.vector=true 才注册 code_search，仅实际检索时外发待索引 chunk 与查询 |
 | webSearch | duckduckgo | 仅用户级 | web_search 后端（duckduckgo 或 custom + baseUrl/apiKey/headers） |
 | mcpServers | 无 | 仅用户级 | MCP server：stdio（command/args/env）或 streamable HTTP（url/headers） |
 | skillsDirs | [] | 仅用户级 | 额外 skill 扫描目录（相对 cwd） |
@@ -263,7 +275,7 @@ cli / server
 | telemetry.token | 无 | 仅用户级 | ingest 的 Bearer token，支持整串 `$ENV` 引用；默认时不带 Authorization 头 |
 | telemetry.flushIntervalMs | 30000 | 仅用户级 | 定时批量上报间隔（毫秒），非负整数，`0` 表示不定时 flush；负数仍是校验错误 |
 
-项目级可覆盖白名单：`mainAgentTier`、`maxParallelTasks`、`planMaxRevisions`；其余字段（含 models、permission 与 compaction）一律忽略。凭证和权限只从用户级读取，规避恶意仓库注入或提权风险。M4 新增字段（features/compaction/hooks/webSearch/mcpServers/skillsDirs/promptsDirs）一律仅用户级：hooks/mcpServers 涉及任意命令执行，项目级注入即 RCE；扫描目录与外发流量同理。M5 的 `telemetry` 同样仅用户级：endpoint/token 决定数据与凭证去向，项目级可写等于允许仓库劫持上报。
+项目级可覆盖白名单：`mainAgentTier`、`maxParallelTasks`、`planMaxRevisions`；其余字段（含 models、permission 与 compaction）一律忽略。凭证和权限只从用户级读取，规避恶意仓库注入或提权风险。M4 新增字段（features/compaction/hooks/webSearch/mcpServers/skillsDirs/promptsDirs/vector）一律仅用户级：hooks/mcpServers 涉及任意命令执行，项目级注入即 RCE；扫描目录、代码外发目的地与外发流量同理。M5 的 `telemetry` 同样仅用户级：endpoint/token 决定数据与凭证去向，项目级可写等于允许仓库劫持上报。
 
 ## 7. 从 pi / dsh 借鉴的设计（汇总）
 

@@ -207,6 +207,15 @@ export type SessionEvent =
 			mode: PermissionMode;
 			source: "user" | "settings";
 	  }
+	// vector/indexed：代码索引变化审计，只携带聚合计数与耗时，不含路径或源码
+	| {
+			type: "vector/indexed";
+			id: string;
+			ts: string;
+			files: number;
+			chunks: number;
+			durationMs: number;
+	  }
 	| {
 			type: "error";
 			id: string;

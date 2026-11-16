@@ -76,6 +76,7 @@ import {
 	type WorkspaceRecord,
 	type WorkspaceRegistry,
 } from "@hotpot/core";
+import { createCodeIndexService, EmbeddingClient } from "@hotpot/memory";
 import {
 	closeMcpConnections,
 	connectMcpServers,
@@ -360,6 +361,8 @@ export interface SessionManagerOptions {
 	mcpCreateClient?: McpClientFactory;
 	// 测试注入点：遥测上报用的 fetch，默认走全局 fetch
 	telemetryFetch?: typeof fetch;
+	// 测试注入点：代码 embedding 请求，默认走全局 fetch
+	embeddingFetch?: typeof fetch;
 	// 测试注入点：系统目录选择器（默认调 directory-picker 的原生实现）
 	picker?: () => Promise<string | null>;
 }
@@ -922,6 +925,31 @@ export function createSessionManager(
 				})
 			: undefined;
 
+		// 代码索引只构造惰性 service；首次 code_search 时才扫描 cwd 并请求 embedding。
+		const embedding = featureEnabled(settings.features, "vector")
+			? settings.vector?.embedding
+			: undefined;
+		const codeSearch =
+			embedding === undefined
+				? undefined
+				: createCodeIndexService({
+						cwd,
+						home: resolveHome(opts.home),
+						model: embedding.model,
+						embedding: new EmbeddingClient({
+							...embedding,
+							fetchImpl: opts.embeddingFetch,
+						}),
+						onIndexed: async (audit) => {
+							await watermark.session.append({
+								type: "vector/indexed",
+								id: randomUUID(),
+								ts: new Date().toISOString(),
+								...audit,
+							});
+						},
+					});
+
 		const baseRuntime = createRuntime({
 			session: watermark.session,
 			cwd,
@@ -938,6 +966,7 @@ export function createSessionManager(
 			mcpTools: mcpConnections.flatMap((c) => c.tools),
 			webSearch: settings.webSearch,
 			hooks,
+			codeSearch,
 		});
 		// opts.llm 覆盖档位解析（main/worker 共用同一录制适配器）；
 		// 未注入时仅为主档位解析一次拿兜底告警（runtime 内部每回合自行解析）

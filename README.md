@@ -53,7 +53,7 @@ hotpot web
 └───────────────────────────────────────────────────────────────────────────┘
 ```
 
-依赖方向严格自上而下（`server → orchestrator → core → ai`；`cli` 与 `server` 同为 orchestrator 之上的入口，`web` 不引 workspace 包、构建产物由 server 托管），禁止反向依赖。另有旁路包 `packages/telemetry`（`cli`/`server` → `telemetry` → `core`），只做匿名指标上报，不进入 agent 主链路；开发工具 `benchmarks/`（根级目录，与 `packages/` 并列）复用 core/orchestrator/telemetry 跑批，但不被 `cli`/`server` 引用，也不进入工具产物。
+依赖方向严格自上而下（`server → orchestrator → core → ai`；`cli` 与 `server` 同为 orchestrator 之上的入口，`web` 不引 workspace 包、构建产物由 server 托管），禁止反向依赖。另有旁路包 `packages/telemetry`（`cli`/`server` → `telemetry` → `core`），只做匿名指标上报，不进入 agent 主链路；`packages/memory` 是独立的代码检索基础设施（embedding 客户端 + 本地 JSONL 向量库），不读取或写入 `MEMORY.md`；开发工具 `benchmarks/`（根级目录，与 `packages/` 并列）复用 core/orchestrator/telemetry 跑批，但不被 `cli`/`server` 引用，也不进入工具产物。
 
 一次用户消息的数据流：cli → `runMainTurn`（首轮提示词难度路由）→ worker / task 内联跑 core `runTurn` → 每个 step 由 `deriveMessages` 从会话日志转换历史 → `ai.streamChat` → 工具批次经审批 waterfall 执行 → 全部事件 append 进 JSONL 并流回 cli 渲染。
 
@@ -74,7 +74,8 @@ hotpot web
 │   ├── web/           # @hotpot/web：React SPA（三栏界面、agent 状态面板）
 │   ├── cli/           # @hotpot/cli：行式交互入口
 │   ├── hotpot-agent/  # hotpot-agent：npm 发布包（hotpot 命令 + Web 产物）
-│   └── telemetry/     # @hotpot/telemetry：M5 匿名遥测客户端（事件 schema、脱敏、批量上报）
+│   ├── telemetry/     # @hotpot/telemetry：M5 匿名遥测客户端（事件 schema、脱敏、批量上报）
+│   └── memory/        # @hotpot/memory：代码检索 embedding 客户端与本地精确向量库
 ├── benchmarks/        # @hotpot/benchmarks：M5 benchmark runner（SWE-bench 官方评测 + 自建题三类）
 └── scripts/           # 开发辅助脚本（pnpm dev 等）
 ```
@@ -136,6 +137,25 @@ M6 已完成：Web 端交互完善——运行中发送默认进入 next-turn �
 
    可选用户记忆默认关闭；在用户级 settings 中设置 `"features": {"memory": true}` 后，main/worker 可用 `memory_save` 保存稳定偏好或事实，task 只读取。记忆存于 `~/.hotpot/MEMORY.md`（`HOTPOT_HOME` 可覆盖），是可人工编辑的 Markdown，每轮只注入最新有界摘要。不要保存密钥、凭证或临时任务状态；遥测只上报开关与次数，不上报记忆正文，也不提供 `memory_search` 或向量检索。
 4. Web 端：安装后运行 `hotpot web` 一键启动（默认监听 http://127.0.0.1:4573，启动时生成 API token，就绪后自动打开带 `?token=` 的地址；同一 settings 配置，会话与 CLI 互通）；源码仓库开发态运行 `pnpm dev web`。浏览器会将 token 存入会话存储并清理地址栏，刷新后 REST/SSE 仍携带认证。手动访问时使用终端打印的完整地址；开发态改前端时另开 `pnpm --filter @hotpot/web dev`，Vite 将 `/api` 代理到 4573。
+
+## 可选：代码语义检索
+
+代码向量检索默认关闭。要启用 main/worker/task 的 `code_search`，在用户级 `~/.hotpot/settings.json` 中同时配置：
+
+```json
+{
+  "features": { "vector": true },
+  "vector": {
+    "embedding": {
+      "model": "text-embedding-3-small",
+      "baseUrl": "https://api.openai.com/v1",
+      "apiKey": "$OPENAI_API_KEY"
+    }
+  }
+}
+```
+
+项目装配与启动不会扫描或联网。只有实际调用 `code_search` 时才增量扫描当前工作区，并把待索引源码 chunk 与查询文本 POST 到所配 OpenAI 兼容 embedding endpoint；未修改文件不会重复请求索引 embedding。默认忽略 `.git`、`node_modules`、`dist`、`build`、`.hotpot`、符号链接、二进制与超过 512KB 的文件，并且只索引常见源码扩展；`.env*`、私钥、凭证/密码/token 文件、任意文本以及 YAML/JSON 等部署配置不会进入 embedding。本地索引存于 `~/.hotpot/memory/vectors/<sha256(cwd)>.jsonl`；审计与遥测只含计数，不含路径或源码。该能力不读取/写入 `MEMORY.md`，也不是用户记忆。详见 [packages/memory/README.md](packages/memory/README.md)。
 
 ## 发布 npm 包
 

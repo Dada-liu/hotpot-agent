@@ -1,0 +1,8 @@
+{
+	"extends": "../../tsconfig.base.json",
+	"compilerOptions": {
+		// fetch、Response 与 AbortSignal 是 Node 22 运行时全局，类型声明来自 DOM lib
+		"lib": ["es2023", "dom"]
+	},
+	"include": ["src", "test"]
+}
