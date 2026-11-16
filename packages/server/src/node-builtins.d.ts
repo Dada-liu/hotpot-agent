@@ -104,6 +104,12 @@ declare module "node:fs" {
 		path: string,
 		options?: { recursive?: boolean },
 	): string | undefined;
+	// settings-store 测试夹具：临时目录创建与清理
+	export function mkdtempSync(prefix: string): string;
+	export function rmSync(
+		path: string,
+		options?: { recursive?: boolean; force?: boolean },
+	): void;
 	export function watch(
 		path: string,
 		listener: (event: string, filename: string | null) => void,

@@ -424,7 +424,9 @@ export async function fetchViewerRaw(
 	return res.blob();
 }
 
-// GET/PUT /api/settings 的模型设置视图（server settings-store.ts 的 ModelSettingsView 镜像）
+// GET/PUT /api/settings 的用户级设置视图（server settings-store.ts 的 SettingsView 镜像）。
+// 嵌套的 hooks/mcpServers 形状以 core schema 为准，web 端只做 JSON 级编辑（unknown 透传，
+// 由服务端 zod 校验），避免把 node 包类型拖进 vite 解析。
 export interface ModelRefWire {
 	provider: string;
 	model: string;
@@ -434,21 +436,65 @@ export interface ModelRefWire {
 
 export type ModelTier = "high" | "medium" | "low";
 
-export interface ModelSettings {
+export type PermissionModeWire = "readonly" | "ask-on-dangerous" | "full";
+
+export interface FeatureFlagsWire {
+	todo?: boolean;
+	hooks?: boolean;
+	skills?: boolean;
+	promptTemplates?: boolean;
+	webSearch?: boolean;
+	webFetch?: boolean;
+	mcp?: boolean;
+	compaction?: boolean;
+	memory?: boolean;
+}
+
+export interface CompactionWire {
+	triggerRatio?: number;
+	keepRecentTokens?: number;
+}
+
+export interface WebSearchWire {
+	backend: "duckduckgo" | "custom";
+	apiKey?: string;
+	baseUrl?: string;
+	headers?: Record<string, string>;
+}
+
+export interface TelemetryWire {
+	enabled?: boolean;
+	endpoint?: string;
+	token?: string;
+	flushIntervalMs?: number;
+}
+
+export interface SettingsView {
 	models: Record<ModelTier, ModelRefWire>;
 	mainAgentTier?: ModelTier;
+	maxParallelTasks?: number;
+	planMaxRevisions?: number;
+	permission?: { mode?: PermissionModeWire };
+	features?: FeatureFlagsWire;
+	compaction?: CompactionWire;
+	hooks?: unknown;
+	webSearch?: WebSearchWire;
+	mcpServers?: Record<string, unknown>;
+	skillsDirs?: string[];
+	promptsDirs?: string[];
+	telemetry?: TelemetryWire;
 }
 
-export async function getModelSettings(): Promise<ModelSettings> {
-	return (await request("/api/settings")) as ModelSettings;
+export async function getSettings(): Promise<SettingsView> {
+	return (await request("/api/settings")) as SettingsView;
 }
 
-export async function updateModelSettings(
-	settings: ModelSettings,
-): Promise<ModelSettings> {
+export async function updateSettings(
+	settings: SettingsView,
+): Promise<SettingsView> {
 	return (await request("/api/settings", {
 		method: "PUT",
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify(settings),
-	})) as ModelSettings;
+	})) as SettingsView;
 }

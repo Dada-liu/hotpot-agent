@@ -108,7 +108,7 @@ const permissionSchema = z.object({
 });
 export type PermissionMode = (typeof PERMISSION_MODES)[number];
 
-const settingsSchema = z.object({
+export const settingsSchema = z.object({
 	models: modelsSchema,
 	mainAgentTier: z.enum(["high", "medium", "low"]).optional(),
 	maxParallelTasks: z.number().int().positive().optional(),

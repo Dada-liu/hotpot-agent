@@ -22,9 +22,9 @@ import {
 import type { SessionManager } from "./session-manager.ts";
 import { PromptCommandError, SessionApiError } from "./session-manager.ts";
 import {
-	putModelSettingsSchema,
-	readModelSettings,
-	writeModelSettings,
+	putSettingsSchema,
+	readUserSettings,
+	writeUserSettings,
 } from "./settings-store.ts";
 import type { WireEvent } from "./wire.ts";
 
@@ -686,26 +686,25 @@ export function createApp(
 		return c.json(await manager.usage(rec.id));
 	});
 
-	// 模型设置（web 设置弹窗）：只读写用户级 settings.json 的 models/mainAgentTier 切片，
-	// 其余字段原样保留；读失败（缺文件/坏 JSON/不合规）抛错走 onError 500
+	// 用户级设置（web 设置弹窗）：读写 ~/.hotpot/settings.json 的全量用户级键
+	// （models/mainAgentTier/maxParallelTasks/planMaxRevisions/permission/features/
+	// compaction/hooks/webSearch/mcpServers/skillsDirs/promptsDirs/telemetry），
+	// 未知键原样保留；读失败（缺文件/坏 JSON/不合规）抛错走 onError 500
 	app.get("/api/settings", async (c) => {
-		return c.json(readModelSettings(opts.home));
+		return c.json(readUserSettings(opts.home));
 	});
 
 	app.put("/api/settings", async (c) => {
 		const body = await readJsonBody(c);
-		const parsed = putModelSettingsSchema.safeParse(body);
+		const parsed = putSettingsSchema.safeParse(body);
 		if (!parsed.success) {
-			return c.json(
-				{
-					error:
-						"body 需为 {models: {high|medium|low: {provider, model, apiKey, baseUrl?}}, mainAgentTier?}",
-				},
-				400,
-			);
+			const detail = parsed.error.issues
+				.map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`)
+				.join("; ");
+			return c.json({ error: `settings 不合规: ${detail}` }, 400);
 		}
-		writeModelSettings(parsed.data, opts.home);
-		return c.json(readModelSettings(opts.home));
+		writeUserSettings(parsed.data, opts.home);
+		return c.json(readUserSettings(opts.home));
 	});
 
 	return app;
