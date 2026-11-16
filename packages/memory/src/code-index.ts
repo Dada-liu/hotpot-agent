@@ -477,19 +477,25 @@ async function acquireProjectLock(
 		}
 
 		const stopHeartbeat = startHeartbeat(path, owner);
+		const release = async () => {
+			await stopHeartbeat();
+			await removeOwnedLock(path, owner);
+		};
 		try {
 			while (await hasActiveLockIntents(path)) {
 				await waitForLock(signal);
+			}
+			try {
+				if ((await readFile(path, "utf8")) === owner) return release;
+			} catch (error) {
+				if (errorCode(error) !== "ENOENT") throw error;
 			}
 		} catch (error) {
 			await stopHeartbeat();
 			await removeOwnedLock(path, owner);
 			throw error;
 		}
-		return async () => {
-			await stopHeartbeat();
-			await removeOwnedLock(path, owner);
-		};
+		await stopHeartbeat();
 	}
 }
 

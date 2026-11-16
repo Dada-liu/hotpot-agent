@@ -2,8 +2,10 @@ import { createHash } from "node:crypto";
 import {
 	mkdir,
 	mkdtemp,
+	readFile,
 	rm,
 	symlink,
+	unlink,
 	utimes,
 	writeFile,
 } from "node:fs/promises";
@@ -354,6 +356,49 @@ describe("CodeIndexService", () => {
 		} finally {
 			clearTimeout(timeout);
 		}
+	});
+
+	it("等待回收意向期间锁被删除时必须重新获取，不能无锁索引", async () => {
+		await writeFile(join(cwd, "alpha.ts"), "export const alpha = 1;\n");
+		const projectKey = createHash("sha256").update(resolve(cwd)).digest("hex");
+		const vectors = join(home, "memory", "vectors");
+		await mkdir(vectors, { recursive: true });
+		const lockPath = join(vectors, `${projectKey}.lock`);
+		const intentPath = `${lockPath}.blocking.intent`;
+		await writeFile(intentPath, "reaper");
+		const fake: FakeEmbedding = {
+			batches: [],
+			embedding: {
+				async embed(texts, signal) {
+					signal.throwIfAborted();
+					if (texts.some((text) => text.includes("export"))) {
+						await readFile(lockPath, "utf8");
+					}
+					return texts.map(() => [1, 0]);
+				},
+			},
+		};
+		const pending = serviceWith(fake).search(
+			"alpha",
+			5,
+			new AbortController().signal,
+		);
+		const deadline = Date.now() + 2_000;
+		for (;;) {
+			try {
+				await readFile(lockPath, "utf8");
+				break;
+			} catch (error) {
+				if ((error as { code?: string }).code !== "ENOENT") throw error;
+				if (Date.now() >= deadline) throw new Error("project lock not created");
+				await new Promise((resolve) => setTimeout(resolve, 10));
+			}
+		}
+
+		await unlink(lockPath);
+		await unlink(intentPath);
+
+		expect(await pending).toMatchObject([{ path: "alpha.ts" }]);
 	});
 
 	it("长时间索引通过心跳保活，等待方不会抢占活跃项目锁", async () => {
