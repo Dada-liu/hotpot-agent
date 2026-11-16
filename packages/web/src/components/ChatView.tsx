@@ -46,6 +46,7 @@ import {
 import {
 	findFinalAnswer,
 	groupTranscript,
+	isMainChatEntry,
 	isProcessItem,
 	type TurnGroup,
 } from "../lib/turn-groups.ts";
@@ -1232,7 +1233,9 @@ export function ChatView({
 		);
 	}
 
-	const groups = groupTranscript(state.transcript);
+	// 主对话区只渲染 main agent 的内容与常驻交互（plan/approval）；
+	// worker/task 的思考、工具调用与输出留在右侧面板详情里按 agentId 查看
+	const groups = groupTranscript(state.transcript.filter(isMainChatEntry));
 	const lastIndex = groups.length - 1;
 	// 队列为空且回合运行中：取消钮放 composer 底部（队列非空时 QueueBar 内有取消钮）
 	const queueCount = state.inbox.nextTurn.length + state.inbox.nextStep.length;

@@ -55,3 +55,13 @@ export function findFinalAnswer(
 export function isProcessItem(entry: TranscriptEntry): boolean {
 	return entry.kind === "assistant" || entry.kind === "tool";
 }
+
+// 主对话区条目：只展示 main agent 的内容与常驻交互（plan/approval 无 agentId 字段）。
+// worker/task 的思考、工具调用与输出不进主对话区，由右侧面板按 agentId 过滤详情展示
+export function isMainChatEntry(entry: TranscriptEntry): boolean {
+	return (
+		entry.kind === "plan" ||
+		entry.kind === "approval" ||
+		entry.agentId === "main"
+	);
+}
