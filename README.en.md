@@ -90,7 +90,7 @@ pnpm pack:npm         # create the npm tarball under artifacts/
 pnpm publish:npm      # publish the npm tarball (requires npm login)
 pnpm bench --help     # benchmark runner: official SWE-bench / three categories of custom tasks
 pnpm dev <pkg> [args] # run a package entry directly with tsx, e.g. pnpm dev cli chat
-pnpm dev web          # build and start the web app (default port 4573, opens the browser)
+pnpm dev web          # build and start the web app (default port 4573, opens the browser; --port/--host/--no-open pass through, e.g. pnpm dev web --port 4574)
 pnpm exec biome check # lint + format check
 ```
 

@@ -1,7 +1,9 @@
 // 用法：pnpm dev <pkg> [args...]
 // 把包名映射到 packages/<pkg>/src/bin.ts 并用 tsx 直跑（开发模式，无需构建）。
 // web 为复合入口：先构建 Web 产物，再启动 server，端口就绪后自动打开浏览器。
-// 例：pnpm dev cli chat / pnpm dev web
+// web 的启动参数（--port/--host/--no-open）会透传给 server bin，浏览器地址按同一套优先级解析：
+// --port 标志 > HOTPOT_PORT 环境变量 > 4573。
+// 例：pnpm dev cli chat / pnpm dev web --port 4574
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -25,6 +27,36 @@ const entry = isWeb
 if (!existsSync(entry)) {
 	console.error(`入口不存在: ${entry}（@hotpot/${pkg} 暂无可运行入口）`);
 	process.exit(1);
+}
+
+// 从 web 启动参数中解析浏览器可达地址（与 packages/server/src/args.ts 的解析语义保持一致；
+// 仅扫描、不校验，非法参数由 server bin 报错退出）。优先级：--port 标志 > HOTPOT_PORT > 4573。
+function resolveWebUrl(args: string[]): { url: string; open: boolean } {
+	let port = Number(process.env.HOTPOT_PORT ?? 4573);
+	let hostname = "127.0.0.1";
+	let open = true;
+	for (let i = 0; i < args.length; i += 1) {
+		const flag = args[i];
+		if (flag === "--no-open") {
+			open = false;
+		} else if (flag === "--port" || flag === "-p") {
+			const value = Number(args[i + 1]);
+			if (Number.isInteger(value) && value >= 0 && value <= 65535) {
+				port = value;
+			}
+			i += 1;
+		} else if (flag === "--host") {
+			const value = args[i + 1];
+			if (value !== undefined && value !== "") {
+				hostname = value;
+			}
+			i += 1;
+		}
+	}
+	const connectable =
+		hostname === "0.0.0.0" || hostname === "::" ? "localhost" : hostname;
+	const host = connectable.includes(":") ? `[${connectable}]` : connectable;
+	return { url: `http://${host}:${port}`, open };
 }
 
 function run(command: string, commandArgs: string[]): Promise<number> {
@@ -58,6 +90,7 @@ function openBrowser(url: string): void {
 async function openWhenReady(
 	url: string,
 	hasExited: () => boolean,
+	open: boolean,
 ): Promise<void> {
 	const deadline = Date.now() + 15_000;
 	while (Date.now() < deadline) {
@@ -70,7 +103,9 @@ async function openWhenReady(
 			});
 			if (response.status < 500) {
 				console.log(`[web] 已启动: ${url}`);
-				openBrowser(url);
+				if (open) {
+					openBrowser(url);
+				}
 				return;
 			}
 		} catch {
@@ -100,11 +135,12 @@ const child = spawn("tsx", [entry, ...args], {
 });
 
 if (isWeb && apiToken !== undefined) {
-	const port = Number(process.env.HOTPOT_PORT ?? 4573);
+	const { url, open } = resolveWebUrl(args);
 	const token = encodeURIComponent(apiToken);
 	void openWhenReady(
-		`http://localhost:${port}?token=${token}`,
+		`${url}?token=${token}`,
 		() => child.exitCode !== null,
+		open,
 	);
 }
 

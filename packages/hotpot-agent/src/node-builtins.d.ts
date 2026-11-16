@@ -273,6 +273,7 @@ declare const process: {
 	version: string;
 	cwd(): string;
 	exitCode: number;
+	exit(code?: number): never;
 	kill(pid: number, signal?: string): boolean;
 	stdin: unknown;
 	stdout: HotpotWritable;

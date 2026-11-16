@@ -90,7 +90,7 @@ pnpm pack:npm         # 在 artifacts/ 生成 npm tarball
 pnpm publish:npm      # 发布 npm tarball（需先 npm login）
 pnpm bench --help     # benchmark runner：SWE-bench 官方评测 / 自建题三类
 pnpm dev <pkg> [args] # tsx 直跑包入口，如 pnpm dev cli chat
-pnpm dev web          # 构建并启动 Web 端（默认 4573 端口，启动后自动打开浏览器）
+pnpm dev web          # 构建并启动 Web 端（默认 4573 端口，启动后自动打开浏览器；--port/--host/--no-open 透传，如 pnpm dev web --port 4574）
 pnpm exec biome check # lint + format 检查
 ```
 

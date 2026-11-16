@@ -26,7 +26,7 @@ M3 服务层：在 cli 与 orchestrator 之上提供 REST + SSE API，负责会�
 - **REST + SSE 路由**（`src/app.ts`）：全部路由挂 `/api/sessions*`；`GET /:id` 与 `events`（SSE）等单会话路由经共享的 `requireSession` 解析——内存 managed 表未命中时降级 `attachById` 恢复磁盘会话（CLI 创建的会话同样可打开），attach 也未命中才 404。`DELETE /:id` 删除会话：运行中 409（先取消再删）；删除 = close 收尾（拒决未决审批/停 tailer/摘 managed/关 MCP）+ 删磁盘日志，之后任何入口均 404。`POST /:id/archive` 归档会话：结束运行中的回合（abort + 拒决未决审批 + 不再消费队列）并等回合链落定（日志与遥测全部落盘）后摘托管；会话保留在磁盘列表中，可随时重新打开。
 - **`startServer` 启动装配**（`src/serve.ts`）：SessionManager + Hono app + 静态托管 + `@hono/node-server` 监听的可复用接线；`hotpot-server` bin 与发布包 `hotpot web` 共用。默认仅监听 `127.0.0.1`，端口取参数或 `HOTPOT_PORT`（默认 4573），静态目录可用参数或 `HOTPOT_WEB_DIST`/`HOTPOT_PUBLIC_DIR` 覆盖。每次启动生成随机 API token，也可由非空 `HOTPOT_API_TOKEN` 固定；REST 使用 Bearer 认证，SSE events 使用 `access_token` 查询参数，静态资源无需认证。
 - **用户级设置**（`src/settings-store.ts`）：`GET /api/settings` 返回 settings.json 的全量用户级视图（models/mainAgentTier/maxParallelTasks/planMaxRevisions/permission/features/compaction/hooks/webSearch/mcpServers/skillsDirs/promptsDirs/telemetry），敏感字段（`models.*.apiKey`、`webSearch.apiKey`、`telemetry.token`）只返回固定掩码，不返回字面值或 `$ENV` 引用；PUT 整体写回视图键（未知键原样保留），仍为掩码的字段保留磁盘原值，其他非空值明确替换。
-- **`hotpot-server` bin**（`src/bin.ts`）：调用 `startServer` 并打印带 `?token=` 的实际启动地址，供源码仓库开发态使用。
+- **`hotpot-server` bin**（`src/bin.ts`）：经 `parseServeArgs`（`src/args.ts`，与发布包 `hotpot web` 共用）解析 `--port`/`--host`/`--no-open` 后调用 `startServer`，打印带 `?token=` 的实际启动地址，供源码仓库开发态使用（`pnpm dev web --port 4574`）。
 
 ## M4 增量
 
@@ -57,7 +57,8 @@ M3 服务层：在 cli 与 orchestrator 之上提供 REST + SSE API，负责会�
 ```
 src/
   index.ts             包入口：re-export 全部公开模块
-  bin.ts               hotpot-server 启动入口（REST + SSE + 静态托管）
+  bin.ts               hotpot-server 启动入口（REST + SSE + 静态托管，解析 --port/--host/--no-open）
+  args.ts              启动参数解析（parseServeArgs，bin 与发布包 hotpot web 共用）
   serve.ts             startServer 启动装配（bin 与发布包 hotpot web 共用）
   app.ts               HTTP 路由（REST + SSE，requireSession 共享解析）
   directory-picker.ts  系统原生目录选择器（macOS/Windows/Linux）
@@ -70,6 +71,7 @@ src/
   static.ts            静态托管（mountStatic：web 产物 + 根 public/）
   node-builtins.d.ts   Node 内置模块的最小 ambient 声明（禁 @types/node，超集自 core）
 test/
+  args.test.ts                parseServeArgs 默认/解析/非法参数用例
   tailer.test.ts              补读/坏行/半行/stop/offset 续读用例
   session-manager.test.ts     事件顺序/spawn/审批/plan/串行/attach/usage 集成用例
   serve.test.ts               默认回环监听、REST/SSE 认证与静态免认证

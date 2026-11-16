@@ -254,9 +254,13 @@ declare module "node:http2" {
 }
 
 declare const process: {
+	argv: string[];
 	env: Record<string, string | undefined>;
 	platform: string;
 	version: string;
 	cwd(): string;
 	kill(pid: number, signal?: string): boolean;
+	// bin 入口解析启动参数失败时打错误并退出；返回 never 让「先赋值后使用」收窄通过
+	stderr: { write(message: string): void };
+	exit(code?: number): never;
 };
