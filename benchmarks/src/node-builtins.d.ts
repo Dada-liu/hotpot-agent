@@ -32,6 +32,7 @@ interface HotpotChildStream {
 
 interface HotpotStats {
 	size: number;
+	mtimeMs: number;
 	isDirectory(): boolean;
 	isFile(): boolean;
 }
@@ -71,6 +72,7 @@ declare module "node:fs/promises" {
 	export function realpath(path: string): Promise<string>;
 	export function rename(oldPath: string, newPath: string): Promise<void>;
 	export function unlink(path: string): Promise<void>;
+	export function utimes(path: string, atime: Date, mtime: Date): Promise<void>;
 }
 
 declare module "node:fs" {

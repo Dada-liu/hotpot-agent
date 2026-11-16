@@ -39,8 +39,9 @@ declare module "node:fs/promises" {
 	): Promise<HotpotDirectoryEntry[]>;
 	export function stat(
 		path: string,
-	): Promise<{ size: number; isFile(): boolean }>;
+	): Promise<{ size: number; mtimeMs: number; isFile(): boolean }>;
 	export function symlink(target: string, path: string): Promise<void>;
+	export function utimes(path: string, atime: Date, mtime: Date): Promise<void>;
 	export function appendFile(path: string, data: string): Promise<void>;
 	export function rename(oldPath: string, newPath: string): Promise<void>;
 	export function unlink(path: string): Promise<void>;

@@ -1,5 +1,12 @@
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import {
+	mkdir,
+	mkdtemp,
+	rm,
+	symlink,
+	utimes,
+	writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -316,6 +323,82 @@ describe("CodeIndexService", () => {
 			expect(results).toHaveLength(1);
 		}
 	});
+
+	it("崩溃遗留的陈旧项目锁会被回收，后续索引不再阻塞", async () => {
+		await writeFile(join(cwd, "alpha.ts"), "export const alpha = 1;\n");
+		const projectKey = createHash("sha256").update(resolve(cwd)).digest("hex");
+		const vectors = join(home, "memory", "vectors");
+		await mkdir(vectors, { recursive: true });
+		const lockPath = join(vectors, `${projectKey}.lock`);
+		await writeFile(lockPath, "");
+		const staleTime = new Date(Date.now() - 60_000);
+		await utimes(lockPath, staleTime, staleTime);
+		const controller = new AbortController();
+		const timeout = setTimeout(
+			() => controller.abort(new Error("stale lock was not recovered")),
+			500,
+		);
+
+		try {
+			const results = await serviceWith(fakeEmbedding()).search(
+				"alpha",
+				5,
+				controller.signal,
+			);
+			expect(results).toMatchObject([{ path: "alpha.ts" }]);
+		} finally {
+			clearTimeout(timeout);
+		}
+	});
+
+	it("长时间索引通过心跳保活，等待方不会抢占活跃项目锁", async () => {
+		const file = join(cwd, "heartbeat.ts");
+		await writeFile(file, "export const alpha = 'v1';\n");
+		let delayFirst = true;
+		let started: (() => void) | undefined;
+		let releaseFirst: (() => void) | undefined;
+		const embeddingStarted = new Promise<void>((resolve) => {
+			started = resolve;
+		});
+		const gate = new Promise<void>((resolve) => {
+			releaseFirst = resolve;
+		});
+		const fakeA: FakeEmbedding = {
+			batches: [],
+			embedding: {
+				async embed(texts, signal) {
+					signal.throwIfAborted();
+					if (delayFirst) {
+						delayFirst = false;
+						started?.();
+						await gate;
+					}
+					return texts.map(() => [1, 0]);
+				},
+			},
+		};
+		const pendingA = serviceWith(fakeA).search(
+			"alpha",
+			5,
+			new AbortController().signal,
+		);
+		await embeddingStarted;
+		await writeFile(file, "export const beta = 'v2';\n");
+		const pendingB = serviceWith(fakeEmbedding()).search(
+			"beta",
+			5,
+			new AbortController().signal,
+		);
+
+		await new Promise((resolve) => setTimeout(resolve, 11_000));
+		releaseFirst?.();
+		await Promise.all([pendingA, pendingB]);
+
+		const reopened = await openProjectStore();
+		expect((await reopened.list("code")).map((record) => record.text)).toEqual([
+			"export const beta = 'v2';\n",
+		]);
+	}, 15_000);
 
 	it("空文件写入持久 manifest，重启后不重复审计", async () => {
 		await writeFile(join(cwd, "empty.ts"), "");

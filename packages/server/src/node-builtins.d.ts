@@ -84,14 +84,18 @@ declare module "node:fs/promises" {
 		options?: { recursive?: boolean; force?: boolean },
 	): Promise<void>;
 	// 会话创建 cwd 校验（须为已存在目录）
-	export function stat(
-		path: string,
-	): Promise<{ size: number; isDirectory(): boolean; isFile(): boolean }>;
+	export function stat(path: string): Promise<{
+		size: number;
+		mtimeMs: number;
+		isDirectory(): boolean;
+		isFile(): boolean;
+	}>;
 	// 工作区浏览 realpath 解析（逃逸校验用）
 	export function realpath(path: string): Promise<string>;
 	// 工作区注册表（core）原子写盘
 	export function rename(oldPath: string, newPath: string): Promise<void>;
 	export function unlink(path: string): Promise<void>;
+	export function utimes(path: string, atime: Date, mtime: Date): Promise<void>;
 }
 
 declare module "node:fs" {

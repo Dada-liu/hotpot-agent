@@ -7,7 +7,7 @@
 - 记录 ID 在项目库内唯一。后写 upsert 替换先写记录，tombstone 删除记录。删除入队前必须校验每个 ID 非空，确保接受的 tombstone 总能重放。检索按 namespace 隔离，使用精确余弦相似度并按分数降序排列。不得替换为近似检索。
 - `createCodeIndexService` 必须保持惰性：构造、CLI/server 装配和项目启动不得扫描、打开向量库或联网。只在检索前刷新当前 cwd。用内容哈希跳过未修改文件，修改时替换 chunk，删除时写 tombstone。固定窗口最多 1200 字符、重叠 200；忽略 `.git/node_modules/dist/build/.hotpot`、解析后的 `<home>/memory/vectors` 子树、符号链接、二进制/非 UTF-8 文件及超过 512KB 的文件。只索引常见源码扩展，并排除 `.env*`、凭证、密码/token 同名文件与常见私钥格式。每批 embedding 最多 16 个 chunk，保持批次和向量顺序。行号由一次前向扫描计算。结果使用相对路径、1 基包含端点的行范围与最多 800 字符的 excerpt。
 - 每个项目将 `<project-key>.manifest.json` 与向量库放在同一目录，manifest 原子写入并保存每文件 hash、预期 chunk ID（包括空文件）。刷新时重新读取 store 与 manifest，检测缺失/孤儿 chunk 并修复。完整未修改文件只保留 hash，不保留文本；只有新文件、变更或缺 chunk 的文件保留待分块文本。
-- 同一项目所有 service/进程通过 `<project-key>.lock` 的排他 `wx` 创建协调「重读 → 扫描 → embedding → 写入」。获得锁后重新打开 store；abort、异常和审计失败都必须在 `finally` 中释放锁，不得留下由本次调用持有的锁文件。
+- 同一项目所有 service/进程通过 `<project-key>.lock` 的排他 `wx` 创建协调「重读 → 扫描 → embedding → 写入」。获得锁后重新打开 store；abort、异常和审计失败都必须在 `finally` 中释放锁，不得留下由本次调用持有的锁文件。锁文件携带随机 owner token，每 5 秒刷新 mtime；超过 10 秒未更新的锁可回收。删除陈旧锁前必须再次核对 token 与 mtime，释放时也只能删除仍携带当前 owner token 的锁。
 - `createCodeSearchTool(service)` 暴露 `{query, limit?}`（默认 5、最多 20），按 score 降序并提供明确无匹配提示。索引变化只通过 `onIndexed` 报告 `{files, chunks, durationMs}`；审计和遥测不得加入源码或路径。
 - `features.vector` 默认关闭。`settings.vector.embedding` 及其凭证只允许用户级配置；不得加入项目级配置白名单，不得隐式联网或扫描。只有 `features.vector=true` 且 embedding 配置完整时才可向 main/worker/task 注册工具。
 - 只使用 erasable TypeScript；相对导入带 `.ts`；禁止 `any` 与 inline import。注释和 README 使用简体中文；AGENTS 使用英文，并同步维护 `AGENTS_zh-CN.md`。

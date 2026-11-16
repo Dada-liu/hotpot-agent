@@ -54,12 +54,16 @@ declare module "node:fs/promises" {
 		options?: { recursive?: boolean; force?: boolean },
 	): Promise<void>;
 	// 工作区注册表（core）编译进本包：realpath/stat 校验目录，rename 原子替换存储
-	export function stat(
-		path: string,
-	): Promise<{ size: number; isDirectory(): boolean; isFile(): boolean }>;
+	export function stat(path: string): Promise<{
+		size: number;
+		mtimeMs: number;
+		isDirectory(): boolean;
+		isFile(): boolean;
+	}>;
 	export function realpath(path: string): Promise<string>;
 	export function rename(oldPath: string, newPath: string): Promise<void>;
 	export function unlink(path: string): Promise<void>;
+	export function utimes(path: string, atime: Date, mtime: Date): Promise<void>;
 }
 
 declare module "node:fs" {

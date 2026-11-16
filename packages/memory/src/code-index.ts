@@ -6,6 +6,7 @@ import {
 	rename,
 	stat,
 	unlink,
+	utimes,
 } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import type {
@@ -327,25 +328,77 @@ function waitForLock(signal: AbortSignal): Promise<void> {
 	});
 }
 
+const LOCK_STALE_MS = 10_000;
+const LOCK_HEARTBEAT_MS = 5_000;
+
 async function acquireProjectLock(
 	path: string,
 	signal: AbortSignal,
 ): Promise<() => Promise<void>> {
+	const owner = randomUUID();
 	for (;;) {
 		signal.throwIfAborted();
 		try {
 			const handle = await open(path, "wx");
 			try {
+				const data = new TextEncoder().encode(owner);
+				let offset = 0;
+				while (offset < data.byteLength) {
+					const { bytesWritten } = await handle.write(data.subarray(offset));
+					if (bytesWritten <= 0) {
+						throw new Error("project lock write made no progress");
+					}
+					offset += bytesWritten;
+				}
 				await handle.close();
 			} catch (error) {
+				await handle.close().catch(() => {});
 				await unlink(path).catch(() => {});
 				throw error;
 			}
+
+			let released = false;
+			let heartbeat: Promise<void> = Promise.resolve();
+			const timer = setInterval(() => {
+				heartbeat = heartbeat
+					.then(async () => {
+						if (released || (await readFile(path, "utf8")) !== owner) return;
+						await utimes(path, new Date(), new Date());
+					})
+					.catch(() => {});
+			}, LOCK_HEARTBEAT_MS);
+			(timer as { unref?: () => void }).unref?.();
 			return async () => {
-				await unlink(path);
+				released = true;
+				clearInterval(timer);
+				await heartbeat;
+				try {
+					if ((await readFile(path, "utf8")) === owner) await unlink(path);
+				} catch (error) {
+					if (errorCode(error) !== "ENOENT") throw error;
+				}
 			};
 		} catch (error) {
 			if (errorCode(error) !== "EEXIST") throw error;
+		}
+
+		try {
+			const observed = await stat(path);
+			if (Date.now() - observed.mtimeMs >= LOCK_STALE_MS) {
+				const observedOwner = await readFile(path, "utf8");
+				await waitForLock(signal);
+				const current = await stat(path);
+				const currentOwner = await readFile(path, "utf8");
+				if (
+					current.mtimeMs === observed.mtimeMs &&
+					currentOwner === observedOwner &&
+					Date.now() - current.mtimeMs >= LOCK_STALE_MS
+				) {
+					await unlink(path);
+				}
+			}
+		} catch (error) {
+			if (errorCode(error) !== "ENOENT") throw error;
 		}
 		await waitForLock(signal);
 	}
