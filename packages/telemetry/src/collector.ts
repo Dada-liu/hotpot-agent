@@ -69,6 +69,7 @@ const FEATURE_KEYS: FeatureKey[] = [
 	"webFetch",
 	"mcp",
 	"compaction",
+	"memory",
 ];
 
 type FeatureKey = keyof NonNullable<Settings["features"]>;
@@ -563,6 +564,8 @@ function featureForSessionEvent(event: SessionEvent): FeatureKey | undefined {
 			return "promptTemplates";
 		case "mcp/attached":
 			return "mcp";
+		case "memory/saved":
+			return "memory";
 		default:
 			return undefined;
 	}
@@ -576,6 +579,8 @@ function featureForToolName(name: string): FeatureKey | undefined {
 			return "webSearch";
 		case "web_fetch":
 			return "webFetch";
+		case "memory_save":
+			return "memory";
 		default:
 			return name.startsWith("mcp__") ? "mcp" : undefined;
 	}

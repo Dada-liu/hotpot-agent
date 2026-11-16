@@ -67,7 +67,7 @@
 | 6 | web_search / web_fetch 工具 | 自媒体运营 bench 需要联网能力；搜索后端可换 | dsh | ✅ 已实现：`core/src/tools/web-fetch.ts`、`core/src/tools/web-search.ts`；验收 `core/test/web-fetch.test.ts`、`core/test/web-search.test.ts` |
 | 7 | MCP 支持 | stdio + streamable HTTP client；工具桥接为 `mcp__<server>__<tool>` | pi/dsh 一致 | ✅ 已实现：`orchestrator/src/mcp/mcp.ts` + `orchestrator/src/json-schema-to-zod/json-schema-to-zod.ts`；验收 `orchestrator/test/mcp.test.ts`、`json-schema-to-zod.test.ts`；真实 server 冒烟步骤见 `orchestrator/README.md` |
 | 8 | 上下文自动压缩 | compaction 作为会话事件（记录保留点 + 摘要），恢复时跳过被压缩段（pi 手法）；M1 遗留项 | pi/dsh | ✅ 已实现：`core/src/compaction/`、CLI 提示、Web 审计归约与遥测计数；验收 `core/test/loop.test.ts`、`cli/test/cli.test.ts`（含重启恢复）、`telemetry/test/collector.test.ts`、`web/test/reducer.test.ts` |
-| 9 | 用户记忆 | 跨会话记忆，启动时注入摘要 section，写记忆走独立工具 | — | ⏳ 未开始 |
+| 9 | 用户记忆 | 跨会话记忆，每轮注入有界摘要 section，main/worker 经 `memory_save` 写入，task 只读 | — | ✅ 已实现：`core/src/user-memory/` + orchestrator/CLI/server 接入；验收 `orchestrator/test/user-memory.test.ts`、`cli/test/user-memory.test.ts`、`server/test/user-memory.test.ts` |
 | 10 | 向量数据库 | 服务记忆与代码检索，独立 packages/memory | — | ⏳ 未开始 |
 | 11 | 后台任务 jobs | 后台 bash、子 agent 后台运行，完成时通知 | dsh | ⏳ 未开始 |
 | 12 | 权限预设 | 三档审批预设：readonly / ask-on-dangerous / full | dsh | ✅ 已实现：`core/src/config/config.ts`、`orchestrator/src/runtime/runtime.ts`；验收 `core/test/config.test.ts`、`orchestrator/test/runtime.test.ts`、`server/test/api.test.ts` |

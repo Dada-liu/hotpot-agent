@@ -525,7 +525,7 @@ describe("loadSettings telemetry 字段", () => {
 });
 
 describe("featureEnabled", () => {
-	it("features 为 undefined 时一律 true（默认全开）", () => {
+	it("features 为 undefined 时既有功能默认 true", () => {
 		expect(featureEnabled(undefined, "todo")).toBe(true);
 		expect(featureEnabled(undefined, "mcp")).toBe(true);
 	});
@@ -535,7 +535,35 @@ describe("featureEnabled", () => {
 		expect(featureEnabled({ todo: false }, "todo")).toBe(false);
 	});
 
-	it("未提及的键默认 true", () => {
+	it("未提及的既有键默认 true", () => {
 		expect(featureEnabled({ todo: false }, "hooks")).toBe(true);
+	});
+
+	it("memory 默认 false，显式开启后才返回 true", () => {
+		expect(featureEnabled(undefined, "memory")).toBe(false);
+		expect(featureEnabled({}, "memory")).toBe(false);
+		expect(featureEnabled({ memory: false }, "memory")).toBe(false);
+		expect(featureEnabled({ memory: true }, "memory")).toBe(true);
+	});
+});
+
+describe("loadSettings memory 开关", () => {
+	it("用户级 features.memory 可解析且项目级不能覆盖", async () => {
+		const data = validSettings() as Record<string, unknown>;
+		data.features = { memory: true };
+		await writeSettings(data);
+		await writeProjectSettings(home, { features: { memory: false } });
+
+		const settings = loadSettings({ home, cwd: home });
+
+		expect(settings.features?.memory).toBe(true);
+	});
+
+	it("features.memory 非 boolean 报错", async () => {
+		const data = validSettings() as Record<string, unknown>;
+		data.features = { memory: "yes" };
+		await writeSettings(data);
+
+		expect(() => loadSettings({ home, cwd: home })).toThrow(/memory/);
 	});
 });

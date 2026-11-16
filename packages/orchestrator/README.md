@@ -53,6 +53,7 @@
 - **hooks**：`runtime.hooks` 贯穿 main/worker/task 的 `LoopConfig`；`executeCall` 触发 pre/post tool，`runMainTurn` 与 `runAgentInline` 在回合收尾触发 turn_end，CLI/server 装配时触发 session_start。
 - **上下文自动压缩**：`runtime.features` 与 `runtime.compaction` 透传到初始轮、plan 轮、执行轮及 worker/task 的每个 `LoopConfig`；main 的瞬态压缩事件继续向 CLI/server 透传，下层事件仍按既有规则不外传。
 - **web 工具**：`runtime.webSearchBackend` 依 `settings.webSearch` 解析（duckduckgo 默认，可换 custom）；`features.webFetch`/`features.webSearch` 分别门控注册。
+- **用户记忆**：`features.memory=true` 时 main/worker 注册 `memory_save`，task 不注册；三个角色都在非空白摘要存在时注入英文 memory section（order 1600），原始 Markdown 排版保持不变。初始/执行 main turn、plan 阶段的每个内部请求与每个 worker/task turn 构建 prompt 前都重新读取 `<home>/MEMORY.md` 的有界摘要；关闭时不读文件、不注册工具、不注入。
 
 ## 已知边界（留待后续里程碑）
 

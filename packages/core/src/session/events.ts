@@ -1,8 +1,9 @@
 // 会话事件类型（v1 定稿）：字段对齐 docs/archive/02-architecture.md 第 5 节
 // M1 只写入 meta/user_msg/assistant_msg/tool_call/tool_result/error；
 // M2 起 agent_spawn、approval/*、inbox/spliced 已由编排层（packages/orchestrator）产出。
-// M4 新增 todo/set、hook/fired、skill/loaded、prompt/invoked、mcp/attached 五个审计变体
-// （均不进模型历史，与 inbox/spliced 同待遇——deriveMessages 不折叠，由各自 fold 纯函数重建状态）。
+// M4 新增 todo/set、hook/fired、skill/loaded、prompt/invoked、mcp/attached、memory/saved 六个审计变体
+// （任务清单/钩子/skill/prompt 模板/MCP 挂载/用户记忆写入的落盘记录，均不进模型历史，
+// 与 inbox/spliced 同待遇——deriveMessages 不折叠；todo 由 fold 重建，其余仅作审计）。
 // compaction 也属 M4 新增，但会作为最新保留点参与 deriveMessages 的消息投影。
 // agent_end 为下层 agent turn 收尾事件（web 卡片状态数据源），同样不进模型历史。
 // permission/changed 为权限模式切换审计（M1），亦不进模型历史。
@@ -189,6 +190,13 @@ export type SessionEvent =
 			server: string;
 			transport: "stdio" | "http";
 			tools: string[];
+	  }
+	// memory/saved：memory_save 成功追加 MEMORY.md 的审计记录；正文只存在 Markdown 文件中
+	| {
+			type: "memory/saved";
+			id: string;
+			ts: string;
+			agentId: string;
 	  }
 	// permission/changed：权限模式切换记录（用户经 UI 改写 runtime 持有者，或 settings 装配初始化），
 	// 仅审计与恢复用——不进模型历史，derive 不折叠，reducer 不渲染（与 agent_end 同待遇）

@@ -302,6 +302,7 @@ export async function runChat(opts: RunChatOptions): Promise<void> {
 	const baseRuntime = createRuntime({
 		session,
 		cwd: opts.cwd,
+		home: opts.home,
 		approval,
 		models: settings.models,
 		maxParallelTasks: settings.maxParallelTasks,

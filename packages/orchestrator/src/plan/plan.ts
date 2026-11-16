@@ -17,9 +17,11 @@
 import { randomUUID } from "node:crypto";
 import {
 	createToolRegistry,
+	featureEnabled,
 	type LoopConfig,
 	loadSession,
 	type ModelTier,
+	readMemorySummary,
 	runTurn,
 	type SessionEvent,
 } from "@hotpot/core";
@@ -192,31 +194,40 @@ export async function* runPlanPhase(
 	const resolved = runtime.resolveModel(tier);
 	const inbox = options.inbox;
 	const pollInbox = inbox ? () => inbox.pollNextStep() : undefined;
-	const cfg: LoopConfig = {
-		session: runtime.session,
-		agentId: MAIN_AGENT_ID,
-		adapter: resolved.adapter,
-		model: resolved.model,
-		apiKey: resolved.apiKey,
-		baseUrl: resolved.baseUrl,
-		registry,
-		approval: runtime.approval,
-		cwd: runtime.cwd,
-		system: buildRoleSystemPrompt(
-			MAIN_AGENT_ID,
-			{
-				cwd: runtime.cwd,
-				os: process.platform,
-				date: new Date().toISOString().slice(0, 10),
-				tools: registry.declarations(),
-			},
-			{ instructions: PLANNING_INSTRUCTIONS },
-		),
-		tier,
-		pollInbox,
-		features: runtime.features,
-		compaction: runtime.compaction,
-	};
+	// 起草、reconcile、修订、空计划与拒绝收尾共用入口；每次请求前重新读取最新有界摘要
+	async function* runPlanningTurn(): AsyncGenerator<OrchestrationEvent> {
+		const memory = featureEnabled(runtime.features, "memory")
+			? await readMemorySummary(runtime.home)
+			: undefined;
+		const cfg: LoopConfig = {
+			session: runtime.session,
+			agentId: MAIN_AGENT_ID,
+			adapter: resolved.adapter,
+			model: resolved.model,
+			apiKey: resolved.apiKey,
+			baseUrl: resolved.baseUrl,
+			registry,
+			approval: runtime.approval,
+			cwd: runtime.cwd,
+			system: buildRoleSystemPrompt(
+				MAIN_AGENT_ID,
+				{
+					cwd: runtime.cwd,
+					os: process.platform,
+					date: new Date().toISOString().slice(0, 10),
+					tools: registry.declarations(),
+				},
+				{ instructions: PLANNING_INSTRUCTIONS, memory },
+			),
+			tier,
+			pollInbox,
+			features: runtime.features,
+			compaction: runtime.compaction,
+		};
+		for await (const event of runTurn(cfg, signal)) {
+			yield event;
+		}
+	}
 
 	// 初始草稿复用与首轮流路由同一标准（锚定窗口 + 标记校验）：「计划正文 + 同轮
 	// 工具调用被拦截后的补充说明」形态下，送审的必须是带标记的计划而不是后续笔记。
@@ -239,7 +250,7 @@ export async function* runPlanPhase(
 						: RECONCILE_PROMPT;
 			await appendInternal(runtime, prompt);
 			revisionNote = undefined;
-			for await (const event of runTurn(cfg, signal)) {
+			for await (const event of runPlanningTurn()) {
 				yield event;
 			}
 			if (signal.aborted) return;
@@ -256,7 +267,7 @@ export async function* runPlanPhase(
 
 		if (draft === null) {
 			await appendInternal(runtime, EMPTY_PLAN_PROMPT);
-			for await (const event of runTurn(cfg, signal)) {
+			for await (const event of runPlanningTurn()) {
 				yield event;
 			}
 			return;
@@ -333,7 +344,7 @@ export async function* runPlanPhase(
 		yield { type: "plan", phase: "denied" };
 		await appendInternal(runtime, REJECTED_PROMPT);
 		// 收尾轮：main 基于「计划被拒」回复用户，回合随之结束
-		for await (const event of runTurn(cfg, signal)) {
+		for await (const event of runPlanningTurn()) {
 			yield event;
 		}
 		return;

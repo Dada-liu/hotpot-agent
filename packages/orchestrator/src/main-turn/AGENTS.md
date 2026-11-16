@@ -3,8 +3,9 @@
 - `runMainTurn` is the only main-agent entry. The main agent id is the package-level convention `"main"`; keep it consistent with `plan/` and `runtime/`.
 - Persist the user message as `"main"` before running `runTurn`, and forward every event produced by the loop.
 - The spawn wrapper only records `agent_spawn` events into the turn's pending queue; the base runtime still owns persistence. Drain pending spawns before yielding loop events so `agent_spawn` always precedes the matching tool_result and follows call order.
-- Complex flow: the initial turn's plan output (validated by `detectPlanDraft` — `# Plan` marker plus required sections) routes into `runPlanPhase`, which handles approval/revision, and the execution turn uses a registry containing only `spawn_workers`. Do not bypass the plan gate: `spawn_workers` stays fail-closed while an unapproved plan marker exists in the turn.
+- Complex flow: the initial turn's plan output (validated by `detectPlanDraft` — `# Plan` marker plus required sections) routes into `runPlanPhase`, which handles approval/revision, and the execution turn uses `spawn_workers` plus feature-gated main tools such as `memory_save`. Do not bypass the plan gate: `spawn_workers` stays fail-closed while an unapproved plan marker exists in the turn.
 - When `inbox` is provided, consume next-step messages in the initial turn, plan draft/revision turns and execution turn via `pollInbox`.
+- With `features.memory=true`, read a fresh bounded MEMORY.md summary before each initial/execution prompt build; when disabled, do not read the file or pass a memory section.
 - `onPlanApproval` being absent must stay fail-closed.
 - Export the feature's public surface through `index.ts`; cross-feature imports target this file directly.
 - Erasable TypeScript only, `.ts` extension on relative imports, no `any`, no inline imports; comments in Simplified Chinese.

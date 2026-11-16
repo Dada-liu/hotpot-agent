@@ -99,6 +99,7 @@ WorkerAgent 只在满足全部条件时才拆 TaskAgent：
 | delegate | MainAgent | difficulty(trivial/simple/complex)、modelTier(high/medium/low)、task、reason |
 | spawn_workers | MainAgent | workers: [{task, context, modelTier}]（complex 且 plan 已批准后使用） |
 | spawn_tasks | WorkerAgent | tasks: [{task, context, acceptance}] |
+| memory_save | MainAgent / WorkerAgent | content；仅 memory 开关开启时注册，保存稳定偏好/事实，TaskAgent 不可用 |
 | request_approval | MainAgent / WorkerAgent | kind(plan/command)、payload |
 | report_result | WorkerAgent / TaskAgent | summary、artifacts(文件路径列表)、status |
 

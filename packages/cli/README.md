@@ -37,3 +37,4 @@
 - **MCP**：按 `settings.mcpServers` 连接（stdio/HTTP），`[mcp] attached: ...` 提示，工具桥接为 `mcp__<server>__<tool>`；退出时关闭连接。
 - **todo / web 工具**：由 orchestrator 按 `features.*` 注入 worker/task，CLI 无需额外接线。
 - **上下文自动压缩**：把用户级 `features` / `compaction` 配置透传给 runtime；main 发生压缩时打印简短的 `[compaction]` 提示，不打印摘要正文，durable 事件仍由会话日志保存并用于重启恢复。
+- **用户记忆**：`runChat` 把显式 `home` 透传给 runtime；`features.memory=true` 时新会话与 `--session` 恢复会话都从同一 `<home>/MEMORY.md` 构建 prompt，main 可直接调用 `memory_save`。默认关闭。

@@ -1,8 +1,9 @@
 // 按角色装配工具注册表，规则钉死（docs/archive/03-agent-orchestration.md §1）：
 // - main：编排元工具 + read（M1 起唯一的文件工具，不套 decorate/skill 追踪）——
 //   @提及/附件的文件内容由模型自行 read（绝对路径、无目录监禁）
-// - worker：四个基础工具 + 元工具（元工具携带 spawn_tasks，可并行拆分）
-// - task：只有四个基础工具，无派生能力（metaTools 直接忽略）
+// - worker：四个基础工具 + feature 派生工具 + 元工具（含 spawn_tasks）
+// - task：四个基础工具 + feature 派生工具，忽略 metaTools
+// memory 开启时 main/worker 另挂 memory_save，task 永不写记忆。
 // 四件套与 createToolRegistry 复用 core 实现；metaTools 由上层注入，便于测试用桩替换。
 // M4 起第一参为 OrchestrationRuntime：四件套的 decorate（runtime.decorateWorkerTool）
 // 与 feature 派生的基础外工具（featureEnabled 开关 + runtime 透传字段）都经 runtime 判读；
@@ -16,6 +17,7 @@ import { randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 import {
 	bashTool,
+	createMemorySaveTool,
 	createToolRegistry,
 	createWebFetchTool,
 	createWebSearchTool,
@@ -162,7 +164,11 @@ export function createRoleRegistry(
 		}
 	}
 	if (role !== "task") {
-		// main / worker 挂元工具；task 是底层，忽略任何派生能力
+		// main / worker 可写稳定用户记忆；task 只读注入内容，不注册写工具
+		if (featureEnabled(runtime.features, "memory")) {
+			registry.register(createMemorySaveTool(runtime.home));
+		}
+		// main / worker 挂元工具；task 是底层，忽略元工具
 		for (const tool of metaTools) {
 			registry.register(tool);
 		}

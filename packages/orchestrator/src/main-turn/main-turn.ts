@@ -5,7 +5,7 @@
 // complex 不调用工具、本轮最终消息按 PLAN_FORMAT_TEMPLATE 输出计划正文；
 // 初始 turn 结束后 detectPlanDraft 命中 → state.phase="planning"，进入 plan/ 的
 // runPlanPhase（复用首轮草稿，审批/修订循环，见 plan.ts）；批准后换 EXECUTION_INSTRUCTIONS
-// 跑执行 turn（注册表仍只挂 spawn_workers，planApproved 已翻转、门禁放行）。
+// 跑执行 turn（注册表仍挂 spawn_workers，并按开关附 memory_save，planApproved 已翻转、门禁放行）。
 // 未命中 → trivial/simple 已在本轮内闭环，endTurn 收尾。
 // 本回合 user_msg 落盘时记录事件锚点（state.turnAnchorId）：detectPlanDraft 以它为
 // 扫描窗口起点，turn 内 steer 注入的 user_msg 不得把首轮计划挤出检测窗口。
@@ -20,6 +20,7 @@ import {
 	featureEnabled,
 	type LoopConfig,
 	type ModelTier,
+	readMemorySummary,
 	runTurn,
 } from "@hotpot/core";
 import type { Inbox } from "../inbox/inbox.ts";
@@ -90,7 +91,7 @@ export async function* runMainTurn(opts: {
 		},
 	};
 	const spawnWorkersTool = createSpawnWorkersTool(turnRuntime, state);
-	// 首轮注册表只挂 spawn_workers：simple 直派；complex 首轮不调用工具、
+	// 首轮注册表挂 spawn_workers，并按开关附 memory_save：simple 直派；complex 首轮不调用工具、
 	// 只产出计划正文（plan 阶段注册表为空，执行阶段复用同一元工具）
 	const registry = createRoleRegistry(turnRuntime, MAIN_AGENT_ID, [
 		spawnWorkersTool,
@@ -111,6 +112,10 @@ export async function* runMainTurn(opts: {
 	const skills = featureEnabled(runtime.features, "skills")
 		? runtime.skills
 		: undefined;
+	// 每个 turn 构建 prompt 前重新读取；关闭时不触碰 MEMORY.md
+	const memory = featureEnabled(runtime.features, "memory")
+		? await readMemorySummary(runtime.home)
+		: undefined;
 	const cfg: LoopConfig = {
 		session: runtime.session,
 		agentId: MAIN_AGENT_ID,
@@ -129,7 +134,7 @@ export async function* runMainTurn(opts: {
 				date: new Date().toISOString().slice(0, 10),
 				tools: registry.declarations(),
 			},
-			{ skills },
+			{ skills, memory },
 		),
 		tier: mainTier,
 		pollInbox,
@@ -175,11 +180,14 @@ export async function* runMainTurn(opts: {
 		return;
 	}
 
-	// 执行阶段：plan 已获批，注册表仍只挂 spawn_workers（planApproved 翻转后门禁放行）
+	// 执行阶段：plan 已获批，注册表仍挂 spawn_workers，并按开关附 memory_save（planApproved 翻转后门禁放行）
 	const execRegistry = createRoleRegistry(turnRuntime, MAIN_AGENT_ID, [
 		spawnWorkersTool,
 	]);
 	const execResolved = runtime.resolveModel(mainTier);
+	const executionMemory = featureEnabled(runtime.features, "memory")
+		? await readMemorySummary(runtime.home)
+		: undefined;
 	const execCfg: LoopConfig = {
 		session: runtime.session,
 		agentId: MAIN_AGENT_ID,
@@ -198,7 +206,7 @@ export async function* runMainTurn(opts: {
 				date: new Date().toISOString().slice(0, 10),
 				tools: execRegistry.declarations(),
 			},
-			{ skills, instructions: EXECUTION_INSTRUCTIONS },
+			{ skills, memory: executionMemory, instructions: EXECUTION_INSTRUCTIONS },
 		),
 		tier: mainTier,
 		pollInbox,

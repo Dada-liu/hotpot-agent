@@ -1174,6 +1174,12 @@ describe("inbox 队列（M4）", () => {
 				transport: "stdio",
 				tools: ["mcp__fs__read"],
 			},
+			{
+				type: "memory/saved",
+				id: "memory-1",
+				ts,
+				agentId: "main",
+			},
 		];
 		for (const event of events) {
 			state = reduce(state, log(1, event));

@@ -1,15 +1,14 @@
 // 下层 agent 内联执行助手：spawn 之后由 spawn_workers（simple 直派与 complex 执行流）
 // 复用 worker 版；spawn_tasks 用通用版 runAgentInline 跑每个 task turn。
 // 通用版按角色装配注册表（worker 走 createWorkerRegistry —— 闭包绑定了该 worker 的
-// spawn_tasks，嵌套拆分才真正可用；task 走 createRoleRegistry 四件套、无派生能力），
+// spawn_tasks，嵌套拆分才真正可用；task 走 createRoleRegistry，无元工具或记忆写工具），
 // 瞬态事件不外传（M2 计划决定 #3），只回收 error 事件、done(aborted) 与收尾
 // summary，失败标注由调用方按统一 taxonomy 决定（Task 9：`[FAILED] ${agentId}: ${reason}`）。
 // 收尾在 finally 里额外落盘一条 agent_end（durable）：web 右侧面板卡片状态的
 // 完成信号，outcome 与调用方失败taxonomy一致（aborted/error/无 summary 均 failed），
 // runTurn 抛错路径也保证落盘。
-// M4 Task 2：system prompt 按 features.todo 折入该 agent 的 todo 清单段
-// （构建前 foldTodos，关闭开关则不 fold 不出段）；M4 Task 6：skills 段同经
-// features.skills 门控注入（清单来自装配层 discoverSkills 扫描）。
+// system prompt 按 features 折入 todo/skills/memory 动态段；memory 开启时每个下层 turn
+// 都重新读取有界摘要，worker/task 均可读，但只有 worker 注册 memory_save。
 
 import { randomUUID } from "node:crypto";
 import {
@@ -18,6 +17,7 @@ import {
 	type LoopConfig,
 	loadSession,
 	type ModelTier,
+	readMemorySummary,
 	runTurn,
 } from "@hotpot/core";
 import { buildRoleSystemPrompt } from "../prompts/prompts.ts";
@@ -82,6 +82,10 @@ export async function runAgentInline(
 	const skills = featureEnabled(runtime.features, "skills")
 		? runtime.skills
 		: undefined;
+	// 下层 agent 每个 turn 都读取最新有界摘要；task 也只读不写
+	const memory = featureEnabled(runtime.features, "memory")
+		? await readMemorySummary(runtime.home)
+		: undefined;
 	const cfg: LoopConfig = {
 		session: runtime.session,
 		agentId,
@@ -100,7 +104,7 @@ export async function runAgentInline(
 				date: new Date().toISOString().slice(0, 10),
 				tools: registry.declarations(),
 			},
-			{ skills, todos },
+			{ skills, todos, memory },
 		),
 		tier,
 		features: runtime.features,

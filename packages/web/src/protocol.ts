@@ -208,6 +208,13 @@ export type SessionEvent =
 			transport: "stdio" | "http";
 			tools: string[];
 	  }
+	// memory/saved：只含审计元数据；正文永不进入 wire 或 UI 状态
+	| {
+			type: "memory/saved";
+			id: string;
+			ts: string;
+			agentId: string;
+	  }
 	| {
 			type: "error";
 			id: string;

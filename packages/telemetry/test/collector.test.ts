@@ -501,6 +501,48 @@ describe("createTelemetryCollector", () => {
 		}
 	});
 
+	it("counts memory_save calls and memory/saved audits without memory content", async () => {
+		const session = await createTurnSession([
+			{
+				type: "assistant_msg",
+				id: "a-memory",
+				ts: "2026-01-01T00:00:00.100Z",
+				agentId: "main",
+				content: [
+					{
+						type: "tool_call",
+						id: "c-memory",
+						name: "memory_save",
+						input: { content: "private stable preference" },
+					},
+				],
+				usage: { input: 1, output: 1 },
+				model: "m",
+				tier: "high",
+			},
+			{
+				type: "memory/saved",
+				id: "memory-1",
+				ts: "2026-01-01T00:00:00.200Z",
+				agentId: "main",
+			},
+		]);
+		const collector = createCollector(session, { memory: true });
+		collector.start();
+		collector.observe({ type: "done", stopReason: "stop" });
+		const emitted = await collector.finish();
+
+		expect(eventsOfType(emitted, "feature_usage")).toEqual([
+			expect.objectContaining({
+				feature: "memory",
+				enabled: true,
+				events: 1,
+				toolCalls: 1,
+			}),
+		]);
+		expect(JSON.stringify(emitted)).not.toContain("private stable preference");
+	});
+
 	it("does not reject finish when the session log contains a malformed record", async () => {
 		const session = await createTurnSession([
 			{

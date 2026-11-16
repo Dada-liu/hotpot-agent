@@ -95,6 +95,8 @@ export function createPermissionModeChainHead(
 export interface OrchestrationRuntime {
 	readonly session: Session;
 	readonly cwd: string;
+	// 用户级 home：MEMORY.md 读写复用 core 的 home 解析规则
+	readonly home?: string;
 	readonly approval: ApprovalChain;
 	readonly maxParallelTasks: number;
 	readonly planMaxRevisions: number;
@@ -104,7 +106,7 @@ export interface OrchestrationRuntime {
 	// 改写立即对后续工具执行生效
 	permissionMode: { mode: PermissionMode };
 	// —— M4 可选透传（createRuntime 默认空；Task 2-6 逐步消费）——
-	// features：功能开关（读取侧一律经 core 的 featureEnabled `?? true`）
+	// features：功能开关（读取侧一律经 core featureEnabled；memory 默认关，其余默认开）
 	readonly features?: Settings["features"];
 	// compaction：用户级触发比例与最近历史保留预算，透传到每个 LoopConfig
 	readonly compaction?: Settings["compaction"];
@@ -131,6 +133,7 @@ export interface OrchestrationRuntime {
 export function createRuntime(opts: {
 	session: Session;
 	cwd: string;
+	home?: string;
 	approval: ApprovalChain;
 	models: Settings["models"];
 	maxParallelTasks?: number;
@@ -191,6 +194,7 @@ export function createRuntime(opts: {
 	return {
 		session: opts.session,
 		cwd: opts.cwd,
+		home: opts.home,
 		approval: opts.approval,
 		maxParallelTasks: opts.maxParallelTasks ?? 10,
 		planMaxRevisions: opts.planMaxRevisions ?? 3,
