@@ -412,18 +412,18 @@ export function SettingsDialog({
 						</TabsTrigger>
 					</TabsList>
 					{loading ? (
-						<div className="max-h-[60vh] flex-1 px-5 py-10 text-center text-sm text-muted-foreground">
+						<div className="h-[500px] flex-1 px-5 py-10 text-center text-sm text-muted-foreground">
 							加载中…
 						</div>
 					) : draft === null || numeric === null ? (
-						<div className="max-h-[60vh] flex-1 px-5 py-10 text-center text-sm text-destructive">
+						<div className="h-[500px] flex-1 px-5 py-10 text-center text-sm text-destructive">
 							{error ?? "加载失败"}
 						</div>
 					) : (
 						<>
 							<TabsContent
 								value="models"
-								className="max-h-[60vh] min-w-0 flex-1 overflow-y-auto p-5"
+								className="h-[500px] min-w-0 flex-1 overflow-y-auto p-5"
 							>
 								<div className="flex flex-col gap-4">
 									{TIER_ITEMS.map(({ key, label }) => {
@@ -499,7 +499,7 @@ export function SettingsDialog({
 							</TabsContent>
 							<TabsContent
 								value="general"
-								className="max-h-[60vh] min-w-0 flex-1 overflow-y-auto p-5"
+								className="h-[500px] min-w-0 flex-1 overflow-y-auto p-5"
 							>
 								<div className="flex flex-col gap-4">
 									<Section title="编排">
@@ -553,7 +553,7 @@ export function SettingsDialog({
 							</TabsContent>
 							<TabsContent
 								value="features"
-								className="max-h-[60vh] min-w-0 flex-1 overflow-y-auto p-5"
+								className="h-[500px] min-w-0 flex-1 overflow-y-auto p-5"
 							>
 								<div className="flex flex-col gap-4">
 									<Section title="功能开关">
@@ -604,7 +604,7 @@ export function SettingsDialog({
 							</TabsContent>
 							<TabsContent
 								value="tools"
-								className="max-h-[60vh] min-w-0 flex-1 overflow-y-auto p-5"
+								className="h-[500px] min-w-0 flex-1 overflow-y-auto p-5"
 							>
 								<div className="flex flex-col gap-4">
 									<Section title="webSearch 后端">
@@ -735,7 +735,7 @@ export function SettingsDialog({
 							</TabsContent>
 							<TabsContent
 								value="advanced"
-								className="max-h-[60vh] min-w-0 flex-1 overflow-y-auto p-5"
+								className="h-[500px] min-w-0 flex-1 overflow-y-auto p-5"
 							>
 								<div className="flex flex-col gap-4">
 									<Section title="hooks（Claude Code 配置形状）">
@@ -764,7 +764,7 @@ export function SettingsDialog({
 							</TabsContent>
 							<TabsContent
 								value="telemetry"
-								className="max-h-[60vh] min-w-0 flex-1 overflow-y-auto p-5"
+								className="h-[500px] min-w-0 flex-1 overflow-y-auto p-5"
 							>
 								<div className="flex flex-col gap-4">
 									<Section title="遥测（匿名，旁路上报）">
