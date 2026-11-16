@@ -369,6 +369,14 @@ describe("createTelemetryCollector", () => {
 				tools: ["tool"],
 			},
 			{
+				type: "vector/indexed",
+				id: "f6",
+				ts: "2026-01-01T00:00:00.600Z",
+				files: 2,
+				chunks: 8,
+				durationMs: 12,
+			},
+			{
 				type: "assistant_msg",
 				id: "a1",
 				ts: "2026-01-01T00:00:01.000Z",
@@ -384,6 +392,12 @@ describe("createTelemetryCollector", () => {
 						name: "bash",
 						input: { command: "echo secret" },
 					},
+					{
+						type: "tool_call",
+						id: "c6",
+						name: "code_search",
+						input: { query: "secret code query" },
+					},
 				],
 				usage: { input: 4, output: 2 },
 				model: "m",
@@ -391,7 +405,10 @@ describe("createTelemetryCollector", () => {
 			},
 		]);
 
-		const collector = createCollector(session, { webFetch: false });
+		const collector = createCollector(session, {
+			webFetch: false,
+			vector: true,
+		});
 		collector.start();
 		collector.observe({ type: "done", stopReason: "stop" });
 		const emitted = await collector.finish();
@@ -405,6 +422,7 @@ describe("createTelemetryCollector", () => {
 			"webSearch",
 			"webFetch",
 			"mcp",
+			"vector",
 		]);
 		expect(
 			Object.fromEntries(
@@ -425,6 +443,7 @@ describe("createTelemetryCollector", () => {
 			webSearch: { events: 0, toolCalls: 1, enabled: true },
 			webFetch: { events: 0, toolCalls: 1, enabled: false },
 			mcp: { events: 1, toolCalls: 1, enabled: true },
+			vector: { events: 1, toolCalls: 1, enabled: true },
 		});
 
 		// 功能事件只上报开关与计数，命令/路径/prompt 原文不得外泄

@@ -25,7 +25,7 @@
 ## 3. 架构决议
 
 - pnpm monorepo，Node >= 22 + TypeScript erasable-syntax-only（`.ts` 后缀 import，Node strip-only 开发直跑），vitest 测试，biome 检查，tsup 发布
-- 包结构：`packages/ai`（LLM 适配，api×provider 二维，首批 anthropic-messages + openai-completions）→ `packages/core`（turn/step 循环、工具、提示词、会话日志）→ `packages/orchestrator`（三层编排）→ `packages/server`（REST + SSE 服务层，实现见 [packages/server/README.md](../packages/server/README.md)）+ `packages/web`（React SPA，实现见 [packages/web/README.md](../packages/web/README.md)）（M3，已实现）、`packages/cli`（M1）、`packages/telemetry`（M5 匿名遥测客户端，实现见 [packages/telemetry/README.md](../packages/telemetry/README.md)）
+- 包结构：`packages/ai`（LLM 适配，api×provider 二维，首批 anthropic-messages + openai-completions）→ `packages/core`（turn/step 循环、工具、提示词、会话日志）→ `packages/orchestrator`（三层编排）→ `packages/server`（REST + SSE 服务层，实现见 [packages/server/README.md](../packages/server/README.md)）+ `packages/web`（React SPA，实现见 [packages/web/README.md](../packages/web/README.md)）（M3，已实现）、`packages/cli`（M1）、`packages/telemetry`（M5 匿名遥测客户端，实现见 [packages/telemetry/README.md](../packages/telemetry/README.md)）、`packages/memory`（代码专用 embedding、本地向量库与增量 `code_search`，实现见 [packages/memory/README.md](../packages/memory/README.md)；不接入用户记忆）
 - **会话日志即唯一事实源**：append-only JSONL 事件日志，`deriveMessages()` 转换出模型历史；存储于 `~/.hotpot/sessions/`
 - 配置：双层——用户级 `~/.hotpot/settings.json`（三档模型 high/medium/low、`maxParallelTasks` 默认 10、`planMaxRevisions` 默认 3）+ 项目级 `./.hotpot/settings.json`（仅可覆盖非凭证字段；凭证只从用户级读取）
 - 技术方案参考 pi 与 deepseek-harness，借鉴与取舍清单见 `docs/archive/02-architecture.md` 第 7、8 节
@@ -45,6 +45,8 @@
 todo、steer/queue、hooks、skill、prompt templates、web_search/web_fetch、MCP、上下文自动压缩、用户记忆、向量数据库、后台任务 jobs、权限预设、tool_search、沙箱
 
 用户记忆已实现为默认关闭的用户级 `features.memory`：启用后每轮读取 `<home>/MEMORY.md`（默认 `~/.hotpot/MEMORY.md`）的有界摘要，main/worker 可用 `memory_save` 追加稳定偏好或事实，task 只读。Markdown 可由用户直接编辑；密钥、凭证与临时任务状态不得写入，记忆正文不进入遥测，且不提供向量检索或 `memory_search`。
+
+向量数据库项已完成代码检索部分：`features.vector=true` 且用户级 embedding 完整时启用 `code_search`，启动不扫描/不联网，仅检索时增量索引并把源码扩展与敏感文件策略筛选后的待索引 chunk 与查询发往所配 endpoint（不上传 `.env`、私钥、凭证、任意文本或 YAML/JSON 等部署配置）；本地数据存于 `<home>/memory/vectors/<sha256(cwd)>.jsonl`，审计/遥测不含路径或源码。代码索引不复用用户记忆，也不提供语义记忆。
 
 ### P2 配套（贯穿 + M5）
 测试（vitest 单元 + mock LLM 集成）、benchmarks（SWE-bench + 自建金融/软件开发/自媒体运营 bench，各领域先 1 题打底，后续从使用历史沉淀）、遥测（token/耗时/成功率；M5.1 已实现：工具向中心服务上报匿名指标与脱敏后的系统错误，后台管理界面为独立项目 `../hotpot-telemetry/`、不打进工具产物，不再以本地存储/导出为主路径）

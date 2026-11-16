@@ -14,8 +14,14 @@ interface HotpotFileHandle {
 	}>;
 	stat(): Promise<{ size: number }>;
 	write(data: string): Promise<unknown>;
+	write(data: Uint8Array): Promise<{ bytesWritten: number }>;
 	sync(): Promise<unknown>;
 	close(): Promise<void>;
+}
+
+interface HotpotHash {
+	update(data: string | Uint8Array): HotpotHash;
+	digest(encoding: "hex"): string;
 }
 
 // 子进程 stdout/stderr 的可读流（core 用到；chunk 运行时是 Buffer，结构上有 toString）
@@ -36,12 +42,13 @@ interface HotpotDirent {
 	name: string;
 	isDirectory(): boolean;
 	isFile(): boolean;
+	isSymbolicLink(): boolean;
 }
 
 declare module "node:fs/promises" {
 	export function open(
 		path: string,
-		flags: "r" | "a",
+		flags: "r" | "a" | "wx",
 	): Promise<HotpotFileHandle>;
 	export function mkdir(
 		path: string,
@@ -77,13 +84,18 @@ declare module "node:fs/promises" {
 		options?: { recursive?: boolean; force?: boolean },
 	): Promise<void>;
 	// 会话创建 cwd 校验（须为已存在目录）
-	export function stat(
-		path: string,
-	): Promise<{ isDirectory(): boolean; isFile(): boolean }>;
+	export function stat(path: string): Promise<{
+		size: number;
+		mtimeMs: number;
+		isDirectory(): boolean;
+		isFile(): boolean;
+	}>;
 	// 工作区浏览 realpath 解析（逃逸校验用）
 	export function realpath(path: string): Promise<string>;
 	// 工作区注册表（core）原子写盘
 	export function rename(oldPath: string, newPath: string): Promise<void>;
+	export function unlink(path: string): Promise<void>;
+	export function utimes(path: string, atime: Date, mtime: Date): Promise<void>;
 }
 
 declare module "node:fs" {
@@ -156,6 +168,7 @@ declare module "node:path" {
 	export function join(...parts: string[]): string;
 	export function resolve(...parts: string[]): string;
 	export function dirname(path: string): string;
+	export function relative(from: string, to: string): string;
 	export function extname(path: string): string;
 	export function isAbsolute(path: string): boolean;
 	export const sep: string;
@@ -170,6 +183,7 @@ declare module "node:crypto" {
 	export function randomBytes(size: number): {
 		toString(encoding: "base64url"): string;
 	};
+	export function createHash(algorithm: "sha256"): HotpotHash;
 }
 
 // cli 的行式输入：line/close 覆盖行式读取；SIGINT 覆盖 TTY raw 模式下的 ^C

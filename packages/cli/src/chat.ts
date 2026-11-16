@@ -30,6 +30,7 @@ import {
 	type Session,
 	type Settings,
 } from "@hotpot/core";
+import { createCodeIndexService, EmbeddingClient } from "@hotpot/memory";
 import {
 	closeMcpConnections,
 	connectMcpServers,
@@ -79,6 +80,8 @@ export interface RunChatOptions {
 	warn?: (text: string) => void;
 	// 测试注入点：遥测上报用的 fetch，默认走全局 fetch
 	telemetryFetch?: typeof fetch;
+	// 测试注入点：代码 embedding 请求，默认走全局 fetch
+	embeddingFetch?: typeof fetch;
 }
 
 function truncate(text: string, max: number): string {
@@ -299,6 +302,31 @@ export async function runChat(opts: RunChatOptions): Promise<void> {
 			})
 		: undefined;
 
+	// 代码索引只构造惰性 service；首次 code_search 时才扫描 cwd 并请求 embedding。
+	const embedding = featureEnabled(settings.features, "vector")
+		? settings.vector?.embedding
+		: undefined;
+	const codeSearch =
+		embedding === undefined
+			? undefined
+			: createCodeIndexService({
+					cwd: opts.cwd,
+					home: resolveHome(opts.home),
+					model: embedding.model,
+					embedding: new EmbeddingClient({
+						...embedding,
+						fetchImpl: opts.embeddingFetch,
+					}),
+					onIndexed: async (audit) => {
+						await session.append({
+							type: "vector/indexed",
+							id: randomUUID(),
+							ts: new Date().toISOString(),
+							...audit,
+						});
+					},
+				});
+
 	const baseRuntime = createRuntime({
 		session,
 		cwd: opts.cwd,
@@ -315,6 +343,7 @@ export async function runChat(opts: RunChatOptions): Promise<void> {
 		mcpTools: mcpConnections.flatMap((c) => c.tools),
 		webSearch: settings.webSearch,
 		hooks,
+		codeSearch,
 	});
 	// 测试注入点：opts.llm 覆盖 runtime 的档位解析（main/worker 共用同一录制适配器），
 	// 与 orchestrator 测试 makeRuntime 的展开覆盖同法。
