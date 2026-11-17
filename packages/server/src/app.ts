@@ -199,6 +199,8 @@ export function createApp(
 				id: s.id,
 				cwd: s.cwd,
 				createdAt: s.createdAt,
+				// 侧栏按最近修改倒序，客户端直接用服务端给的值，避免自己再看文件
+				updatedAt: s.updatedAt,
 				// name 由 core 从日志首条用户消息派生；刚创建的会话还没有用户消息，故可能缺省
 				name: s.name,
 				turn: s.running ? "running" : "idle",
@@ -257,7 +259,8 @@ export function createApp(
 	});
 
 	// ---- 工作区注册表（web 侧栏分组）----
-	// 记录原样返回：id/path/title/createdAt/updatedAt/sessionIds（数组顺序即展示顺序）
+	// 记录原样返回：id/path/title/createdAt/updatedAt/sessionIds。
+	// 工作区之间按数组顺序展示；sessionIds 只表达归属，组内顺序由客户端按会话 updatedAt 倒序决定
 
 	app.get("/api/workspaces", async (c) => {
 		return c.json({ workspaces: await manager.listWorkspaces() });

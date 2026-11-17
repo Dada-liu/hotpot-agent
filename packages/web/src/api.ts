@@ -15,12 +15,14 @@ export interface SessionSummary {
 	id: string;
 	cwd: string;
 	createdAt: string;
+	// 最后修改时间（日志最后一条事件 ts，空会话回退 createdAt）；侧栏按它倒序
+	updatedAt: string;
 	turn: "running" | "idle";
 	// 服务端从日志首条用户消息派生的显示名；刚创建、尚无用户消息时缺省
 	name?: string;
 }
 
-// 工作区注册表记录（server 原样返回）：sessionIds 数组顺序即组内展示顺序
+// 工作区注册表记录（server 原样返回）：sessionIds 是归属关系，侧栏组内按会话 updatedAt 倒序
 export interface WorkspaceWire {
 	id: string;
 	path: string;

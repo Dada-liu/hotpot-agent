@@ -1,8 +1,9 @@
 // 根组件：三栏布局（会话列表 | 对话 | agent 面板）与全局状态。
 // 全局状态 = useReducer(reduceChatAction) 折叠 WireEvent 流；切换会话时重置并重建 SSE 连接。
-// 顶栏：会话目录名 + 重连指示 + 面板开关（仅 worker 运行期间可见）。
-// agent 面板随 worker 运行自动展示、全部完成即消失，无空态；会话区本地路径可点击，
-// 点击在面板新开可关闭的文件预览 tab（此时即使无 worker 面板也展示，tab 全关即收起）。
+// 顶栏：会话目录名 + 重连指示 + 面板开关（有 agent 卡片或文件 tab 时可见）。
+// agent 面板只要还有卡片就展示，已完成的 agent 不会自动消失：只有 main 派发新一批
+// work agent 时卡片才被清空替换。会话区本地路径可点击，在面板新开可关闭的文件预览 tab
+// （此时即使无 agent 面板也展示，tab 全关且无卡片即收起）。
 
 import { PanelRight } from "lucide-react";
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
@@ -219,13 +220,14 @@ export function App() {
 		}
 	}, [currentId, chat.turn, refreshInbox]);
 
-	// 回合由运行态回到空闲时刷新会话列表：侧栏 running 圆点归位，新会话的服务端显示名
-	// （取自首条用户消息）也就位。只在 running → idle 的跳变上触发，切换会话不额外拉取
+	// 回合状态跳变时刷新会话列表：进入 running 让当前会话凭新的 updatedAt 立刻升到侧栏顶部，
+	// 回到 idle 让 running 圆点归位、新会话的服务端显示名（取自首条用户消息）也就位。
+	// 只在 idle/running 互切时触发，切换会话不额外拉取
 	const prevTurn = useRef(chat.turn);
 	useEffect(() => {
 		const previous = prevTurn.current;
 		prevTurn.current = chat.turn;
-		if (previous === "running" && chat.turn === "idle") {
+		if (previous !== chat.turn) {
 			void refreshSessions();
 		}
 	}, [chat.turn, refreshSessions]);
@@ -632,10 +634,10 @@ export function App() {
 		draft === null || draft.workspaceId === null
 			? null
 			: (workspaces.find((w) => w.id === draft.workspaceId) ?? null);
-	// 右侧面板开关只在 work agent 运行期间展示
-	const workerRunning = chat.agents.some(
-		(a) => a.role === "worker" && a.status === "running",
-	);
+	// 右侧面板：只要还有 agent 卡片就保持可用（完成的 agent 不消失），
+	// 清空发生在 main 派发新一批 work agent 时（reducer 的 beginWorkerBatch）
+	const hasAgents = chat.agents.length > 0;
+	const panelVisible = hasAgents || fileTabs.length > 0;
 	// composer「当前工作区」入口：会话 cwd 作为文件夹名与右侧文件树打开目标
 	// （fs 预览白名单以 cwd 为准，不用工作区记录路径，避免两者不一致时越界）
 	const currentCwd = current?.cwd ?? null;
@@ -715,7 +717,7 @@ export function App() {
 							<Button
 								variant="ghost"
 								size="icon"
-								className={cn("size-8", !workerRunning && "hidden")}
+								className={cn("size-8", !panelVisible && "hidden")}
 								onClick={() => {
 									setPanelCollapsed((v) => !v);
 								}}
@@ -776,8 +778,8 @@ export function App() {
 						key={currentId ?? "welcome"}
 						agents={chat.agents}
 						usage={chat.usage}
-						// worker 运行期间展示（可收起）；有文件预览 tab 时即使无 worker 也展示
-						open={(workerRunning && !panelCollapsed) || fileTabs.length > 0}
+						// agent 卡片存在即展示（完成的也保留，可收起）；文件预览 tab 强制展示
+						open={(hasAgents && !panelCollapsed) || fileTabs.length > 0}
 						sessionName={currentName}
 						transcript={chat.transcript}
 						todosByAgent={chat.todosByAgent}
@@ -789,8 +791,8 @@ export function App() {
 						sessionId={currentId}
 						onToggle={() => {
 							// 面板只因文件 tab 存在时：X = 关掉全部文件 tab（面板随之收起）；
-							// 有 worker 时保持收起偏好语义
-							if (!workerRunning && fileTabs.length > 0) {
+							// 有 agent 卡片时保持收起偏好语义（收起后仍可用顶栏开关展开）
+							if (!hasAgents && fileTabs.length > 0) {
 								setFileTabs([]);
 								setActivePanelTab("agents");
 							} else {

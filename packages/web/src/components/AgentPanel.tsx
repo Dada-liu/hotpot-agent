@@ -1,10 +1,12 @@
 // 右侧面板：work / task agent 卡片（main agent 不展示）+ 会话区路径点击预览的文件 tab。
-// 显隐由 App 控制：worker 运行期间自动展示（可用顶栏开关/头部 X 收起），全部任务完成即
-// 整体消失；用户点击会话区本地文件/文件夹路径会新开文件 tab，此时面板即使无 worker 也展示
-// （关闭全部文件 tab 且无 running worker 即收起）。无空态。
+// 显隐由 App 控制：只要还有 agent 卡片就展示（可用顶栏开关/头部 X 收起），已完成的卡片
+// 不会自动消失；只有 main 派发新一批 work agent 时才清空旧卡片换成新一批（reducer 的
+// beginWorkerBatch）。用户点击会话区本地文件/文件夹路径会新开文件 tab，此时面板即使无
+// agent 也展示（关闭全部文件 tab 且无 agent 卡片即收起）。无空态。
 // 头部下方是 tab 条：固定「Agents」+ 动态文件 tab（图标 + 截断名 + × 关闭）。
 // 卡片状态（running/done/failed）数据源：durable 的 agent_end 日志事件（failed 不回退），
-// log(error) 即时标 failed；turn(end) 不翻转 agent 状态
+// log(error) 即时标 failed；turn(end) 把残留 running 兜底收敛为 done（agent_end 丢失时）；
+// 已知 agentId 的迟到瞬态 spawn 不重建卡片（避免已完成卡片被重置回 running）
 // 卡片 = 状态感头像（运行中切 *_active.webp 动图）+ 前端派生的短显示名（限 10 字符）
 // + role/tier/状态徽标 + todo 清单 + 当前工具；task 卡片渲染在所属 worker 卡片内部
 // （左边线 + 缩进 + 弱化底色）；点击卡片头部区域弹出详情弹窗：
@@ -397,7 +399,8 @@ export function AgentPanel({
 		activePanelTab === "agents"
 			? null
 			: (fileTabs.find((t) => t.path === activePanelTab) ?? null);
-	// 显隐由 App 控制：worker 运行期间展示（可收起）或存在文件预览 tab；无空态
+	// 显隐由 App 控制：有 agent 卡片就展示（完成的卡片保留，可收起）或存在文件预览 tab；
+	// 卡片只会在 main 派发新一批 work agent 时被替换清空
 	if (!open) {
 		return null;
 	}

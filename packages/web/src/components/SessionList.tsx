@@ -192,7 +192,8 @@ function SessionRow({
 								running ? "bg-brand" : "bg-current opacity-40",
 							)}
 						/>
-						{formatTime(session.createdAt)}
+						{/* 行内时间展示最后修改时间（与排序口径一致），创建时间只在 meta 里保留 */}
+						{formatTime(session.updatedAt)}
 					</span>
 				</button>
 				<DropdownMenu

@@ -846,9 +846,15 @@ tests pass
 			content: "磁盘会话的首条提示",
 		});
 
-		// 列表可见（listSessions 读磁盘）
+		// 列表可见（listSessions 读磁盘）；updatedAt 取最后一条事件的 ts，供侧栏倒序
 		const list = (await (await fetch(`${fx.base}/api/sessions`)).json()) as {
-			sessions: { id: string; cwd: string; turn: string; name?: string }[];
+			sessions: {
+				id: string;
+				cwd: string;
+				turn: string;
+				name?: string;
+				updatedAt?: string;
+			}[];
 		};
 		const mine = list.sessions.find((s) => s.id === disk.id);
 		expect(mine).toMatchObject({
@@ -856,6 +862,7 @@ tests pass
 			cwd: fx.proj,
 			turn: "idle",
 			name: "磁盘会话的首条提示",
+			updatedAt: "2026-10-10T08:00:00.000Z",
 		});
 
 		// 详情：get 未命中 → attachById 恢复 → 200

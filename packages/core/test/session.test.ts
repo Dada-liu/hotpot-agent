@@ -159,10 +159,31 @@ describe("session store", () => {
 		expect(summary?.filePath).toBe(session.filePath);
 		expect(summary?.cwd).toBe("/Users/test/project");
 		expect(summary?.createdAt).toBeTruthy();
+		// 空会话（只有 meta）没有可用的最后事件时间，updatedAt 回退 createdAt
+		expect(summary?.updatedAt).toBe(summary?.createdAt);
 		// 尚无用户消息的会话没有显示名，由客户端回退 cwd
 		expect(summary?.name).toBeUndefined();
 		// home 目录不存在时返回空列表
 		expect(await listSessions(join(home, "not-exist"))).toEqual([]);
+	});
+
+	it("listSessions 按最后修改时间倒序返回（最近有活动的排前面）", async () => {
+		const older = await createSession("/Users/test/project", home);
+		const newer = await createSession("/Users/test/project", home);
+		// created 与 updated 刻意反向：证明排序看的是最后事件 ts，而不是创建时间
+		await older.append({
+			...userMsg("旧会话但刚有活动"),
+			ts: "2026-10-12T08:00:00.000Z",
+		});
+		await newer.append({
+			...userMsg("新会话但很久没动"),
+			ts: "2026-10-11T08:00:00.000Z",
+		});
+
+		const list = await listSessions(home);
+		expect(list.map((s) => s.id)).toEqual([older.id, newer.id]);
+		expect(list[0]?.updatedAt).toBe("2026-10-12T08:00:00.000Z");
+		expect(list[1]?.updatedAt).toBe("2026-10-11T08:00:00.000Z");
 	});
 
 	it("listSessions 用首条用户消息派生显示名（长提示词按句子分隔符截断）", async () => {

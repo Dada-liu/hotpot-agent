@@ -3,8 +3,12 @@
 // - transcript 只收 main 的 user_msg；assistant_msg 的工具块落成工具卡片，
 //   tool_result 按 toolCallId + agentId 配对回填
 // - agent 树由 spawn / log(agent_spawn) 登记；log(agent_end) 把仍 running 的翻为
-//   done/failed（failed 不回退），log(error) 即时标 failed；turn(end) 只做回合级
-//   收敛（turn/pending/流式段），不再触碰 agent 状态
+//   done/failed（failed 不回退），log(error) 即时标 failed；turn(start) 不触碰卡片，
+//   turn(end) 只兜底把残留 running 翻为 done（agent_end 丢失时的收敛）；卡片（含已完成
+//   的）保留在右侧面板，直到 main 派发新一批 work agent（beginWorkerBatch）才被替换
+// - 瞬态 spawn 与 durable agent_spawn/agent_end 存在竞速：spawn 事件要等工具返回才被
+//   drain 出来，可能晚于同 id 的 agent_end 到达。已知 agentId 的瞬态 spawn 一律不重建
+//   卡片（否则会清空已完成批次、把卡片重置成 running 且再无完成信号）
 // - log 事件按 event.id 去重（tailer 重放/断线补发会重复投递）
 // - delta 只累加进当前流式段；assistant_msg 到达后流式段定格（以 content 为准）；
 //   turn(end) 与 log(error) 兜底清理（LLM 失败路径无 assistant_msg 定格）
@@ -334,20 +338,16 @@ export function reduce(state: ChatState, event: WireEvent): ChatState {
 		}
 		case "turn": {
 			if (event.phase === "start") {
-				// 新任务开始：右侧面板只展示本回合 spawn 的 agent，
-				// 清空上一任务的 agent 树与 todo 清单（turn(start) 不重放，
-				// 重开历史会话时末轮 agent 不受影响的原理与此相同）
-				return {
-					...state,
-					turn: "running",
-					agents: [],
-					todosByAgent: {},
-					lastTodoAgentId: null,
-				};
+				// 新回合开始：不解散右侧面板。上一批 worker/task 的卡片与 todo 一直保留
+				// （含全部完成的状态），直到 main 真的派发新一批 work agent 才被替换，
+				// 见 beginWorkerBatch
+				return { ...state, turn: "running" };
 			}
 			// 回合结束：兜底清掉 pending 与流式段（LLM 失败时无 assistant_msg
 			// 定格，turn(end) 是最后收敛点）；未等到 durable user_msg 的临时条目
-			// 一并撤销，避免幽灵用户气泡；agent 状态由 agent_end/log(error) 驱动
+			// 一并撤销，避免幽灵用户气泡。agent 卡片保留（右侧面板继续展示已完成的
+			// agent），但把残留的 running 翻成 done：子 agent 都在 main 回合内联跑完，
+			// 回合结束时不可能还有在跑的；agent_end 因竞速/写盘失败丢失时靠这里收敛
 			return {
 				...cancelPendingUser(state),
 				turn: "idle",
@@ -356,6 +356,12 @@ export function reduce(state: ChatState, event: WireEvent): ChatState {
 				streaming: null,
 				// 建索引进度只属于本回合：回合结束仍未收到 vector/indexed 也一并清掉
 				vectorProgress: null,
+				lastTodoAgentId: null,
+				agents: state.agents.map((a) =>
+					a.status === "running"
+						? { ...a, status: "done" as const, currentTool: undefined }
+						: a,
+				),
 			};
 		}
 		case "plan":
@@ -363,10 +369,19 @@ export function reduce(state: ChatState, event: WireEvent): ChatState {
 		case "permission":
 			// M3 权限模式切换瞬态：直接折叠当前档位（durable permission/changed 仅审计）
 			return { ...state, permissionMode: event.mode };
-		case "spawn":
+		case "spawn": {
+			// 尾部竞速：spawn 由 spawn_workers 工具返回后才 drain，可能晚于同 id 的
+			// durable agent_spawn/agent_end 到达。已知 id 直接忽略——再走一遍
+			// beginWorkerBatch + upsert 会清掉已完成批次，并把卡片重置成 running，
+			// 而之后不会再有 agent_end，卡片将永久停在 running；同时瞬态事件的
+			// parentAgentId 固定为 main，也会把已完成 task 从 worker 下面挪到顶层
+			if (state.agents.some((a) => a.agentId === event.agentId)) {
+				return state;
+			}
+			const base = beginWorkerBatch(state, event.role);
 			return {
-				...state,
-				agents: upsertAgent(state.agents, {
+				...base,
+				agents: upsertAgent(base.agents, {
 					agentId: event.agentId,
 					role: event.role,
 					tier: event.tier,
@@ -375,6 +390,7 @@ export function reduce(state: ChatState, event: WireEvent): ChatState {
 					lastEventAt: "",
 				}),
 			};
+		}
 		case "approval": {
 			// plan 审批由 plan 卡片承担；asked/decided 日志已提供审计，不重复落条目
 			if (event.approvalType === "plan") {
@@ -517,10 +533,11 @@ function reduceLog(state: ChatState, event: SessionEvent): ChatState {
 			}));
 			return { ...state, transcript, agents };
 		}
-		case "agent_spawn":
+		case "agent_spawn": {
+			const base = beginWorkerBatch(state, event.role);
 			return {
-				...state,
-				agents: upsertAgent(state.agents, {
+				...base,
+				agents: upsertAgent(base.agents, {
 					agentId: event.agentId,
 					role: event.role === "task" ? "task" : "worker",
 					tier: event.tier,
@@ -529,6 +546,7 @@ function reduceLog(state: ChatState, event: SessionEvent): ChatState {
 					lastEventAt: event.ts,
 				}),
 			};
+		}
 		case "agent_end":
 			// 下层 agent turn 收尾：只翻转仍 running 的卡片，failed 不回退
 			// （error 可能已先标 failed）；currentTool 随收尾清除
@@ -701,6 +719,24 @@ function reducePlan(
 		...state,
 		transcript,
 		pendingPlan: null,
+	};
+}
+
+// main 派发新一批 work agent 时替换上一批卡片：上一批还有 running 的视为同一批，
+// 直接追加（并行派发）；全部结束则清空卡片与 todo 清单，新卡片从这里重新开始。
+// task agent 只会在某个 worker 运行期间派生，不触发替换
+function beginWorkerBatch(state: ChatState, role: string): ChatState {
+	if (role !== "worker" || state.agents.length === 0) {
+		return state;
+	}
+	if (state.agents.some((a) => a.status === "running")) {
+		return state;
+	}
+	return {
+		...state,
+		agents: [],
+		todosByAgent: {},
+		lastTodoAgentId: null,
 	};
 }
 

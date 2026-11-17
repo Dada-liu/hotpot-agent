@@ -1,7 +1,8 @@
 // reducer 测试：spawn 登记 → 工具事件归属 → agent_end/error 状态翻转 →
-// turn(end) 回合级收敛 → 幂等去重 → delta 折叠定格 → approval 登记/清除。
+// turn(end) 回合级收敛（残留 running 兜底为 done）→ 幂等去重 → delta 折叠定格 →
+// approval 登记/清除。
 // 卡片状态规则：log(agent_end) 把仍 running 的翻为 done/failed（failed 不回退），
-// log(error) 即时标 failed；turn(end) 不再触碰 agent 状态。
+// log(error) 即时标 failed；已知 agentId 的迟到瞬态 spawn 不重建卡片。
 // 事件构造走协议形状（protocol.ts 镜像 server wire.ts）。
 
 import { describe, expect, it } from "vitest";
@@ -173,7 +174,7 @@ describe("reduce：spawn 登记与 agent 树", () => {
 		expect(state.todosByAgent["worker-1"]?.[0]?.content).toBe("读文件");
 	});
 
-	it("turn(start) 清空上一任务的 agent 树与 todo 清单，只保留本回合的", () => {
+	it("已完成 agent 卡片跨回合保留，只有派发新一批 work agent 时才被替换", () => {
 		let state = createInitialState();
 		state = reduce(state, {
 			seq: 1,
@@ -194,19 +195,29 @@ describe("reduce：spawn 登记与 agent 树", () => {
 				todos: [{ content: "旧 todo", status: "completed" }],
 			}),
 		);
+		// 任务完成
+		state = reduce(
+			state,
+			log(3, {
+				type: "agent_end",
+				id: "e-1",
+				ts,
+				agentId: "worker-1",
+				outcome: "done",
+			}),
+		);
 		expect(state.agents).toHaveLength(1);
+
+		// 新回合开始（main 还没派发 worker）：卡片与 todo 都保留
+		state = reduce(state, { seq: 4, kind: "turn", phase: "start" });
+		expect(state.agents.map((a) => a.agentId)).toEqual(["worker-1"]);
 		expect(state.todosByAgent["worker-1"]).toHaveLength(1);
 		expect(state.lastTodoAgentId).toBe("worker-1");
-
-		state = reduce(state, { seq: 3, kind: "turn", phase: "start" });
-		expect(state.agents).toHaveLength(0);
-		expect(state.todosByAgent).toEqual({});
-		expect(state.lastTodoAgentId).toBeNull();
 		expect(state.turn).toBe("running");
 
-		// 新回合 spawn 的 agent 正常登记
+		// main 派发新的 work agent：旧卡片与 todo 被替换，只留新的
 		state = reduce(state, {
-			seq: 4,
+			seq: 5,
 			kind: "spawn",
 			agentId: "worker-2",
 			role: "worker",
@@ -215,6 +226,194 @@ describe("reduce：spawn 登记与 agent 树", () => {
 			parentAgentId: "main",
 		});
 		expect(state.agents.map((a) => a.agentId)).toEqual(["worker-2"]);
+		expect(state.todosByAgent).toEqual({});
+		expect(state.lastTodoAgentId).toBeNull();
+	});
+
+	it("回合结束：残留 running 收敛为 done，卡片与 todo 仍保留", () => {
+		let state = createInitialState();
+		state = reduce(state, {
+			seq: 1,
+			kind: "spawn",
+			agentId: "worker-1",
+			role: "worker",
+			tier: "low",
+			task: "任务",
+			parentAgentId: "main",
+		});
+		state = reduce(
+			state,
+			log(2, {
+				type: "todo/set",
+				id: "t-1",
+				ts,
+				agentId: "worker-1",
+				todos: [{ content: "todo", status: "completed" }],
+			}),
+		);
+		state = reduce(state, { seq: 3, kind: "turn", phase: "start" });
+		state = reduce(state, { seq: 4, kind: "turn", phase: "end" });
+
+		expect(state.lastTodoAgentId).toBeNull();
+		expect(state.agents.map((a) => a.agentId)).toEqual(["worker-1"]);
+		// 子 agent 都在 main 回合内联跑完；回合结束仍 running 说明 agent_end 丢了，
+		// 这里兜底收敛，避免卡片永久转圈
+		expect(state.agents[0]?.status).toBe("done");
+		expect(state.todosByAgent["worker-1"]).toHaveLength(1);
+	});
+
+	it("迟到的瞬态 spawn 不重建卡片：已完成的 worker 不会被重置成 running", () => {
+		// 真实顺序（tailer 先推到 agent_end，spawn 事件等工具返回才 drain）：
+		// agent_spawn → agent_end → spawn。若把迟到 spawn 当成新批次，会清空卡片并
+		// 重新登记为 running，且之后再无 agent_end
+		let state = createInitialState();
+		state = reduce(
+			state,
+			log(1, {
+				type: "agent_spawn",
+				id: "s-1",
+				ts,
+				parentAgentId: "main",
+				agentId: "worker-1",
+				role: "worker",
+				task: "读取 note.txt",
+				tier: "low",
+			}),
+		);
+		state = reduce(
+			state,
+			log(2, {
+				type: "agent_end",
+				id: "e-1",
+				ts,
+				agentId: "worker-1",
+				outcome: "done",
+			}),
+		);
+		state = reduce(state, {
+			seq: 3,
+			kind: "spawn",
+			agentId: "worker-1",
+			role: "worker",
+			tier: "low",
+			task: "读取 note.txt",
+			parentAgentId: "main",
+		});
+
+		expect(state.agents).toHaveLength(1);
+		expect(state.agents[0]?.status).toBe("done");
+	});
+
+	it("task 的迟到瞬态 spawn 不改变已完成卡片与层级", () => {
+		let state = createInitialState();
+		state = reduce(
+			state,
+			log(1, {
+				type: "agent_spawn",
+				id: "s-1",
+				ts,
+				parentAgentId: "main",
+				agentId: "worker-1",
+				role: "worker",
+				task: "父任务",
+				tier: "medium",
+			}),
+		);
+		state = reduce(
+			state,
+			log(2, {
+				type: "agent_spawn",
+				id: "s-2",
+				ts,
+				parentAgentId: "worker-1",
+				agentId: "task-1",
+				role: "task",
+				task: "子任务",
+				tier: "medium",
+			}),
+		);
+		state = reduce(
+			state,
+			log(3, {
+				type: "agent_end",
+				id: "e-1",
+				ts,
+				agentId: "task-1",
+				outcome: "done",
+			}),
+		);
+		// 瞬态 spawn 的 parentAgentId 在 server 侧被固定成 main：迟到到达时不能把
+		// 已完成的 task 从 worker 卡片里挪到顶层
+		state = reduce(state, {
+			seq: 4,
+			kind: "spawn",
+			agentId: "task-1",
+			role: "task",
+			tier: "medium",
+			task: "子任务",
+			parentAgentId: "main",
+		});
+
+		expect(state.agents.find((a) => a.agentId === "task-1")).toMatchObject({
+			status: "done",
+			parentAgentId: "worker-1",
+		});
+	});
+
+	it("同一批并行派发：前一个 worker 仍在运行时新 spawn 直接追加，不清空", () => {
+		let state = createInitialState();
+		for (const [seq, agentId] of [
+			[1, "worker-1"],
+			[2, "worker-2"],
+		] as const) {
+			state = reduce(state, {
+				seq,
+				kind: "spawn",
+				agentId,
+				role: "worker",
+				tier: "medium",
+				task: "并行任务",
+				parentAgentId: "main",
+			});
+		}
+		expect(state.agents.map((a) => a.agentId)).toEqual([
+			"worker-1",
+			"worker-2",
+		]);
+	});
+
+	it("task agent 派生不清空已有卡片", () => {
+		let state = createInitialState();
+		state = reduce(state, {
+			seq: 1,
+			kind: "spawn",
+			agentId: "worker-1",
+			role: "worker",
+			tier: "medium",
+			task: "父任务",
+			parentAgentId: "main",
+		});
+		state = reduce(
+			state,
+			log(2, {
+				type: "agent_end",
+				id: "e-1",
+				ts,
+				agentId: "worker-1",
+				outcome: "done",
+			}),
+		);
+		// worker 完成后再派生 task（异常但不应清掉父卡片）
+		state = reduce(state, {
+			seq: 3,
+			kind: "spawn",
+			agentId: "task-1",
+			role: "task",
+			tier: "low",
+			task: "子任务",
+			parentAgentId: "worker-1",
+		});
+		expect(state.agents.map((a) => a.agentId)).toEqual(["worker-1", "task-1"]);
 	});
 });
 
@@ -485,7 +684,7 @@ describe("reduce：agent 状态翻转（agent_end / error）", () => {
 });
 
 describe("reduce：turn 状态翻转", () => {
-	it("turn(end) 只做回合级收敛，不翻转 agent 状态（状态归 agent_end/error）", () => {
+	it("turn(end) 收敛残留 running 为 done，failed 不回退", () => {
 		let state = createInitialState();
 		expect(state.turn).toBe("idle");
 		state = reduce(state, { seq: 1, kind: "turn", phase: "start" });
@@ -523,12 +722,12 @@ describe("reduce：turn 状态翻转", () => {
 
 		state = reduce(state, { seq: 5, kind: "turn", phase: "end" });
 		expect(state.turn).toBe("idle");
-		// failed 保持 failed；仍 running 的也不翻——等各自的 agent_end 翻转
+		// failed 保持 failed；仍 running 的由回合结束兜底收敛（agent_end 丢失时的最后防线）
 		expect(state.agents.find((a) => a.agentId === "worker-1")?.status).toBe(
 			"failed",
 		);
 		expect(state.agents.find((a) => a.agentId === "task-2")?.status).toBe(
-			"running",
+			"done",
 		);
 	});
 });

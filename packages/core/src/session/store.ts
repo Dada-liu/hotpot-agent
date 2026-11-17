@@ -19,6 +19,9 @@ export interface SessionSummary {
 	id: string;
 	filePath: string;
 	createdAt: string;
+	// 最后修改时间：日志最后一条带 ts 的事件的 ts（append-only 日志里即最近一次写入），
+	// 只有 meta 的空会话回退 createdAt。侧栏按它倒序，最近有活动（含后台 worker 收尾）的排前面
+	updatedAt: string;
 	cwd: string;
 	// 显示名：日志首条 user_msg 的首行（规则见 session/name.ts）；尚无用户消息时为 undefined，
 	// 由客户端回退 cwd。放在服务端而不是浏览器 localStorage，避免换 host/端口即丢失
@@ -121,6 +124,18 @@ export async function resumeSession(filePath: string): Promise<Session> {
 	};
 }
 
+// 最后修改时间：倒序找最后一条带 ts 的事件；只有 meta（空会话）时回退 createdAt。
+// 用事件 ts 而不是文件 mtime，避免文件被 touch/拷贝后排序漂移，也让测试可确定断言
+function updatedAtFrom(events: SessionEvent[], createdAt: string): string {
+	for (let i = events.length - 1; i >= 0; i -= 1) {
+		const event = events[i];
+		if (event !== undefined && event.type !== "meta") {
+			return event.ts;
+		}
+	}
+	return createdAt;
+}
+
 // 列出 home 下全部会话；读每个文件首行 meta 提取摘要（顺带取首条用户消息派生显示名），损坏文件跳过
 export async function listSessions(home?: string): Promise<SessionSummary[]> {
 	const sessionsDir = join(resolveHome(home), "sessions");
@@ -153,6 +168,7 @@ export async function listSessions(home?: string): Promise<SessionSummary[]> {
 					id: meta.sessionId,
 					filePath,
 					createdAt: meta.createdAt,
+					updatedAt: updatedAtFrom(events, meta.createdAt),
 					cwd: meta.cwd,
 					...(name === undefined ? {} : { name }),
 				});
@@ -161,10 +177,11 @@ export async function listSessions(home?: string): Promise<SessionSummary[]> {
 			}
 		}
 	}
-	// 按创建时间排序，保证输出稳定
+	// 最近修改的排前面（侧栏展示顺序）；同一时间戳再按创建时间/路径兜底，保证输出稳定
 	summaries.sort(
 		(a, b) =>
-			a.createdAt.localeCompare(b.createdAt) ||
+			b.updatedAt.localeCompare(a.updatedAt) ||
+			b.createdAt.localeCompare(a.createdAt) ||
 			a.filePath.localeCompare(b.filePath),
 	);
 	return summaries;
