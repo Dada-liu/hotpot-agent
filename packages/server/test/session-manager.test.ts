@@ -936,6 +936,13 @@ describe("code_search 装配", () => {
 		expect(audit).toMatchObject({ files: 1, chunks: 1 });
 		expect(JSON.stringify(audit)).not.toContain("auth.ts");
 		expect(JSON.stringify(audit)).not.toContain("alphaAuth");
+		// 进度事件：先 0/1，落盘后 1/1；两者都只含计数
+		const progress = fileEvents.filter(
+			(event) => event.type === "vector/progress",
+		);
+		expect(progress.at(0)).toMatchObject({ indexedFiles: 0, totalFiles: 1 });
+		expect(progress.at(-1)).toMatchObject({ indexedFiles: 1, totalFiles: 1 });
+		expect(JSON.stringify(progress)).not.toContain("auth.ts");
 		await sm.close(rec.id);
 	});
 

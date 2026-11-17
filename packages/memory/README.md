@@ -38,9 +38,9 @@ const results = await store.search(queryVector, { namespace: "code", limit: 10 }
 
 同一项目的所有 service/进程通过 `<project-key>.lock` 排他协调「重读 → 扫描 → embedding → 写入」，获得锁后重开 store，异常、abort 和审计失败都在 finally 释放锁，避免交错写入复活旧代码。锁文件携带随机 owner token 并每秒刷新 mtime；超过 10 秒未更新的崩溃残留锁会在再次核对 token 与 mtime 后回收。所有共享锁删除先登记唯一的回收意向文件，新锁必须等意向清空并再次确认 owner token 后才能进入临界区，若等待期间被回收则重新获取；意向文件自身按相同心跳和陈旧规则恢复。正常释放只删除自己持有的锁。单个 service 内的并发检索也串行刷新。
 
-默认忽略任意层级的 `.git`、`node_modules`、`dist`、`build`、`.hotpot`，并排除解析后的 `<home>/memory/vectors` 子树（即使 home 嵌套在 cwd 内也不会自索引），跳过符号链接、含 NUL 或非法 UTF-8 的文件、超过 512KB 的文件。只接受常见源码扩展；`.env*`、凭证/密码/token 同名文件与常见私钥格式即使内容可读也不索引。文本按最多 1200 字符、200 字符重叠分块，保留相对路径与 1 起始止行；行号由一次前向扫描生成，不逐 chunk 重扫前缀。索引 embedding 每批最多 16 个 chunk，响应按请求顺序合并。项目向量写入 `<home>/memory/vectors/<sha256(解析后的 cwd)>.jsonl`。
+默认忽略任意层级的 `.git`、`node_modules`、`dist`、`build`、`.hotpot`，并排除解析后的 `<home>/memory/vectors` 子树（即使 home 嵌套在 cwd 内也不会自索引），跳过符号链接、含 NUL 或非法 UTF-8 的文件、超过 512KB 的文件。只接受常见源码扩展；`.env*`、凭证/密码/token 同名文件与常见私钥格式即使内容可读也不索引。文本按最多 1200 字符、200 字符重叠分块，保留相对路径与 1 起始止行；行号由一次前向扫描生成，不逐 chunk 重扫前缀。索引 embedding 每批最多 32 个 chunk、最多 4 个请求同时在途，响应按原下标回填保证顺序；每积累约 256 个 chunk 就落一次盘（向量库 + manifest）。因此中断（用户 ESC、进程退出）只丢当前窗口，已落盘文件下次按 hash 跳过，不必从头重建。项目向量写入 `<home>/memory/vectors/<sha256(解析后的 cwd)>.jsonl`。
 
-`createCodeSearchTool(service)` 暴露 `{ query, limit? }`，默认返回 5 条、最多 20 条；结果按 score 降序排列，包含 `path`、`startLine`、`endLine`、`score` 与最多 800 字符的 `excerpt`。无匹配时返回明确提示。索引变化通过 `onIndexed` 回调报告 `{ files, chunks, durationMs }`，回调与遥测不得加入路径或源码。
+`createCodeSearchTool(service)` 暴露 `{ query, limit? }`，默认返回 5 条、最多 20 条；结果按 score 降序排列，包含 `path`、`startLine`、`endLine`、`score` 与最多 800 字符的 `excerpt`。空结果分两种提示：索引里一个 chunk 都没有时明确说「工作区没有可索引的源码文件」（例如只有 `.md` 文档），并提示改用 read/grep/glob；有索引但没匹配则回报已索引的文件与 chunk 数。索引规模由 `service.stats()` 提供，索引为空时连查询文本都不外发。索引变化通过 `onIndexed` 回调报告 `{ files, chunks, durationMs }`，回调与遥测不得加入路径或源码。建索引过程另经 `onProgress` 回调按落盘窗口上报 `{ indexedFiles, totalFiles, indexedChunks, totalChunks }`（只含计数），server 侧落成 `vector/progress` 会话事件，web 据此显示「正在建代码索引 x/y」——首次索引大仓库可能要几分钟，没有这条用户会以为检索卡死。
 
 **外发边界**：本地扫描与向量库读写不外发；只有调用 `code_search` 时，通过上述源码与敏感文件策略筛选后的待索引 chunk 和查询文本才会 POST 到用户配置的 `vector.embedding.baseUrl`。启用 vector 不代表同意上传 `.env`、私钥、凭证、任意文本或 YAML/JSON 等部署配置。未修改内容的后续检索只外发查询文本，不重复请求索引 embedding。代码索引在装配与启动时不会扫描或联网。
 

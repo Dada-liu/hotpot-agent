@@ -561,6 +561,31 @@ describe("loadSettings vector 字段", () => {
 		);
 	});
 
+	it("apiKey 可省略或为空串（本地 OpenAI 兼容服务不鉴权）", async () => {
+		for (const apiKey of [undefined, ""]) {
+			const data = validSettings() as Record<string, unknown>;
+			data.features = { vector: true };
+			data.vector = {
+				embedding: {
+					model: "qwen3-embedding",
+					baseUrl: "http://127.0.0.1:11434/v1",
+					...(apiKey === undefined ? {} : { apiKey }),
+				},
+			};
+			await writeSettings(data);
+			const settings = loadSettings({ home, cwd: home });
+			expect(featureEnabled(settings.features, "vector")).toBe(true);
+			expect(settings.vector?.embedding?.apiKey).toBe(apiKey);
+		}
+	});
+
+	it("features 里出现未知键时报错，而不是静默丢弃（拼写错误 vetor）", async () => {
+		const data = validSettings() as Record<string, unknown>;
+		data.features = { vetor: true };
+		await writeSettings(data);
+		expect(() => loadSettings({ home, cwd: home })).toThrow(/vetor/);
+	});
+
 	it("项目级 features.vector、vector 与 embedding 均被剥离", async () => {
 		const data = validSettings() as Record<string, unknown>;
 		data.features = { vector: false };

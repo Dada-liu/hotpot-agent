@@ -54,6 +54,8 @@ M4 功能开关，全部可选布尔。既有功能默认全开；`memory` 为�
 | `memory` | 关 | 用户记忆：关闭时不读 `MEMORY.md`、不注册 `memory_save`、不注入记忆段 |
 | `vector` | 关 | 代码向量检索：关闭时不注册 `code_search`、不扫描目录、不请求 embedding |
 
+`features` 是按**严格** schema 解析的：多写一个不认识的键（例如把 `vector` 拼成 `vetor`）会直接报错并指出键名，而不是静默忽略——静默忽略的表现是「开关配了却没生效」，很难排查。
+
 `features.memory=true` 后，新会话与 `--session` 恢复会话从同一 `<home>/MEMORY.md` 构建 prompt，每轮注入最新有界摘要（最多 8,000 字符，超出只保留末尾完整条目并带截断标记，读取失败降级为空）；main/worker 可调用 `memory_save` 追加写入，task 只读。记忆文件可人工编辑，但不要保存密钥、凭证或临时任务状态。
 
 ### compaction（可选）
@@ -82,9 +84,11 @@ M4 功能开关，全部可选布尔。既有功能默认全开；`memory` 为�
 }
 ```
 
-- `vector.embedding` 为 OpenAI 兼容 endpoint：`model` / `baseUrl` / `apiKey` 必填，`apiKey` 支持 `"$ENV_VAR"` 引用。
+- `vector.embedding` 为 OpenAI 兼容 endpoint：`model` / `baseUrl` 必填，`apiKey` 可省略（Ollama、llama.cpp、vLLM 等本地服务通常不校验凭证；留空时不发 `Authorization` 头），需要鉴权时支持 `"$ENV_VAR"` 引用。
 - 配置完整且 `features.vector=true` 时，向 main/worker/task 注册 `code_search` 工具，语义检索当前工作区源码。
+- 索引范围只有源码扩展名（`.ts`/`.js`/`.py`/`.go`/`.rs`/`.java`/`.sh`/`.sql` 等）；`.md`、`.txt`、`.json`、`.yaml` 等文档与配置不参与索引，这类内容请用 read/grep。工作区里没有可索引文件时，工具会明确返回这一点，而不是笼统的「没有匹配」。
 - 惰性启动：装配与项目启动不扫描、不联网；首次检索才扫描 cwd，之后每次检索前按文件 hash 增量刷新。本地向量库与索引文件存于 `<home>/memory/vectors/<sha256(cwd)>.jsonl`，不进入项目目录。
+- 首次索引要逐个 chunk 请求 embedding，大仓库可能持续几分钟：web 端在 composer 上方显示「正在建代码索引 x/y 文件」，每落盘约 256 个 chunk 更新一次进度；中途中断只丢当前窗口，已落盘文件下次按 hash 跳过。设置弹窗的「功能」页可直接编辑 `model` / `baseUrl` / `apiKey`。
 - 外发边界：只有筛选后的待索引源码 chunk 与查询文本会 POST 到所配 endpoint；未修改内容不重复请求索引 embedding。`.env*`、私钥、凭证/密码/token 文件与 YAML/JSON 等部署配置不参与索引。
 - `vector` 相关字段（含 `features.vector` 与 `vector.embedding`）**只从用户级读取**，项目级 `.hotpot/settings.json` 中的同名字段会被剥离，防止仓库重定向代码与凭证外发目的地。审计与遥测只含计数，不含路径与源码。
 

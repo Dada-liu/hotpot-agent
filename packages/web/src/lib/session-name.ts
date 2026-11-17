@@ -2,6 +2,8 @@
 // ≤max 字符全取；>max 字符优先按第一个句子分隔符（中英文逗号/句号/分号/冒号/
 // 问号/叹号/顿号/换行）截断取前半段，仍超 max 再截到 max；无分隔符取前 max 字符。
 // 会话列表展示侧用 CSS 省略号打点，hover 由 tooltip 展示全称。
+// 注意：会话的正式显示名由服务端派生（core 的 session/name.ts，随 SessionSummary.name 返回），
+// 这里的 sessionNameFromPrompt 只用于「刚创建、首条消息尚未落盘」时的乐观显示，规则必须与之保持一致。
 // 纯函数，供 App（创建会话时命名）与 AgentPanel（agent 卡片命名）及测试使用。
 
 const SENTENCE_SEPARATOR = /[，。、；：？！,.;:?!\n]/u;

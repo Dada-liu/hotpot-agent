@@ -28,19 +28,23 @@ export const modelsSchema = z.object({
 export type ModelsSettings = z.infer<typeof modelsSchema>;
 
 // M4 功能开关：全部 optional boolean；既有功能默认全开，memory/vector 默认关闭，
-// 分别避免隐式增加 prompt token 和未经同意外发代码
-const featuresSchema = z.object({
-	todo: z.boolean().optional(),
-	hooks: z.boolean().optional(),
-	skills: z.boolean().optional(),
-	promptTemplates: z.boolean().optional(),
-	webSearch: z.boolean().optional(),
-	webFetch: z.boolean().optional(),
-	mcp: z.boolean().optional(),
-	compaction: z.boolean().optional(),
-	memory: z.boolean().optional(),
-	vector: z.boolean().optional(),
-});
+// 分别避免隐式增加 prompt token 和未经同意外发代码。
+// strict：未知键直接报错（如把 vector 拼成 vetor）。默认 strip 会静默丢掉拼写错误，
+// 表现为「开关配了却没生效」，排查成本远高于一条启动期错误
+const featuresSchema = z
+	.object({
+		todo: z.boolean().optional(),
+		hooks: z.boolean().optional(),
+		skills: z.boolean().optional(),
+		promptTemplates: z.boolean().optional(),
+		webSearch: z.boolean().optional(),
+		webFetch: z.boolean().optional(),
+		mcp: z.boolean().optional(),
+		compaction: z.boolean().optional(),
+		memory: z.boolean().optional(),
+		vector: z.boolean().optional(),
+	})
+	.strict();
 
 // M4 上下文压缩：触发比例与最近历史保留预算，仅用户级配置
 const compactionSchema = z.object({
@@ -100,13 +104,15 @@ const telemetrySchema = z.object({
 	flushIntervalMs: z.number().int().nonnegative().optional(),
 });
 
-// 代码检索 embedding：整段仅用户级；baseUrl 指向 OpenAI 兼容服务，apiKey 支持 $ENV
+// 代码检索 embedding：整段仅用户级；baseUrl 指向 OpenAI 兼容服务，apiKey 支持 $ENV。
+// apiKey 允许空串/省略：Ollama、llama.cpp、vLLM 等本地 OpenAI 兼容服务普遍不校验凭证，
+// 强制非空会逼用户填占位值。远端服务留空只会得到 401，不会把代码发去未授权的地方
 const vectorSchema = z.object({
 	embedding: z
 		.object({
 			model: z.string().min(1),
 			baseUrl: z.string().min(1),
-			apiKey: z.string().min(1),
+			apiKey: z.string().optional(),
 		})
 		.optional(),
 });
@@ -228,7 +234,8 @@ function loadUserSettingsFrom(path: string): Settings {
 		);
 	}
 	const embedding = settings.vector?.embedding;
-	if (embedding) {
+	// apiKey 可省略（本地无需鉴权的服务）；只有真的写了才做 $ENV 插值
+	if (embedding?.apiKey !== undefined) {
 		embedding.apiKey = resolveApiKey(
 			"vector.embedding",
 			embedding.apiKey,

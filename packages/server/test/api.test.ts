@@ -837,13 +837,26 @@ tests pass
 		// 模拟「非本 server 进程托管」的现存会话
 		const fx = await startApi(scriptedAdapter([]), "full");
 		const disk = await createDiskSession(fx.proj, fx.home);
+		// 首条用户消息落盘后，列表的 name 由服务端派生（不再依赖浏览器 localStorage）
+		await disk.append({
+			type: "user_msg",
+			id: "disk-u1",
+			ts: "2026-10-10T08:00:00.000Z",
+			agentId: "main",
+			content: "磁盘会话的首条提示",
+		});
 
 		// 列表可见（listSessions 读磁盘）
 		const list = (await (await fetch(`${fx.base}/api/sessions`)).json()) as {
-			sessions: { id: string; cwd: string; turn: string }[];
+			sessions: { id: string; cwd: string; turn: string; name?: string }[];
 		};
 		const mine = list.sessions.find((s) => s.id === disk.id);
-		expect(mine).toMatchObject({ id: disk.id, cwd: fx.proj, turn: "idle" });
+		expect(mine).toMatchObject({
+			id: disk.id,
+			cwd: fx.proj,
+			turn: "idle",
+			name: "磁盘会话的首条提示",
+		});
 
 		// 详情：get 未命中 → attachById 恢复 → 200
 		const detail = (await (

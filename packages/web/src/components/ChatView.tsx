@@ -9,6 +9,7 @@ import {
 	ChevronDown,
 	ChevronRight,
 	Circle,
+	Database,
 	File,
 	Folder,
 	ListChecks,
@@ -56,7 +57,11 @@ import type {
 	InboxSnapshot,
 	TodoItem,
 } from "../protocol.ts";
-import type { ChatState, TranscriptEntry } from "../state/reducer.ts";
+import type {
+	ChatState,
+	TranscriptEntry,
+	VectorProgress,
+} from "../state/reducer.ts";
 import { ApprovalPrompt } from "./ApprovalPrompt.tsx";
 import { MessageBubble } from "./MessageBubble.tsx";
 import { PermissionSelect } from "./PermissionSelect.tsx";
@@ -1082,6 +1087,33 @@ function QueueBar({
 	);
 }
 
+// 建索引进度条：首次索引可能要几分钟（全部 chunk 要逐个 embed），
+// 没有这条用户会以为 code_search 卡死；vector/indexed 到达或回合结束即消失。
+function VectorIndexBar({
+	progress,
+}: {
+	progress: VectorProgress;
+}): ReactElement {
+	const { indexedFiles, totalFiles, indexedChunks, totalChunks } = progress;
+	const pct =
+		totalFiles === 0 ? 0 : Math.round((indexedFiles / totalFiles) * 100);
+	return (
+		<div className="mb-2 flex items-center gap-2 rounded-xl border border-border bg-secondary/40 px-3 py-2">
+			<Database className="size-3.5 shrink-0 text-brand" />
+			<span className="text-xs font-medium">正在建代码索引</span>
+			<span className="font-mono text-xs text-muted-foreground">
+				{indexedFiles}/{totalFiles} 文件 · {indexedChunks}/{totalChunks} 块
+			</span>
+			<div className="ml-auto h-1 w-24 overflow-hidden rounded-full bg-background">
+				<div
+					className="h-full rounded-full bg-brand transition-all"
+					style={{ width: `${pct}%` }}
+				/>
+			</div>
+		</div>
+	);
+}
+
 // 计划条：composer 正上方展示最近 todo/set 的 agent 清单（state.lastTodoAgentId 指向）。
 // todo/set 全量快照实时折叠，进度天然实时；turn(start) 清空后即消失。
 // 标题行 = ListChecks + 「执行计划」 + n/m + 橙色进度条；清单三态与 AgentPanel TodoList 一致。
@@ -1293,6 +1325,9 @@ export function ChatView({
 							onSteer={onSteerQueued}
 							onRemove={onRemoveQueued}
 						/>
+						{state.vectorProgress !== null && (
+							<VectorIndexBar progress={state.vectorProgress} />
+						)}
 						{planTodos !== null && planTodos.length > 0 && (
 							<TodoPlanBar todos={planTodos} />
 						)}

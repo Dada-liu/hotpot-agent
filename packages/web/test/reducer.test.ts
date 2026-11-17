@@ -1196,6 +1196,60 @@ describe("inbox 队列（M4）", () => {
 		expect(state.inbox).toEqual({ nextTurn: [], nextStep: [] });
 		expect(state.seenEventIds).toHaveLength(events.length);
 	});
+
+	it("建索引进度：vector/progress 折叠到状态、vector/indexed 与回合结束清空", () => {
+		let state = createInitialState();
+		state = reduce(
+			state,
+			log(1, {
+				type: "vector/progress",
+				id: "p1",
+				ts,
+				indexedFiles: 3,
+				totalFiles: 12,
+				indexedChunks: 96,
+				totalChunks: 400,
+			}),
+		);
+		expect(state.vectorProgress).toEqual({
+			indexedFiles: 3,
+			totalFiles: 12,
+			indexedChunks: 96,
+			totalChunks: 400,
+		});
+		// 进度条不进对话流
+		expect(state.transcript).toEqual([]);
+
+		state = reduce(
+			state,
+			log(2, {
+				type: "vector/indexed",
+				id: "p2",
+				ts,
+				files: 12,
+				chunks: 400,
+				durationMs: 1000,
+			}),
+		);
+		expect(state.vectorProgress).toBeNull();
+
+		// 回合结束兜底清理：中断的索引不会把进度条留在界面上
+		state = reduce(
+			state,
+			log(3, {
+				type: "vector/progress",
+				id: "p3",
+				ts,
+				indexedFiles: 1,
+				totalFiles: 9,
+				indexedChunks: 32,
+				totalChunks: 300,
+			}),
+		);
+		state = reduce(state, { seq: 4, kind: "turn", phase: "start" });
+		state = reduce(state, { seq: 5, kind: "turn", phase: "end" });
+		expect(state.vectorProgress).toBeNull();
+	});
 });
 
 // M3：权限模式——wire permission 瞬态折叠档位；permission/changed 仅审计不渲染

@@ -94,6 +94,7 @@ describe("createCodeSearchTool", () => {
 				expect(signal.aborted).toBe(false);
 				return results;
 			},
+			stats: () => ({ files: 2, chunks: 3 }),
 		};
 		const tool = createCodeSearchTool(service);
 
@@ -113,12 +114,31 @@ describe("createCodeSearchTool", () => {
 		expect(output.isError).toBeUndefined();
 	});
 
-	it("无匹配时返回明确提示与空结果数组", async () => {
-		const tool = createCodeSearchTool({ search: async () => [] });
+	it("有索引但无匹配：提示索引规模", async () => {
+		const tool = createCodeSearchTool({
+			search: async () => [],
+			stats: () => ({ files: 3, chunks: 7 }),
+		});
 		const output = await tool.execute({ query: "missing" }, await context());
 
 		expect(output.content).toContain("No matching code found");
-		expect(output.details).toEqual({ results: [] });
+		expect(output.content).toContain("3 indexed files");
+		expect(output.details).toEqual({
+			results: [],
+			index: { files: 3, chunks: 7 },
+		});
+	});
+
+	it("空索引：明确说没有可索引的源码文件，避免模型误判目录为空", async () => {
+		const tool = createCodeSearchTool({
+			search: async () => [],
+			stats: () => ({ files: 0, chunks: 0 }),
+		});
+		const output = await tool.execute({ query: "name" }, await context());
+
+		expect(output.content).toContain("No indexable source files");
+		expect(output.content).toContain(".md");
+		expect(output.isError).toBeUndefined();
 	});
 
 	it("真实临时源码链路：增量索引、向量检索、结果与 vector/indexed 审计", async () => {
@@ -177,7 +197,10 @@ describe("createCodeSearchTool", () => {
 });
 
 describe("code_search 角色装配", () => {
-	const service: CodeIndexService = { search: async () => [] };
+	const service: CodeIndexService = {
+		search: async () => [],
+		stats: () => ({ files: 0, chunks: 0 }),
+	};
 
 	it("features.vector=true 且 service 完整时向 main/worker/task 注册并加入提示词", () => {
 		for (const role of ["main", "worker", "task"] as const) {

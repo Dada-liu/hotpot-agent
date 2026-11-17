@@ -18,16 +18,45 @@ function response(items: EmbeddingItem[], status = 200): Response {
 	);
 }
 
-function clientWith(fetchImpl: typeof fetch): EmbeddingClient {
+// 不传 overrides 时用固定 key；overrides.apiKey 显式给 undefined 表示「完全不配 key」
+function clientWith(
+	fetchImpl: typeof fetch,
+	overrides?: { apiKey?: string },
+): EmbeddingClient {
 	return new EmbeddingClient({
 		model: "embed-v1",
 		baseUrl: "https://embed.example.test/v1/",
-		apiKey: "test-key",
+		apiKey: overrides === undefined ? "test-key" : overrides.apiKey,
 		fetchImpl,
 	});
 }
 
 describe("EmbeddingClient", () => {
+	it("未配 apiKey 时不发 Authorization 头（本地服务不鉴权）", async () => {
+		const init0: RequestInit[] = [];
+		const fetchImpl: typeof fetch = async (_input, init) => {
+			init0.push(init ?? {});
+			return response([{ index: 0, embedding: [1, 2] }]);
+		};
+		await clientWith(fetchImpl, {}).embed(
+			["alpha"],
+			new AbortController().signal,
+		);
+		expect(new Headers(init0[0]?.headers).get("authorization")).toBeNull();
+
+		// 空串与省略等价
+		const init1: RequestInit[] = [];
+		const emptyKeyFetch: typeof fetch = async (_input, init) => {
+			init1.push(init ?? {});
+			return response([{ index: 0, embedding: [1, 2] }]);
+		};
+		await clientWith(emptyKeyFetch, { apiKey: "" }).embed(
+			["alpha"],
+			new AbortController().signal,
+		);
+		expect(new Headers(init1[0]?.headers).get("authorization")).toBeNull();
+	});
+
 	it("按 OpenAI 兼容契约发送批量请求并携带 Authorization", async () => {
 		const requests: { url: string; init: RequestInit | undefined }[] = [];
 		const fetchImpl: typeof fetch = async (input, init) => {

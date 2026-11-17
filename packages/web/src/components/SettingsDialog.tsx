@@ -38,7 +38,8 @@ const PERMISSION_ITEMS: { key: PermissionModeWire; label: string }[] = [
 	{ key: "full", label: "完全权限" },
 ];
 
-// features.* 开关展示序：默认全开，memory 为避免隐式增加 prompt token 默认关闭
+// features.* 开关展示序：默认全开，memory/vector 为避免隐式增加 prompt token、未经同意外发代码而默认关闭。
+// 这里必须列全 features 的所有键：保存时按 FEATURE_ITEMS 重建 features 对象，漏掉的键会被写没
 const FEATURE_ITEMS: {
 	key: keyof NonNullable<SettingsView["features"]>;
 	label: string;
@@ -52,9 +53,10 @@ const FEATURE_ITEMS: {
 	{ key: "mcp", label: "MCP 接入" },
 	{ key: "compaction", label: "上下文自动压缩" },
 	{ key: "memory", label: "用户记忆（MEMORY.md）" },
+	{ key: "vector", label: "代码向量检索（code_search）" },
 ];
 
-const FEATURE_DEFAULT_OFF = new Set(["memory"]);
+const FEATURE_DEFAULT_OFF = new Set(["memory", "vector"]);
 
 // 数字输入的草稿（字符串态，允许中间态；保存时解析校验）
 interface NumericDrafts {
@@ -249,6 +251,29 @@ export function SettingsDialog({
 		);
 	};
 
+	// embedding 三个字段整体替换（model/baseUrl 必填、apiKey 可空），保持 vector 结构不丢
+	const updateEmbedding = (patch: {
+		model?: string;
+		baseUrl?: string;
+		apiKey?: string;
+	}): void => {
+		setDraft((prev) =>
+			prev === null
+				? prev
+				: {
+						...prev,
+						vector: {
+							embedding: {
+								model: prev.vector?.embedding?.model ?? "",
+								baseUrl: prev.vector?.embedding?.baseUrl ?? "",
+								...prev.vector?.embedding,
+								...patch,
+							},
+						},
+					},
+		);
+	};
+
 	const handleSave = async (): Promise<void> => {
 		if (draft === null || numeric === null) {
 			return;
@@ -289,6 +314,17 @@ export function SettingsDialog({
 			const hooks = parseJsonField("hooks", hooksText);
 			const mcpServers = parseJsonField("mcpServers", mcpText);
 			const headers = parseJsonField("webSearch headers", headersText);
+
+			// 代码检索 embedding：model 与 baseUrl 必须同时存在（服务端 schema 要求 min(1)），
+			// 都留空表示不改动该键；apiKey 原样回传掩码时服务端保留磁盘值
+			const embeddingModel = draft.vector?.embedding?.model?.trim() ?? "";
+			const embeddingBaseUrl = draft.vector?.embedding?.baseUrl?.trim() ?? "";
+			if ((embeddingModel === "") !== (embeddingBaseUrl === "")) {
+				throw new Error(
+					"代码向量检索：model 与 baseUrl 需同时填写（都留空表示不改动）",
+				);
+			}
+			const embeddingApiKey = draft.vector?.embedding?.apiKey;
 
 			// baseUrl 留空 → 省略该键（服务端 schema 要求 min(1)）
 			const models = Object.fromEntries(
@@ -356,6 +392,19 @@ export function SettingsDialog({
 						: {}),
 					flushIntervalMs,
 				},
+				...(embeddingModel === ""
+					? {}
+					: {
+							vector: {
+								embedding: {
+									model: embeddingModel,
+									baseUrl: embeddingBaseUrl,
+									...(embeddingApiKey === undefined
+										? {}
+										: { apiKey: embeddingApiKey }),
+								},
+							},
+						}),
 			};
 			await updateSettings(payload);
 			onOpenChange(false);
@@ -569,6 +618,37 @@ export function SettingsDialog({
 												}}
 											/>
 										))}
+									</Section>
+									<Section title="代码向量检索（embedding，用户级）">
+										{/* 与 features.vector 配合：开关打开且 model/baseUrl 完整时才注册 code_search。
+										    apiKey 由服务端掩码回传，原样保存即保留磁盘值；清空则删除本地 key */}
+										<Field label="model（如 qwen3-embedding:0.6b / text-embedding-3-small）">
+											<Input
+												value={draft.vector?.embedding?.model ?? ""}
+												placeholder="text-embedding-3-small"
+												onChange={(e) => {
+													updateEmbedding({ model: e.target.value });
+												}}
+											/>
+										</Field>
+										<Field label="baseUrl（OpenAI 兼容 endpoint，含 /v1）">
+											<Input
+												value={draft.vector?.embedding?.baseUrl ?? ""}
+												placeholder="https://api.openai.com/v1"
+												onChange={(e) => {
+													updateEmbedding({ baseUrl: e.target.value });
+												}}
+											/>
+										</Field>
+										<Field label="apiKey（本地服务可留空；掩码保留原值）">
+											<Input
+												value={draft.vector?.embedding?.apiKey ?? ""}
+												placeholder="$OPENAI_API_KEY"
+												onChange={(e) => {
+													updateEmbedding({ apiKey: e.target.value });
+												}}
+											/>
+										</Field>
 									</Section>
 									<Section title="上下文自动压缩（用户级）">
 										<Field label="触发比例 triggerRatio（默认 0.8，范围 (0,1]）">

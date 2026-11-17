@@ -199,6 +199,8 @@ export function createApp(
 				id: s.id,
 				cwd: s.cwd,
 				createdAt: s.createdAt,
+				// name 由 core 从日志首条用户消息派生；刚创建的会话还没有用户消息，故可能缺省
+				name: s.name,
 				turn: s.running ? "running" : "idle",
 			})),
 		});

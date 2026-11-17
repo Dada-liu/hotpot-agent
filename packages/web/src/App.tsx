@@ -5,7 +5,7 @@
 // 点击在面板新开可关闭的文件预览 tab（此时即使无 worker 面板也展示，tab 全关即收起）。
 
 import { PanelRight } from "lucide-react";
-import { useCallback, useEffect, useReducer, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
@@ -52,7 +52,8 @@ import { type ConnectionState, connect } from "./events.ts";
 import { sessionNameFromPrompt } from "./lib/session-name.ts";
 import { createInitialState, reduceChatAction } from "./state/reducer.ts";
 
-// 会话 id → 首轮提示词提取的显示名，持久化到 localStorage（服务端 SessionSummary 无 name 字段）
+// 会话 id → 本次创建时的乐观显示名。真正的显示名由服务端从日志首条消息派生（SessionSummary.name），
+// 这里只补「刚创建、user_msg 尚未落盘」的空窗：换 host/端口导致 localStorage 清空不再影响已有会话
 const SESSION_NAMES_KEY = "hotpot.sessionNames";
 
 function loadSessionNames(): Record<string, string> {
@@ -217,6 +218,17 @@ export function App() {
 			void refreshInbox(currentId);
 		}
 	}, [currentId, chat.turn, refreshInbox]);
+
+	// 回合由运行态回到空闲时刷新会话列表：侧栏 running 圆点归位，新会话的服务端显示名
+	// （取自首条用户消息）也就位。只在 running → idle 的跳变上触发，切换会话不额外拉取
+	const prevTurn = useRef(chat.turn);
+	useEffect(() => {
+		const previous = prevTurn.current;
+		prevTurn.current = chat.turn;
+		if (previous === "running" && chat.turn === "idle") {
+			void refreshSessions();
+		}
+	}, [chat.turn, refreshSessions]);
 
 	// 会话区路径点击（v1）：先 stat 判 file/dir，同路径复用已有 tab 只激活；
 	// tab 用服务端 realpath（软链归一，与文件树返回的路径同源，面包屑才能对齐）；
@@ -610,7 +622,10 @@ export function App() {
 	};
 
 	const current = sessions.find((s) => s.id === currentId) ?? null;
-	const currentName = current ? (names[current.id] ?? current.cwd) : "";
+	// 显示名优先级：服务端派生（日志首条消息）> 本次创建时的乐观缓存 > cwd。
+	// 乐观缓存只为「刚创建、user_msg 尚未落盘」的空窗，刷新出服务端 name 后不再生效
+	const nameFor = (s: SessionSummary): string => s.name ?? names[s.id] ?? s.cwd;
+	const currentName = current ? nameFor(current) : "";
 	// 草稿绑定的工作区：顶栏显示标题作为提示，title 展示完整路径；
 	// 草稿态（currentId===null 且存在 draft）标题固定为「新会话」
 	const draftWorkspace =
@@ -646,7 +661,7 @@ export function App() {
 						}
 						draftActive={currentId === null && draft !== null}
 						onSelectDraft={handleSelectDraft}
-						nameFor={(s) => names[s.id] ?? s.cwd}
+						nameFor={nameFor}
 						onSelect={handleSelect}
 						onNewSessionIn={handleNewSessionIn}
 						onNewSessionGlobal={handleCreateGlobal}

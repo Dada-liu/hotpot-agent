@@ -7,6 +7,7 @@
 // compaction 也属 M4 新增，但会作为最新保留点参与 deriveMessages 的消息投影。
 // agent_end 为下层 agent turn 收尾事件（web 卡片状态数据源），同样不进模型历史。
 // permission/changed 为权限模式切换审计（M1），亦不进模型历史。
+// vector/indexed 与 vector/progress 为代码索引的审计与进度（M4），只含计数。
 // internal_msg 为编排层内部延续提示（如 plan 起草/批准 kickoff）：deriveMessages 按
 // user 角色折入模型历史，但不属于用户输入，UI 不渲染（与 user_msg 区分）。
 // 文档第 5 节还列了 turn/start|turn/end 与 request_header，M1 暂不需要，未纳入本联合。
@@ -215,6 +216,17 @@ export type SessionEvent =
 			files: number;
 			chunks: number;
 			durationMs: number;
+	  }
+	// vector/progress：建索引进度（每个落盘窗口一条），供 web 显示「正在建索引 x/y」；
+	// 与 vector/indexed 同待遇——只含计数，不含路径或源码，不进模型历史
+	| {
+			type: "vector/progress";
+			id: string;
+			ts: string;
+			indexedFiles: number;
+			totalFiles: number;
+			indexedChunks: number;
+			totalChunks: number;
 	  }
 	| {
 			type: "error";

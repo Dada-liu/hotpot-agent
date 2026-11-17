@@ -948,6 +948,18 @@ export function createSessionManager(
 								...audit,
 							});
 						},
+						// 进度落盘成 durable 事件，web 侧显示「正在建代码索引 x/y」；
+						// 写失败（磁盘等）不应打断索引本身
+						onProgress: async (progress) => {
+							await watermark.session
+								.append({
+									type: "vector/progress",
+									id: randomUUID(),
+									ts: new Date().toISOString(),
+									...progress,
+								})
+								.catch(() => {});
+						},
 					});
 
 		const baseRuntime = createRuntime({

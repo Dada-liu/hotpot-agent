@@ -81,6 +81,33 @@ describe("readUserSettings", () => {
 		expect(view.promptsDirs).toEqual(["/x/prompts"]);
 	});
 
+	it("vector.embedding.apiKey：有值才掩码，空串原样返回（本地服务不鉴权）", () => {
+		for (const [apiKey, expected] of [
+			["secret-embed", API_KEY_MASK],
+			["", ""],
+		] as const) {
+			writeFileSync(
+				settingsPath,
+				`${JSON.stringify(
+					{
+						...diskSettings,
+						vector: {
+							embedding: {
+								model: "embed-v1",
+								baseUrl: "https://e.example/v1",
+								apiKey,
+							},
+						},
+					},
+					null,
+					2,
+				)}\n`,
+				"utf8",
+			);
+			expect(readUserSettings(dir).vector?.embedding?.apiKey).toBe(expected);
+		}
+	});
+
 	it("文件缺失/坏 JSON/不合规抛带路径的错误", () => {
 		rmSync(settingsPath);
 		expect(() => readUserSettings(dir)).toThrow(/settings file not found/);
@@ -133,5 +160,32 @@ describe("writeUserSettings", () => {
 		const reread = readUserSettings(dir);
 		expect(reread.models.high.apiKey).toBe(API_KEY_MASK);
 		expect(reread.mainAgentTier).toBe("high");
+	});
+
+	it("vector.embedding.apiKey 为掩码时写回保留磁盘原值", () => {
+		writeFileSync(
+			settingsPath,
+			`${JSON.stringify(
+				{
+					...diskSettings,
+					vector: {
+						embedding: {
+							model: "embed-v1",
+							baseUrl: "https://e.example/v1",
+							apiKey: "secret-embed",
+						},
+					},
+				},
+				null,
+				2,
+			)}\n`,
+			"utf8",
+		);
+		// 读出的是掩码，原样写回（模拟设置弹窗未改动该字段）
+		writeUserSettings(readUserSettings(dir), dir);
+		const onDisk = JSON.parse(readFileSync(settingsPath, "utf8")) as {
+			vector: { embedding: { apiKey: string } };
+		};
+		expect(onDisk.vector.embedding.apiKey).toBe("secret-embed");
 	});
 });

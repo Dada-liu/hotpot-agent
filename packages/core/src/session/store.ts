@@ -7,6 +7,7 @@ import { mkdir, open, readdir, readFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { SessionEvent } from "./events.ts";
+import { sessionNameFromEvents } from "./name.ts";
 
 export interface Session {
 	id: string;
@@ -19,6 +20,9 @@ export interface SessionSummary {
 	filePath: string;
 	createdAt: string;
 	cwd: string;
+	// 显示名：日志首条 user_msg 的首行（规则见 session/name.ts）；尚无用户消息时为 undefined，
+	// 由客户端回退 cwd。放在服务端而不是浏览器 localStorage，避免换 host/端口即丢失
+	name?: string;
 }
 
 // home 优先级：参数 > HOTPOT_HOME 环境变量 > ~/.hotpot
@@ -117,7 +121,7 @@ export async function resumeSession(filePath: string): Promise<Session> {
 	};
 }
 
-// 列出 home 下全部会话；读每个文件首行 meta 提取摘要，损坏文件跳过
+// 列出 home 下全部会话；读每个文件首行 meta 提取摘要（顺带取首条用户消息派生显示名），损坏文件跳过
 export async function listSessions(home?: string): Promise<SessionSummary[]> {
 	const sessionsDir = join(resolveHome(home), "sessions");
 	let cwdDirs: string[];
@@ -140,15 +144,17 @@ export async function listSessions(home?: string): Promise<SessionSummary[]> {
 			}
 			const filePath = join(sessionsDir, cwdDir, file);
 			try {
-				const { meta } = await loadSession(filePath);
+				const { meta, events } = await loadSession(filePath);
 				if (meta.type !== "meta") {
 					continue;
 				}
+				const name = sessionNameFromEvents(events);
 				summaries.push({
 					id: meta.sessionId,
 					filePath,
 					createdAt: meta.createdAt,
 					cwd: meta.cwd,
+					...(name === undefined ? {} : { name }),
 				});
 			} catch {
 				// 损坏的会话文件不影响列表

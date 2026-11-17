@@ -16,6 +16,8 @@ export interface SessionSummary {
 	cwd: string;
 	createdAt: string;
 	turn: "running" | "idle";
+	// 服务端从日志首条用户消息派生的显示名；刚创建、尚无用户消息时缺省
+	name?: string;
 }
 
 // 工作区注册表记录（server 原样返回）：sessionIds 数组顺序即组内展示顺序
@@ -448,6 +450,7 @@ export interface FeatureFlagsWire {
 	mcp?: boolean;
 	compaction?: boolean;
 	memory?: boolean;
+	vector?: boolean;
 }
 
 export interface CompactionWire {
@@ -469,6 +472,15 @@ export interface TelemetryWire {
 	flushIntervalMs?: number;
 }
 
+// 代码向量检索的 embedding 端点；apiKey 可为空（本地服务不鉴权），有值时服务端返回固定掩码
+export interface VectorWire {
+	embedding?: {
+		model: string;
+		baseUrl: string;
+		apiKey?: string;
+	};
+}
+
 export interface SettingsView {
 	models: Record<ModelTier, ModelRefWire>;
 	mainAgentTier?: ModelTier;
@@ -483,6 +495,7 @@ export interface SettingsView {
 	skillsDirs?: string[];
 	promptsDirs?: string[];
 	telemetry?: TelemetryWire;
+	vector?: VectorWire;
 }
 
 export async function getSettings(): Promise<SettingsView> {

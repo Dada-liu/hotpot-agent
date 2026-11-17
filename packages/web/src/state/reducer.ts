@@ -129,8 +129,18 @@ export interface ChatState {
 	lastTodoAgentId: string | null;
 	// 作为计划正文落盘的 assistant_msg id：UI 只保留 plan 卡片，不再重复渲染正文气泡
 	hiddenPlanMessageIds: string[];
+	// 代码索引进度（vector/progress 折叠；vector/indexed 或回合结束清空）：
+	// 首次建索引可能持续几分钟，没有这条用户会以为 code_search 卡死
+	vectorProgress: VectorProgress | null;
 	// 已见过的 log 事件 id（幂等去重）
 	seenEventIds: string[];
+}
+
+export interface VectorProgress {
+	indexedFiles: number;
+	totalFiles: number;
+	indexedChunks: number;
+	totalChunks: number;
 }
 
 export interface UsageTotals {
@@ -154,6 +164,7 @@ export function createInitialState(): ChatState {
 		lastTodoAgentId: null,
 		hiddenPlanMessageIds: [],
 		seenEventIds: [],
+		vectorProgress: null,
 	};
 }
 
@@ -343,6 +354,8 @@ export function reduce(state: ChatState, event: WireEvent): ChatState {
 				pendingApprovals: {},
 				pendingPlan: null,
 				streaming: null,
+				// 建索引进度只属于本回合：回合结束仍未收到 vector/indexed 也一并清掉
+				vectorProgress: null,
 			};
 		}
 		case "plan":
@@ -604,8 +617,23 @@ function reduceLog(state: ChatState, event: SessionEvent): ChatState {
 		case "mcp/attached":
 		case "memory/saved":
 		case "permission/changed":
-		case "vector/indexed":
 			return state;
+		// 索引完成：清掉进度条（审计本身不进主对话）
+		case "vector/indexed":
+			return state.vectorProgress === null
+				? state
+				: { ...state, vectorProgress: null };
+		// 建索引进度：composer 上方显示「正在建代码索引 x/y」
+		case "vector/progress":
+			return {
+				...state,
+				vectorProgress: {
+					indexedFiles: event.indexedFiles,
+					totalFiles: event.totalFiles,
+					indexedChunks: event.indexedChunks,
+					totalChunks: event.totalChunks,
+				},
+			};
 		case "error": {
 			const entry: TranscriptEntry = {
 				kind: "error",

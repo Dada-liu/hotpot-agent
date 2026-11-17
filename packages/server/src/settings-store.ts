@@ -1,6 +1,6 @@
 // 用户级 settings.json 的全量读写（web 设置弹窗用）。
 // 与 loadSettings 的差异：不做 $ENV 插值，敏感字段（models.*.apiKey、
-// webSearch.apiKey、telemetry.token）只返回固定掩码；其余字段经 schema
+// webSearch.apiKey、telemetry.token、vector.embedding.apiKey）只返回固定掩码；其余字段经 schema
 // 解析后整体写回，未知键原样保留（parse → 写回）。PUT 中仍为掩码的字段
 // 保留磁盘原值，其他非空值表示明确替换。
 
@@ -65,6 +65,11 @@ export function readUserSettings(home?: string): SettingsView {
 	if (parsed.telemetry?.token !== undefined) {
 		parsed.telemetry = { ...parsed.telemetry, token: API_KEY_MASK };
 	}
+	const embedding = parsed.vector?.embedding;
+	// 空串表示「本地服务不鉴权」，是真实值而不是需要遮蔽的凭证
+	if (embedding?.apiKey !== undefined && embedding.apiKey !== "") {
+		parsed.vector = { embedding: { ...embedding, apiKey: API_KEY_MASK } };
+	}
 	return parsed;
 }
 
@@ -88,6 +93,13 @@ export function writeUserSettings(settings: SettingsView, home?: string): void {
 		settings.telemetry = {
 			...settings.telemetry,
 			token: current.telemetry.token,
+		};
+	}
+	const embedding = settings.vector?.embedding;
+	const currentEmbedding = current.vector?.embedding;
+	if (embedding?.apiKey === API_KEY_MASK && currentEmbedding !== undefined) {
+		settings.vector = {
+			embedding: { ...embedding, apiKey: currentEmbedding.apiKey },
 		};
 	}
 	writeFileSync(

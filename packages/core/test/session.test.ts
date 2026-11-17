@@ -159,8 +159,26 @@ describe("session store", () => {
 		expect(summary?.filePath).toBe(session.filePath);
 		expect(summary?.cwd).toBe("/Users/test/project");
 		expect(summary?.createdAt).toBeTruthy();
+		// 尚无用户消息的会话没有显示名，由客户端回退 cwd
+		expect(summary?.name).toBeUndefined();
 		// home 目录不存在时返回空列表
 		expect(await listSessions(join(home, "not-exist"))).toEqual([]);
+	});
+
+	it("listSessions 用首条用户消息派生显示名（长提示词按句子分隔符截断）", async () => {
+		const session = await createSession("/Users/test/project", home);
+		await session.append(userMsg("帮我修一下登录页的样式问题，顺便看看移动端"));
+		await session.append(assistantText("好的"));
+		await session.append(userMsg("第二个问题不该影响显示名"));
+
+		const [summary] = await listSessions(home);
+		expect(summary?.name).toBe("帮我修一下登录页的样式问题");
+
+		// 首行为空（例如只发了附件）时回退「新会话」
+		const empty = await createSession("/Users/test/project", home);
+		await empty.append(userMsg("   "));
+		const names = (await listSessions(home)).map((s) => s.name);
+		expect(names).toContain("新会话");
 	});
 
 	it("resumeSession 恢复已有会话并继续 append；文件不存在时抛错", async () => {

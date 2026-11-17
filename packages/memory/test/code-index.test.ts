@@ -14,7 +14,7 @@ import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createCodeIndexService } from "../src/code-index.ts";
 import type { EmbeddingClient } from "../src/embedding.ts";
-import type { CodeIndexAudit } from "../src/types.ts";
+import type { CodeIndexAudit, CodeIndexProgress } from "../src/types.ts";
 import { VectorStore } from "../src/vector-store.ts";
 
 interface FakeEmbedding {
@@ -58,6 +58,7 @@ afterEach(async () => {
 function serviceWith(
 	fake: FakeEmbedding,
 	audits: CodeIndexAudit[] = [],
+	progress: CodeIndexProgress[] = [],
 ): ReturnType<typeof createCodeIndexService> {
 	return createCodeIndexService({
 		cwd,
@@ -66,6 +67,9 @@ function serviceWith(
 		embedding: fake.embedding,
 		onIndexed: async (audit) => {
 			audits.push(audit);
+		},
+		onProgress: async (entry) => {
+			progress.push(entry);
 		},
 	});
 }
@@ -129,8 +133,9 @@ describe("CodeIndexService", () => {
 			new AbortController().signal,
 		);
 
-		expect(batches.map((batch) => batch.length)).toEqual([16, 16, 3, 1]);
-		const indexedTexts = batches.slice(0, 3).flat();
+		// 35 个 chunk 按 32 一批（并行在途上限 4）→ 32 + 3；最后 1 批是查询文本
+		expect(batches.map((batch) => batch.length)).toEqual([32, 3, 1]);
+		const indexedTexts = batches.slice(0, 2).flat();
 		expect(indexedTexts).toHaveLength(35);
 		expect(indexedTexts[0]?.startsWith("xxx")).toBe(true);
 		expect(indexedTexts.at(-1)?.endsWith("needle")).toBe(true);
@@ -546,6 +551,72 @@ describe("CodeIndexService", () => {
 		expect(embedded).toContain("safe source");
 		expect(embedded).not.toContain("DO_NOT_UPLOAD");
 		expect(embedded).not.toContain("ARBITRARY_TEXT");
+	});
+
+	it("按窗口分批落盘并上报进度：中断后已落盘的文件不会重新 embedding", async () => {
+		// 两个等长大文件：每个约 280 chunk，超过 FLUSH_CHUNKS(256)，
+		// 于是每个文件独占一个落盘窗口
+		const big = "export const value = 1;\n".repeat(12_000);
+		await writeFile(join(cwd, "first.ts"), big);
+		await writeFile(join(cwd, "second.ts"), big);
+		const signal = new AbortController().signal;
+		const progress: CodeIndexProgress[] = [];
+		let calls = 0;
+		const aborting: FakeEmbedding = {
+			batches: [],
+			embedding: {
+				async embed(texts) {
+					calls += 1;
+					// 第一个窗口（first.ts）落盘完成后再中断，模拟用户 ESC / 进程退出
+					if (calls > 9) throw new Error("aborted");
+					return texts.map(() => [1, 0]);
+				},
+			},
+		};
+
+		await expect(
+			serviceWith(aborting, [], progress).search("value", 5, signal),
+		).rejects.toThrow(/aborted/);
+
+		// 进度先报 0/N，第一个窗口落盘后报 1/2；第二个窗口没跑完，停在 1
+		expect(progress[0]).toMatchObject({ indexedFiles: 0, totalFiles: 2 });
+		expect(progress.at(-1)?.indexedFiles).toBe(1);
+		expect(progress.at(-1)?.indexedChunks).toBeLessThan(
+			progress.at(-1)?.totalChunks ?? 0,
+		);
+
+		// 中断前已落盘的记录确实进了向量库
+		const store = await openProjectStore();
+		const afterAbort = await store.list("code");
+		expect(afterAbort.length).toBeGreaterThan(0);
+
+		// 重试：只有第二个文件需要重新 embedding（两文件内容相同，chunk 数一致）
+		const retry = fakeEmbedding();
+		await serviceWith(retry).search("value", 5, signal);
+		const embeddedOnRetry = retry.batches.flat().length - 1; // 减去查询文本
+		expect(embeddedOnRetry).toBe(afterAbort.length);
+		// 重新打开 store：VectorStore 在 open 时载入快照，旧实例看不到重试写入的记录
+		expect(await (await openProjectStore()).list("code")).toHaveLength(
+			afterAbort.length * 2,
+		);
+	});
+
+	it("工作区只有文档时索引为空：stats 为 0 且不为 query 发 embedding 请求", async () => {
+		await writeFile(join(cwd, "haha.md"), "name: daxia\naget: 19\n");
+		await writeFile(join(cwd, "notes.txt"), "hello");
+		const fake = fakeEmbedding();
+		const service = serviceWith(fake);
+
+		const results = await service.search(
+			"name",
+			10,
+			new AbortController().signal,
+		);
+
+		expect(results).toEqual([]);
+		expect(service.stats()).toEqual({ files: 0, chunks: 0 });
+		// 索引里没有任何 chunk 时直接返回，省掉 query embedding
+		expect(fake.batches).toEqual([]);
 	});
 
 	it("默认忽略指定目录、符号链接、二进制和超过 512KB 的文件", async () => {

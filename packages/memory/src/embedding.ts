@@ -27,14 +27,18 @@ export class EmbeddingClient {
 		if (texts.length === 0) {
 			return [];
 		}
+		// 未配 apiKey（本地服务）时不带 Authorization，避免发出 `Bearer ` 这种空凭证头
+		const headers: Record<string, string> = {
+			"content-type": "application/json",
+		};
+		if (this.config.apiKey !== undefined && this.config.apiKey !== "") {
+			headers.authorization = `Bearer ${this.config.apiKey}`;
+		}
 		const response = await this.fetchImpl(
 			`${this.config.baseUrl.replace(/\/+$/, "")}/embeddings`,
 			{
 				method: "POST",
-				headers: {
-					"content-type": "application/json",
-					authorization: `Bearer ${this.config.apiKey}`,
-				},
+				headers,
 				body: JSON.stringify({ model: this.config.model, input: texts }),
 				signal,
 			},

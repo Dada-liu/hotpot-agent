@@ -224,6 +224,15 @@ export type SessionEvent =
 			durationMs: number;
 	  }
 	| {
+			type: "vector/progress";
+			id: string;
+			ts: string;
+			indexedFiles: number;
+			totalFiles: number;
+			indexedChunks: number;
+			totalChunks: number;
+	  }
+	| {
 			type: "error";
 			id: string;
 			ts: string;

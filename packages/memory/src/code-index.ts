@@ -19,6 +19,7 @@ import {
 import type {
 	CodeIndexOptions,
 	CodeIndexService,
+	CodeIndexStats,
 	CodeSearchResult,
 } from "./types.ts";
 import { VectorStore } from "./vector-store.ts";
@@ -28,7 +29,11 @@ const CHUNK_SIZE = 1200;
 const CHUNK_OVERLAP = 200;
 const MAX_FILE_BYTES = 512 * 1024;
 const MAX_EXCERPT_CHARS = 800;
-const EMBEDDING_BATCH_SIZE = 16;
+// 单次 embedding 请求的 chunk 数、同时在途请求数与每窗口落盘的 chunk 上限。
+// 批内更多 chunk 换取更少往返；窗口控制「中断时最多丢多少工作」
+const EMBEDDING_BATCH_SIZE = 32;
+const EMBEDDING_CONCURRENCY = 4;
+const FLUSH_CHUNKS = 256;
 const IGNORED_ENTRIES = new Set([
 	".git",
 	"node_modules",
@@ -509,6 +514,14 @@ export function createCodeIndexService(
 	const manifestPath = join(storeDirectory, `${projectKey}.manifest.json`);
 	const indexed = new Map<string, IndexedFile>();
 	let storePromise: Promise<VectorStore> | null = null;
+	// 最近一次 refresh 的规模快照（供 code_search 在空结果时给出可行动的提示）
+	let currentStats: CodeIndexStats = { files: 0, chunks: 0 };
+
+	function snapshotIndexed(): CodeIndexStats {
+		let chunks = 0;
+		for (const file of indexed.values()) chunks += file.chunkIds.length;
+		return { files: indexed.size, chunks };
+	}
 
 	function openStore(): Promise<VectorStore> {
 		storePromise ??= VectorStore.open({
@@ -542,6 +555,34 @@ export function createCodeIndexService(
 			}
 		}
 		return { records, manifestMissing: manifest === null };
+	}
+
+	// 窗口内并行请求 embedding：单请求批大小受 EMBEDDING_BATCH_SIZE 限制，
+	// 同时在途的请求数受 EMBEDDING_CONCURRENCY 限制；结果按原始下标回填，顺序不变
+	async function embedAll(
+		texts: string[],
+		signal: AbortSignal,
+	): Promise<number[][]> {
+		const vectors: number[][] = new Array(texts.length);
+		let next = 0;
+		const worker = async (): Promise<void> => {
+			for (;;) {
+				const start = next;
+				next += EMBEDDING_BATCH_SIZE;
+				if (start >= texts.length) return;
+				const batch = texts.slice(start, start + EMBEDDING_BATCH_SIZE);
+				const batchVectors = await options.embedding.embed(batch, signal);
+				for (let i = 0; i < batch.length; i += 1) {
+					vectors[start + i] = batchVectors[i] ?? [];
+				}
+			}
+		};
+		const workers = Math.min(
+			EMBEDDING_CONCURRENCY,
+			Math.max(1, Math.ceil(texts.length / EMBEDDING_BATCH_SIZE)),
+		);
+		await Promise.all(Array.from({ length: workers }, worker));
+		return vectors;
 	}
 
 	async function refresh(signal: AbortSignal): Promise<void> {
@@ -612,53 +653,94 @@ export function createCodeIndexService(
 			removedIds.length === 0 &&
 			!manifestMissing
 		) {
+			currentStats = snapshotIndexed();
 			return;
 		}
 
 		const startedAt = Date.now();
 		const chunks = changed.flatMap((entry) => entry.chunks);
-		const vectors: number[][] = [];
-		for (let start = 0; start < chunks.length; start += EMBEDDING_BATCH_SIZE) {
-			const batch = chunks.slice(start, start + EMBEDDING_BATCH_SIZE);
-			const batchVectors = await options.embedding.embed(
-				batch.map((chunk) => chunk.text),
-				signal,
-			);
-			vectors.push(...batchVectors);
-		}
+		const totalFiles = changed.length;
+		const totalChunks = chunks.length;
 		const store = await openStore();
 		await store.remove([...new Set(removedIds)]);
-		if (chunks.length > 0) {
-			await store.upsert(
-				chunks.map((chunk, index) => ({
-					id: chunk.id,
-					namespace: CODE_NAMESPACE,
-					text: chunk.text,
-					vector: vectors[index] ?? [],
-					metadata: {
-						path: chunk.path,
-						fileHash: discovered.get(chunk.path)?.hash ?? "",
-						startLine: chunk.startLine,
-						endLine: chunk.endLine,
-					},
-				})),
-			);
-		}
-
 		for (const path of indexed.keys()) {
 			if (!discovered.has(path)) indexed.delete(path);
 		}
-		for (const entry of changed) {
-			indexed.set(entry.path, {
-				hash: entry.file.hash,
-				chunkIds: entry.chunks.map((chunk) => chunk.id),
+
+		// 按「落盘窗口」推进：每个窗口 embedding 完就写 store 与 manifest，再报一次进度。
+		// 这样中断（ESC/进程退出）只丢当前窗口，已落盘的文件下次按 hash 跳过，不必从头重建；
+		// 旧实现把所有 chunk 攒齐了才写，中断即全部作废
+		let nextFile = 0;
+		let indexedFiles = 0;
+		let indexedChunks = 0;
+		// 先报 0/N，让 UI 立刻显示「正在建索引」；纯删除刷新没有要 embed 的文件，不必上报
+		if (totalFiles > 0) {
+			await options.onProgress?.({
+				indexedFiles,
+				totalFiles,
+				indexedChunks,
+				totalChunks,
 			});
 		}
+		while (nextFile < changed.length) {
+			const window: typeof changed = [];
+			let windowChunks = 0;
+			while (
+				nextFile < changed.length &&
+				(window.length === 0 || windowChunks < FLUSH_CHUNKS)
+			) {
+				const entry = changed[nextFile];
+				if (entry === undefined) break;
+				window.push(entry);
+				windowChunks += entry.chunks.length;
+				nextFile += 1;
+			}
+			const windowChunkList = window.flatMap((entry) => entry.chunks);
+			const vectors = await embedAll(
+				windowChunkList.map((chunk) => chunk.text),
+				signal,
+			);
+			if (windowChunkList.length > 0) {
+				await store.upsert(
+					windowChunkList.map((chunk, index) => ({
+						id: chunk.id,
+						namespace: CODE_NAMESPACE,
+						text: chunk.text,
+						vector: vectors[index] ?? [],
+						metadata: {
+							path: chunk.path,
+							fileHash: discovered.get(chunk.path)?.hash ?? "",
+							startLine: chunk.startLine,
+							endLine: chunk.endLine,
+						},
+					})),
+				);
+			}
+			for (const entry of window) {
+				indexed.set(entry.path, {
+					hash: entry.file.hash,
+					chunkIds: entry.chunks.map((chunk) => chunk.id),
+				});
+			}
+			indexedFiles += window.length;
+			indexedChunks += windowChunkList.length;
+			currentStats = snapshotIndexed();
+			await writeManifest(manifestPath, indexed);
+			await options.onProgress?.({
+				indexedFiles,
+				totalFiles,
+				indexedChunks,
+				totalChunks,
+			});
+		}
+
+		currentStats = snapshotIndexed();
+		// 空索引也要落 manifest（={}），否则每次检索都被当成 manifest 缺失、重走扫描分支
 		await writeManifest(manifestPath, indexed);
-		if (changed.length + deletedFiles > 0 || removedIds.length > 0) {
+		if (totalFiles + deletedFiles > 0 || removedIds.length > 0) {
 			await options.onIndexed?.({
-				files: changed.length + deletedFiles,
-				chunks: chunks.length,
+				files: totalFiles + deletedFiles,
+				chunks: totalChunks,
 				durationMs: Math.max(0, Date.now() - startedAt),
 			});
 		}
@@ -670,6 +752,11 @@ export function createCodeIndexService(
 		signal: AbortSignal,
 	): Promise<CodeSearchResult[]> {
 		await refresh(signal);
+		// 索引里一个 chunk 都没有（工作区只有 .md 之类不可索引文件）：
+		// 直接返回空，省掉一次注定浪费的 query embedding 请求
+		if (currentStats.chunks === 0) {
+			return [];
+		}
 		const [queryVector] = await options.embedding.embed([query], signal);
 		if (queryVector === undefined) throw new Error("missing query embedding");
 		const results = await (await openStore()).search(queryVector, {
@@ -708,5 +795,6 @@ export function createCodeIndexService(
 			);
 			return result;
 		},
+		stats: () => currentStats,
 	};
 }
